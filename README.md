@@ -1,0 +1,2 @@
+# AvoidDuplicatePurchases
+多重購入を避けるためのプラットフォーム
