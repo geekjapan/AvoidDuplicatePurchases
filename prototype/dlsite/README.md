@@ -1,42 +1,30 @@
-# DLsite 実地調査(Issue #4)
+# DLsite 実地調査(Issue #4)— 確定版
 
-調査日: 2026-08-03。未ログインで検証できた事実と、ログイン後に検証が必要な残項目。
+調査日: 2026-08-03。未ログイン検証(curl)+ ログイン済みブラウザでの実測(computer-use 経由で DevTools コンソールを駆動)による確定結果。
 
-## 検証済み(未ログイン)
+## (1) 購入履歴 — API は `v3/content/sales` が本命
 
-### (2) 商品を一意に特定する ID = workno
+- **`GET https://play.dlsite.com/api/purchases?page=1` は廃止済み**(ログイン済みでも 404 `{"message":"Not Found"}`)。調査資料(kurorinchan/dlsite-purchased)の情報は古い。`/api/v3/purchases` も 404。
+- DLsite Play SPA がライブラリ表示に実際に呼ぶ API(performance リソース実測):
+  - `GET /api/v3/content/sales?last=0` → **200、購入全件の配列**(実測 591 件)。要素は `{workno, sales_date}`(例: `{"workno":"VJ013196","sales_date":"2022-06-11T14:20:07.000000Z"}`)。**ページングなし・全件一括**、`last=` は増分同期用カーソル(タイムスタンプ)。未ログインは 401。
+  - `GET /api/v3/content/count?last=0` → `{user: 591, production: 0, page_limit: 50, concurrency: 500}`
+  - `POST /api/v3/content/works` → 作品メタデータ本体。GET は 405、`{worknos:[...]}` ボディは 400。Service Worker 経由の同期らしくボディ形式は未特定 — **公開 `product.json` で代替できるため深追いしない**。
+- 認証はブラウザセッション Cookie(`credentials:'include'` で成功)。拡張は `host_permissions` に play.dlsite.com を入れれば Cookie が自動送信されるので、トークン抽出等は不要。
+- **バックフィル戦略**: `sales` で workno+購入日を全件取得 → 各 workno のメタデータは公開 `product.json` で補完(未ログインで可)。差分は `last=` カーソル。HTML スクレイピング(`mypage/userbuy`)は不要になったため未検証のまま破棄。
 
-- URL 形式: `https://www.dlsite.com/maniax/work/=/product_id/RJ######.html`。`og:url` メタタグに正規 URL が入る(商品ページで 39 箇所出現、最頻の抽出点)。
-- 商品メタデータ API: `GET https://www.dlsite.com/maniax/api/=/product.json?workno=RJ236867&locale=ja-JP` — **未ログインで 200**、配列で 1 件返る。**255 フィールド**。
-  - 正規化に効くもの: `workno`, `product_id`(同値), `work_name`, `work_name_kana`, `maker_name`, `maker_id`, `circle_id`, `series_id`/`series_name`, `title_id`/`title_name`, `language_editions`, `translation_info`
-  - 収録関係(fog「単話⊂単行本」)に直結: `work_pack_children`, `work_pack_parent`, `is_pack_child`, `is_pack_parent`, `title_work_count`, `editions`
-- workno 正規表現 `[BRV][JE]\d{6,8}` は RJ 8桁で成立を確認。
+## (2) 商品を一意に特定する ID = workno
 
-### (3) カート内商品の識別方法
+- URL 正規形: `https://www.dlsite.com/maniax/work/=/product_id/RJ######.html`(`og:url` メタタグ)。正規表現 `[BRV][JE]\d{6,8}`。
+- `GET https://www.dlsite.com/maniax/api/=/product.json?workno=RJ…&locale=ja-JP` — **未ログイン 200、255 フィールド**。正規化に効く: `workno`, `work_name`, `work_name_kana`, `maker_name`, `maker_id`, `circle_id`, `series_id/series_name`, `title_id/title_name`, `language_editions`, `translation_info`。収録関係の fog に直結: `work_pack_children`, `work_pack_parent`, `is_pack_child`, `is_pack_parent`, `title_work_count`, `editions`。
 
-- カートページ URL は `https://www.dlsite.com/maniax/cart`(調査資料の `cart/=/` は 404)。未ログインでも 200。
-- 空カート = `.empty_box`(「カートに作品は入っておりません」)。アイテムは `<ul class="cart_list">` に **クライアントサイドで動的挿入**。
-- ページ内 JS がアイテム識別に `data-workno` 属性を参照(`$item.attr('data-workno')`)。関連属性: `data-pack-type`, `data-parentWorkno`。→ **カート内商品の識別は `data-workno` 属性ベースが本線**(要ログイン+商品入り実 DOM で確定)。
-- カート追加はリンク `cart/=/product_id/RJ*.html`、AJAX `cart/ajax/=/mode/cart/...`(XML 応答、`product_id` 必須)。
+## (3) カート内商品の識別 — `data-workno`(実 DOM で確定)
 
-### (1) 購入履歴 — 認証挙動のみ確認
-
-- `GET https://play.dlsite.com/api/purchases?page=1` → 未ログインは 404 `{"message":"Not Found"}`(存在を隠す挙動。kurorinchan/dlsite-purchased は 2026-06 も本 API でメンテ継続中のため、セッション付きでは有効の見込み)
-- `GET https://play.dlsite.com/api/v3/content/count?last=0` → 401(認証必須が明確)
-- HTML 経路 `www.dlsite.com/maniax/mypage/userbuy/...` → 302 でログインページへ
-
-## 要ログイン検証(残項目チェックリスト)
-
-ログイン済みブラウザで `survey.js` を実行して以下を採取:
-
-1. **play.dlsite.com の任意ページ**で実行 → `api/purchases?page=1` の実レスポンス(`total`/`limit`/`offset` の有無、`works[]` のフィールド一覧、workno の位置)
-2. **カートに商品を1点以上入れて** `www.dlsite.com/maniax/cart` で実行 → `.cart_list` 内の実 DOM(`data-workno` の実在、タイトル/価格のセレクタ)
-3. **`mypage/userbuy` ページ**で実行 → `.work_list_main` 系セレクタ(調査資料記載)の現行性
-4. Cookie 方式の確認: play.dlsite.com への認証が `www.dlsite.com` の `PHPSESSID` 共有か、別トークンか(DevTools の Network タブで `api/purchases` のリクエストヘッダを確認)
-
-採取結果はこの Issue #4 にコメントで貼り付け。
+- カートページ: `https://www.dlsite.com/maniax/cart`(未ログインでも 200。`cart/=/` は 404)。
+- 商品入りカートの実 DOM: アイテムは `li.cart_list_item._cart_items`、dataset に
+  `workno`, `productId`, `makerId`, `price`, `official_price`, `is_discount`, `ageCategory`, `siteId`, `workType`, `titleWorkCount`, `translation_info(JSON)` など。
+- **注意**: `.cart_list [data-workno]` はページ内に同一 workno が2回現れる(レイアウト複製)— workno で dedupe すること(`parseCartDom` 実装済み)。
+- 空カートは `.empty_box`。カート追加リンクは `cart/=/product_id/RJ*.html` だが、コンソールからの単純遷移では追加されなかった(トークン等の前提あり? 拡張はカートを読むだけなので追わない)。
 
 ## 成果物
 
-- `fetch-stub.ts` — 取得スタブ(purchases API ページング / product.json / カート DOM パース)。`npx tsx fetch-stub.ts` で未ログイン検証可能な範囲のセルフチェックが走る。
-- `survey.js` — ログイン済みブラウザのコンソールに貼り付ける採取スクリプト(実行ページに応じて自動で対象を切替)。
+- `fetch-stub.ts` — sales バックフィル / product.json / カート DOM パースの最小スタブ。`npx tsx fetch-stub.ts` で未ログイン範囲のセルフチェック。
