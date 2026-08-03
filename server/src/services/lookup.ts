@@ -7,7 +7,10 @@ import {
   type LookupResult,
   type Source,
 } from "@adp/shared";
-import { productUrlForSource } from "@adp/shared/adapters/dlsite";
+import {
+  productUrlForSource,
+  normalizeFanzaVideoFloor,
+} from "@adp/shared/adapters/dlsite";
 import type { DatabaseSync } from "node:sqlite";
 
 export interface ListingRow {
@@ -30,6 +33,48 @@ export function lookupItems(db: DatabaseSync, items: LookupItem[]): LookupResult
   return items.map((item) => lookupOne(db, item));
 }
 
+/**
+ * Extract FANZA Video GraphQL floor from listing.raw_json evidence.
+ * Supports the minimal shapes justified by prototype/fanza GraphQL samples:
+ * - `{ "floor": "AV" }`
+ * - `{ "content": { "floor": "AV", "id": "..." } }`
+ * - `{ "product": { "floor": "AV" } }` / `{ "product": { "content": { "floor": "AV" } } }`
+ * - `{ "sale": { "floor": "AV" } }` (sale-side evidence wrapper)
+ * Malformed JSON or missing/unknown floor yields null (no crash, no guessed URL).
+ */
+export function extractFanzaVideoFloorFromRawJson(rawJson: string | null | undefined): string | null {
+  if (typeof rawJson !== "string" || rawJson.length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  return findVideoFloorEvidence(parsed as Record<string, unknown>);
+}
+
+function findVideoFloorEvidence(obj: Record<string, unknown>): string | null {
+  if (typeof obj.floor === "string" && normalizeFanzaVideoFloor(obj.floor)) {
+    return obj.floor;
+  }
+  if (obj.content && typeof obj.content === "object" && !Array.isArray(obj.content)) {
+    const content = obj.content as Record<string, unknown>;
+    if (typeof content.floor === "string" && normalizeFanzaVideoFloor(content.floor)) {
+      return content.floor;
+    }
+  }
+  if (obj.product && typeof obj.product === "object" && !Array.isArray(obj.product)) {
+    const fromProduct = findVideoFloorEvidence(obj.product as Record<string, unknown>);
+    if (fromProduct) return fromProduct;
+  }
+  if (obj.sale && typeof obj.sale === "object" && !Array.isArray(obj.sale)) {
+    const fromSale = findVideoFloorEvidence(obj.sale as Record<string, unknown>);
+    if (fromSale) return fromSale;
+  }
+  return null;
+}
+
 function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
   let owned = false;
   if (item.source && item.cid) {
@@ -45,7 +90,7 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
     if (titleKey && makerKey) {
       const rows = db
         .prepare(
-          `SELECT l.id, l.source, l.cid, l.title, l.maker_name, l.series_id
+          `SELECT l.id, l.source, l.cid, l.title, l.maker_name, l.series_id, l.raw_json
            FROM match_key mk
            JOIN listing l ON l.id = mk.listing_id
            WHERE mk.kind = 'title' AND mk.key = ?`,
@@ -57,18 +102,30 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
         title: string;
         maker_name: string | null;
         series_id: string | null;
+        raw_json: string;
       }>;
 
       for (const row of rows) {
         if (item.source && row.source === item.source) continue;
         const rowMakerKey = makerMatchKey(row.maker_name);
         if (!rowMakerKey || rowMakerKey !== makerKey) continue;
+
+        const videoFloor =
+          row.source === "fanza_video"
+            ? extractFanzaVideoFloorFromRawJson(row.raw_json)
+            : null;
+        const url = productUrlForSource(row.source, row.cid, {
+          seriesId: row.series_id,
+          videoFloor,
+        });
+        // Omit candidates that lack a verified canonical product URL.
+        if (!url) continue;
+
         other.push({
           source: row.source,
           cid: row.cid,
           title: row.title,
-          // FANZA Books product URLs require series_id (prototype/fanza).
-          url: productUrlForSource(row.source, row.cid, { seriesId: row.series_id }),
+          url,
         });
       }
     }

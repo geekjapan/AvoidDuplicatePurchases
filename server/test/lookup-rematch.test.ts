@@ -16,6 +16,7 @@ function insertListing(
     title: string;
     maker: string | null;
     seriesId?: string | null;
+    rawJson?: string;
     workIdLocked?: number;
     workId?: number;
   },
@@ -29,7 +30,7 @@ function insertListing(
     `INSERT INTO listing (
       source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url,
       purchased_at, purchased_at_precision, raw_json, imported_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'unknown', '{}', ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'unknown', ?, ?)`,
   ).run(
     opts.source,
     opts.cid,
@@ -38,6 +39,7 @@ function insertListing(
     opts.title,
     opts.maker,
     opts.seriesId ?? null,
+    opts.rawJson ?? "{}",
     new Date().toISOString(),
   );
   const id = Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
@@ -104,7 +106,7 @@ describe("lookup other-site ownership", () => {
     assert.equal(noMaker[0]!.other.length, 0);
   });
 
-  it("emits source-specific product URLs including FANZA Books series_id", () => {
+  it("emits verified product URLs and omits unlinkable Books/Video candidates", () => {
     insertListing(db, {
       source: "fanza_doujin",
       cid: "d_285449",
@@ -118,15 +120,59 @@ describe("lookup other-site ownership", () => {
       maker: "Link Maker",
       seriesId: "100001",
     });
+    // Books without series_id cannot form a verified URL — must be omitted from other.
     insertListing(db, {
-      source: "fanza_video",
-      cid: "abcd00123",
+      source: "fanza_books",
+      cid: "b100noseries",
       title: "Cross Link Title",
       maker: "Link Maker",
+      seriesId: null,
+    });
+    // Video with GraphQL AV floor evidence.
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "h_175dxua00001",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      rawJson: JSON.stringify({
+        content: { id: "h_175dxua00001", title: "動画AV", floor: "AV" },
+      }),
+    });
+    // Video with amateur floor evidence.
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "peep174",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      rawJson: JSON.stringify({ floor: "Amateur" }),
+    });
+    // Video without floor — un-linkable, omit.
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "nofloor999",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      rawJson: JSON.stringify({ content: { id: "nofloor999", title: "x" } }),
+    });
+    // Video with unknown floor — omit.
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "badfloor999",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      rawJson: JSON.stringify({ content: { floor: "videoa" } }),
+    });
+    // Malformed raw_json must not crash lookup and must not invent a URL.
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "malformedraw",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      rawJson: "{not-json",
     });
     insertListing(db, {
       source: "fanza_dlsoft",
-      cid: "brand_0001",
+      cid: "purple_0049",
       title: "Cross Link Title",
       maker: "Link Maker",
     });
@@ -146,20 +192,42 @@ describe("lookup other-site ownership", () => {
       },
     ]);
     const other = res[0]!.other;
-    const bySource = Object.fromEntries(other.map((o) => [o.source, o.url]));
+    const byCid = Object.fromEntries(other.map((o) => [o.cid, o]));
 
     assert.equal(
-      bySource.fanza_doujin,
+      byCid["d_285449"]?.url,
       "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_285449/",
     );
     assert.equal(
-      bySource.fanza_books,
+      byCid["b100xxxxx01001"]?.url,
       "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
     );
-    assert.match(bySource.fanza_video ?? "", /cid=abcd00123/);
-    assert.match(bySource.fanza_dlsoft ?? "", /dlsoft\.dmm\.co\.jp/);
-    for (const url of Object.values(bySource)) {
-      assert.doesNotMatch(url, /example\.invalid/);
+    assert.equal(byCid["b100noseries"], undefined);
+
+    assert.equal(
+      byCid["h_175dxua00001"]?.url,
+      "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
+    );
+    assert.equal(
+      byCid["peep174"]?.url,
+      "https://video.dmm.co.jp/amateur/content/?id=peep174",
+    );
+    // Evidence-complete Video candidates remain; un-linkable ones are omitted only.
+    assert.ok(byCid["h_175dxua00001"]);
+    assert.ok(byCid["peep174"]);
+    assert.equal(byCid["nofloor999"], undefined);
+    assert.equal(byCid["badfloor999"], undefined);
+    assert.equal(byCid["malformedraw"], undefined);
+
+    assert.equal(
+      byCid["purple_0049"]?.url,
+      "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+    );
+
+    for (const o of other) {
+      assert.doesNotMatch(o.url, /example\.invalid/);
+      assert.doesNotMatch(o.url, /digital\/videoa/);
+      assert.ok(o.url.startsWith("https://"));
     }
   });
 });

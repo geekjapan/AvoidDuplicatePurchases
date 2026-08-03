@@ -13,6 +13,7 @@ import {
   fanzaBooksProductUrl,
   fanzaVideoProductUrl,
   fanzaDlsoftProductUrl,
+  normalizeFanzaVideoFloor,
 } from "../adapters/dlsite/index.ts";
 
 describe("dlsite adapter", () => {
@@ -249,8 +250,11 @@ describe("dlsite adapter", () => {
     assert.equal(raw.product.work_name, "作品A");
   });
 
-  it("builds source-specific product URLs for every declared listing source", () => {
-    assert.match(productUrlForSource("dlsite", "RJ123456"), /product_id\/RJ123456/);
+  it("builds verified source-specific product URLs and rejects incomplete evidence", () => {
+    assert.equal(
+      productUrlForSource("dlsite", "RJ123456"),
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+    );
     assert.equal(
       productUrlForSource("fanza_doujin", "d_285449"),
       fanzaDoujinProductUrl("d_285449"),
@@ -259,6 +263,8 @@ describe("dlsite adapter", () => {
       fanzaDoujinProductUrl("d_285449"),
       "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_285449/",
     );
+
+    // Books: series_id + content_id required; no one-segment fallback.
     assert.equal(
       fanzaBooksProductUrl("b100xxxxx01001", "100001"),
       "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
@@ -268,16 +274,47 @@ describe("dlsite adapter", () => {
       "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
     );
     assert.equal(fanzaBooksProductUrl("b100xxxxx01001", null), null);
+    assert.equal(fanzaBooksProductUrl("b100xxxxx01001", ""), null);
+    assert.equal(productUrlForSource("fanza_books", "b100xxxxx01001"), null);
+    assert.equal(productUrlForSource("fanza_books", "b100xxxxx01001", { seriesId: "  " }), null);
+
+    // Video: verified floor + content_id; GraphQL case variants only.
+    assert.equal(normalizeFanzaVideoFloor("AV"), "av");
+    assert.equal(normalizeFanzaVideoFloor("av"), "av");
+    assert.equal(normalizeFanzaVideoFloor("Amateur"), "amateur");
+    assert.equal(normalizeFanzaVideoFloor("AMATEUR"), "amateur");
+    assert.equal(normalizeFanzaVideoFloor("videoa"), null);
+    assert.equal(normalizeFanzaVideoFloor(""), null);
+    assert.equal(normalizeFanzaVideoFloor(null), null);
     assert.equal(
-      productUrlForSource("fanza_video", "abcd00123"),
-      fanzaVideoProductUrl("abcd00123"),
+      fanzaVideoProductUrl("h_175dxua00001", "AV"),
+      "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
     );
-    assert.match(productUrlForSource("fanza_video", "abcd00123"), /cid=abcd00123/);
     assert.equal(
-      productUrlForSource("fanza_dlsoft", "brand_0001"),
-      fanzaDlsoftProductUrl("brand_0001"),
+      fanzaVideoProductUrl("peep174", "amateur"),
+      "https://video.dmm.co.jp/amateur/content/?id=peep174",
     );
-    assert.match(productUrlForSource("fanza_dlsoft", "brand_0001"), /dlsoft\.dmm\.co\.jp/);
+    assert.equal(fanzaVideoProductUrl("abcd00123", null), null);
+    assert.equal(fanzaVideoProductUrl("abcd00123", "unknown"), null);
+    assert.equal(productUrlForSource("fanza_video", "abcd00123"), null);
+    assert.equal(
+      productUrlForSource("fanza_video", "5664mbrbi00009", { videoFloor: "av" }),
+      "https://video.dmm.co.jp/av/content/?id=5664mbrbi00009",
+    );
+    assert.doesNotMatch(
+      productUrlForSource("fanza_video", "x", { videoFloor: "av" }) ?? "",
+      /digital\/videoa/,
+    );
+
+    // dlsoft: verified detail path.
+    assert.equal(
+      productUrlForSource("fanza_dlsoft", "purple_0049"),
+      "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+    );
+    assert.equal(
+      fanzaDlsoftProductUrl("shall_0002"),
+      "https://dlsoft.dmm.co.jp/detail/shall_0002/",
+    );
 
     for (const source of [
       "dlsite",
@@ -286,8 +323,8 @@ describe("dlsite adapter", () => {
       "fanza_video",
       "fanza_dlsoft",
     ] as const) {
-      const url = productUrlForSource(source, "x", { seriesId: "1" });
-      assert.doesNotMatch(url, /example\.invalid/);
+      const url = productUrlForSource(source, "x", { seriesId: "1", videoFloor: "av" });
+      if (url) assert.doesNotMatch(url, /example\.invalid/);
     }
   });
 });

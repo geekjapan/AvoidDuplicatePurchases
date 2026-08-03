@@ -8,8 +8,10 @@ export {
   fanzaBooksProductUrl,
   fanzaVideoProductUrl,
   fanzaDlsoftProductUrl,
+  normalizeFanzaVideoFloor,
   type ListingSource,
   type ProductUrlOptions,
+  type FanzaVideoFloor,
 } from "./urls.js";
 export {
   parseDlsiteSalesPayload,
