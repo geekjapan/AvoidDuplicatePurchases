@@ -62,7 +62,7 @@ variables: `{offset:0, limit:N, filter:{displayStatus:"VISIBLE"}, sort:"VIEWING_
 - **`latestViewingRightsAcquiredAt` は購入日時ではなく「視聴権の最終取得日時」**。実測で複数商品がまったく同一のタイムスタンプを持つ = 一括移行の痕跡。**購入日として信用してはいけない**。
 - 公式フラグメント `purchasedContentSummaryFields` にも購入価格・購入日は無い。
 
-### GAMES — 「GAMES」の指す先が2つある(要確認)
+### GAMES = PCゲーム(`dlsoft.dmm.co.jp`)— #5 で確定
 
 - **PCゲーム(美少女ゲーム DL 販売)= `dlsoft.dmm.co.jp`** — こちらが「買った作品」を持つ floor。
   `GET https://dlsoft.dmm.co.jp/ajax/v1/library?service=all&brand=&searchWord=&sort=order_desc&browserOnly=0&page=1`
@@ -70,7 +70,7 @@ variables: `{offset:0, limit:N, filter:{displayStatus:"VISIBLE"}, sort:"VIEWING_
   要素: `contentId`/`productId`(= `brand_0001`)、`title`, `floor`(`Apcgame`)、`brand{name,listUrl}`, `authorArray[]`, `packageImageUrl`, **`deliveryBeginDate`**。
   **`deliveryBeginDate` は商品の配信開始日であって購入日ではない。購入日は取れない。**
 - **FANZA GAMES(`games.dmm.co.jp` / `library.games.dmm.co.jp`)= 基本無料オンラインゲーム**。作品の買い切り購入という概念が無く、重複購入回避の対象外。
-- → **#3 の「GAMES」は `dlsoft.dmm.co.jp`(PCゲーム)と解釈するのが妥当**。要ユーザー確認(下の「残る確認事項」)。
+- → **#3 の「GAMES」= `dlsoft.dmm.co.jp`(PCゲーム)でユーザー確認済み。** `games.dmm.co.jp` は取り込み対象外。
 
 ### 購入日まとめ(重要)
 
@@ -147,9 +147,8 @@ CORS 注意: `www.dmm.co.jp` から `book.dmm.co.jp` への fetch は**ブロッ
 
 ## 残る確認事項
 
-1. **#3 の「GAMES」= `dlsoft.dmm.co.jp`(PCゲーム)で確定してよいか。** `games.dmm.co.jp` は基本無料オンラインゲームで購入対象外。
-2. カートからのワンクリック削除 API(同人・ブックス)。破壊的操作なので本調査では未検証。
-3. 動画・PCゲームの商品ページ正規 URL 形式(履歴取り込みだけなら不要)。
+1. カートからのワンクリック削除の実現方法(同人・ブックス、および DLsite)。破壊的操作なので本調査では未検証。→ 別チケット。
+2. 動画・PCゲームの商品ページ正規 URL 形式(履歴取り込みだけなら不要)。
 
 ## 成果物
 
