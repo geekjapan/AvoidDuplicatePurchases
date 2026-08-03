@@ -24,12 +24,14 @@ function request(
   rawBody?: string,
 ): Promise<{ status: number; json: unknown; text: string }> {
   return new Promise((resolve, reject) => {
-    const payload =
-      rawBody !== undefined
-        ? rawBody
-        : body !== undefined
-          ? JSON.stringify(body)
-          : undefined;
+    let payload: string | undefined;
+    if (rawBody !== undefined) {
+      payload = rawBody;
+    } else if (body !== undefined) {
+      payload = JSON.stringify(body);
+    } else {
+      payload = undefined;
+    }
     import("node:http").then(({ request: httpRequest }) => {
       const r = httpRequest(
         {

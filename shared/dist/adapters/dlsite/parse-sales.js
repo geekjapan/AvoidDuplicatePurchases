@@ -66,10 +66,34 @@ export function parseDlsiteSalesPayload(raw) {
     if (!parsed.success) {
         throw new Error("DLsite sales payload failed schema validation");
     }
-    return parsed.data.map((e) => ({
-        workno: e.workno,
-        sales_date: e.sales_date,
-    }));
+    // Keep validated derived fields while retaining each original sales row untouched.
+    return parsed.data.map((e, i) => {
+        const original = entries[i];
+        const raw = original && typeof original === "object" && !Array.isArray(original)
+            ? { ...original }
+            : { workno: e.workno, sales_date: e.sales_date };
+        return {
+            workno: e.workno,
+            sales_date: e.sales_date,
+            raw,
+        };
+    });
+}
+function saleEvidence(entry) {
+    if (entry.raw && typeof entry.raw === "object")
+        return entry.raw;
+    return { workno: entry.workno, sales_date: entry.sales_date };
+}
+function productEvidence(product) {
+    if (product.raw && typeof product.raw === "object")
+        return product.raw;
+    return {
+        workno: product.workno,
+        work_name: product.work_name,
+        maker_name: product.maker_name,
+        series_id: product.series_id,
+        image_url: product.image_url,
+    };
 }
 /** Build a listing stub from sales history alone (product.json unavailable). */
 export function listingFromSale(entry) {
@@ -82,7 +106,7 @@ export function listingFromSale(entry) {
         imageUrl: null,
         purchasedAt: entry.sales_date,
         purchasedAtPrecision: "second",
-        rawJson: JSON.stringify(entry),
+        rawJson: JSON.stringify({ sale: saleEvidence(entry) }),
     };
 }
 /** Merge product.json metadata into a sales-derived listing. */
@@ -105,7 +129,11 @@ export function mergeProductInfo(sale, product) {
         imageUrl: typeof product.image_url === "string" && product.image_url.trim()
             ? product.image_url.trim()
             : null,
-        rawJson: JSON.stringify({ sale, product }),
+        // Complete untouched sale + product evidence (unknown fields retained via .raw).
+        rawJson: JSON.stringify({
+            sale: saleEvidence(sale),
+            product: productEvidence(product),
+        }),
     };
 }
 /**

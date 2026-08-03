@@ -15,6 +15,7 @@ function insertListing(
     cid: string;
     title: string;
     maker: string | null;
+    seriesId?: string | null;
     workIdLocked?: number;
     workId?: number;
   },
@@ -28,7 +29,7 @@ function insertListing(
     `INSERT INTO listing (
       source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url,
       purchased_at, purchased_at_precision, raw_json, imported_at
-    ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'unknown', '{}', ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'unknown', '{}', ?)`,
   ).run(
     opts.source,
     opts.cid,
@@ -36,6 +37,7 @@ function insertListing(
     opts.workIdLocked ?? 0,
     opts.title,
     opts.maker,
+    opts.seriesId ?? null,
     new Date().toISOString(),
   );
   const id = Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
@@ -100,6 +102,65 @@ describe("lookup other-site ownership", () => {
       { source: "dlsite", cid: "RJ999999", title: "Shared Title" },
     ]);
     assert.equal(noMaker[0]!.other.length, 0);
+  });
+
+  it("emits source-specific product URLs including FANZA Books series_id", () => {
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_285449",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+    });
+    insertListing(db, {
+      source: "fanza_books",
+      cid: "b100xxxxx01001",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+      seriesId: "100001",
+    });
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "abcd00123",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+    });
+    insertListing(db, {
+      source: "fanza_dlsoft",
+      cid: "brand_0001",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+    });
+    insertListing(db, {
+      source: "dlsite",
+      cid: "RJ700001",
+      title: "Cross Link Title",
+      maker: "Link Maker",
+    });
+
+    const res = lookupItems(db, [
+      {
+        source: "dlsite",
+        cid: "RJ700001",
+        title: "Cross Link Title",
+        maker: "Link Maker",
+      },
+    ]);
+    const other = res[0]!.other;
+    const bySource = Object.fromEntries(other.map((o) => [o.source, o.url]));
+
+    assert.equal(
+      bySource.fanza_doujin,
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_285449/",
+    );
+    assert.equal(
+      bySource.fanza_books,
+      "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+    );
+    assert.match(bySource.fanza_video ?? "", /cid=abcd00123/);
+    assert.match(bySource.fanza_dlsoft ?? "", /dlsoft\.dmm\.co\.jp/);
+    for (const url of Object.values(bySource)) {
+      assert.doesNotMatch(url, /example\.invalid/);
+    }
   });
 });
 

@@ -85,6 +85,141 @@ describe("import bounded enrichment", () => {
     assert.equal(row.maker_name, null);
   });
 
+  it("preserves existing enrichment and product raw evidence when re-import product fetch fails", async () => {
+    const workno = "RJ420001";
+    const product = [
+      {
+        workno,
+        work_name: "保持されるタイトル",
+        maker_name: "保持メーカー",
+        series_id: "S1",
+        image_url: "https://img.example/a.jpg",
+        work_pack_parent: "RJ420099",
+      },
+    ];
+
+    await importDlsitePayload(
+      db,
+      [{ workno, sales_date: "2024-01-01T00:00:00.000Z" }],
+      async () => product,
+      1,
+      { advanceCursor: false },
+    );
+
+    const before = db
+      .prepare(
+        `SELECT title, maker_name, series_id, image_url, raw_json FROM listing
+         WHERE source = 'dlsite' AND cid = ?`,
+      )
+      .get(workno) as {
+      title: string;
+      maker_name: string | null;
+      series_id: string | null;
+      image_url: string | null;
+      raw_json: string;
+    };
+    assert.equal(before.title, "保持されるタイトル");
+    assert.equal(before.maker_name, "保持メーカー");
+    const beforeKeys = db
+      .prepare("SELECT kind, key FROM match_key WHERE listing_id = (SELECT id FROM listing WHERE cid = ?)")
+      .all(workno) as Array<{ kind: string; key: string }>;
+    assert.ok(beforeKeys.some((k) => k.kind === "title"));
+
+    // Transient null fetch must not degrade enrichment or erase product raw evidence.
+    await importDlsitePayload(
+      db,
+      [{ workno, sales_date: "2024-02-01T00:00:00.000Z" }],
+      async () => null,
+      1,
+      { advanceCursor: false },
+    );
+
+    const afterNull = db
+      .prepare(
+        `SELECT title, maker_name, series_id, image_url, purchased_at, raw_json FROM listing
+         WHERE source = 'dlsite' AND cid = ?`,
+      )
+      .get(workno) as {
+      title: string;
+      maker_name: string | null;
+      series_id: string | null;
+      image_url: string | null;
+      purchased_at: string;
+      raw_json: string;
+    };
+    assert.equal(afterNull.title, "保持されるタイトル");
+    assert.equal(afterNull.maker_name, "保持メーカー");
+    assert.equal(afterNull.series_id, "S1");
+    assert.equal(afterNull.image_url, "https://img.example/a.jpg");
+    assert.equal(afterNull.purchased_at, "2024-02-01T00:00:00.000Z");
+    const afterRaw = JSON.parse(afterNull.raw_json) as {
+      product?: { work_pack_parent?: string; work_name?: string };
+    };
+    assert.equal(afterRaw.product?.work_pack_parent, "RJ420099");
+    assert.equal(afterRaw.product?.work_name, "保持されるタイトル");
+
+    const afterKeys = db
+      .prepare("SELECT kind, key FROM match_key WHERE listing_id = (SELECT id FROM listing WHERE cid = ?)")
+      .all(workno) as Array<{ kind: string; key: string }>;
+    assert.deepEqual(afterKeys, beforeKeys);
+
+    // CID-mismatched product also preserves enrichment.
+    await importDlsitePayload(
+      db,
+      [{ workno, sales_date: "2024-03-01T00:00:00.000Z" }],
+      async () => [
+        {
+          workno: "RJ999999",
+          work_name: "別人",
+          maker_name: "別人メーカー",
+          series_id: null,
+          image_url: null,
+        },
+      ],
+      1,
+      { advanceCursor: false },
+    );
+    const afterMismatch = db
+      .prepare("SELECT title, maker_name FROM listing WHERE source = 'dlsite' AND cid = ?")
+      .get(workno) as { title: string; maker_name: string | null };
+    assert.equal(afterMismatch.title, "保持されるタイトル");
+    assert.equal(afterMismatch.maker_name, "保持メーカー");
+
+    // Valid enrichment may still update metadata.
+    await importDlsitePayload(
+      db,
+      [{ workno, sales_date: "2024-04-01T00:00:00.000Z" }],
+      async () => [
+        {
+          workno,
+          work_name: "更新タイトル",
+          maker_name: "更新メーカー",
+          series_id: "S2",
+          image_url: "https://img.example/b.jpg",
+          work_pack_parent: "RJ420100",
+        },
+      ],
+      1,
+      { advanceCursor: false },
+    );
+    const afterOk = db
+      .prepare(
+        `SELECT title, maker_name, series_id, image_url, raw_json FROM listing
+         WHERE source = 'dlsite' AND cid = ?`,
+      )
+      .get(workno) as {
+      title: string;
+      maker_name: string | null;
+      series_id: string | null;
+      image_url: string | null;
+      raw_json: string;
+    };
+    assert.equal(afterOk.title, "更新タイトル");
+    assert.equal(afterOk.maker_name, "更新メーカー");
+    assert.equal(afterOk.series_id, "S2");
+    assert.equal(JSON.parse(afterOk.raw_json).product.work_pack_parent, "RJ420100");
+  });
+
   it("skips cursor advance when advanceCursor is false and commits global max later", async () => {
     const prior = "2020-01-01T00:00:00.000Z";
     commitDlsiteCursor(db, prior);

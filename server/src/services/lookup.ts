@@ -45,7 +45,7 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
     if (titleKey && makerKey) {
       const rows = db
         .prepare(
-          `SELECT l.id, l.source, l.cid, l.title, l.maker_name
+          `SELECT l.id, l.source, l.cid, l.title, l.maker_name, l.series_id
            FROM match_key mk
            JOIN listing l ON l.id = mk.listing_id
            WHERE mk.kind = 'title' AND mk.key = ?`,
@@ -56,6 +56,7 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
         cid: string;
         title: string;
         maker_name: string | null;
+        series_id: string | null;
       }>;
 
       for (const row of rows) {
@@ -66,7 +67,8 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
           source: row.source,
           cid: row.cid,
           title: row.title,
-          url: productUrlForSource(row.source, row.cid),
+          // FANZA Books product URLs require series_id (prototype/fanza).
+          url: productUrlForSource(row.source, row.cid, { seriesId: row.series_id }),
         });
       }
     }

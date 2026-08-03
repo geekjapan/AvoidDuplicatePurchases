@@ -8,6 +8,11 @@ import {
   dlsiteProductUrl,
   isValidDlsiteWorkno,
   isStrictUtcIsoInstant,
+  productUrlForSource,
+  fanzaDoujinProductUrl,
+  fanzaBooksProductUrl,
+  fanzaVideoProductUrl,
+  fanzaDlsoftProductUrl,
 } from "../adapters/dlsite/index.ts";
 
 describe("dlsite adapter", () => {
@@ -192,13 +197,12 @@ describe("dlsite adapter", () => {
         image_url: "https://example.com/a.jpg",
       },
     ]);
-    assert.deepEqual(ok, {
-      workno: "RJ000001",
-      work_name: "作品",
-      maker_name: "メーカー",
-      series_id: null,
-      image_url: "https://example.com/a.jpg",
-    });
+    assert.equal(ok?.workno, "RJ000001");
+    assert.equal(ok?.work_name, "作品");
+    assert.equal(ok?.maker_name, "メーカー");
+    assert.equal(ok?.series_id, null);
+    assert.equal(ok?.image_url, "https://example.com/a.jpg");
+    assert.ok(ok?.raw);
 
     assert.equal(parseDlsiteProductJson(null), null);
     assert.equal(parseDlsiteProductJson([]), null);
@@ -207,5 +211,83 @@ describe("dlsite adapter", () => {
       parseDlsiteProductJson([{ workno: "BAD", work_name: "x" }]),
       null,
     );
+  });
+
+  it("preserves untouched sale/product evidence including unknown product fields in raw_json", () => {
+    const sales = parseDlsiteSalesPayload([
+      {
+        workno: "RJ000001",
+        sales_date: "2022-06-11T14:20:07.000000Z",
+        future_sale_field: "keep-me",
+      },
+    ]);
+    assert.equal(sales[0]!.raw?.future_sale_field, "keep-me");
+
+    const product = parseDlsiteProductJson([
+      {
+        workno: "RJ000001",
+        work_name: "作品A",
+        maker_name: "メーカーA",
+        series_id: null,
+        image_url: null,
+        work_pack_parent: "RJ000099",
+        unknown_future_field: { nested: true },
+      },
+    ]);
+    assert.ok(product);
+    assert.equal(product!.raw?.work_pack_parent, "RJ000099");
+    assert.deepEqual(product!.raw?.unknown_future_field, { nested: true });
+
+    const listing = mergeProductInfo(sales[0]!, product);
+    const raw = JSON.parse(listing.rawJson) as {
+      sale: Record<string, unknown>;
+      product: Record<string, unknown>;
+    };
+    assert.equal(raw.sale.future_sale_field, "keep-me");
+    assert.equal(raw.product.work_pack_parent, "RJ000099");
+    assert.deepEqual(raw.product.unknown_future_field, { nested: true });
+    assert.equal(raw.product.work_name, "作品A");
+  });
+
+  it("builds source-specific product URLs for every declared listing source", () => {
+    assert.match(productUrlForSource("dlsite", "RJ123456"), /product_id\/RJ123456/);
+    assert.equal(
+      productUrlForSource("fanza_doujin", "d_285449"),
+      fanzaDoujinProductUrl("d_285449"),
+    );
+    assert.equal(
+      fanzaDoujinProductUrl("d_285449"),
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_285449/",
+    );
+    assert.equal(
+      fanzaBooksProductUrl("b100xxxxx01001", "100001"),
+      "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+    );
+    assert.equal(
+      productUrlForSource("fanza_books", "b100xxxxx01001", { seriesId: "100001" }),
+      "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+    );
+    assert.equal(fanzaBooksProductUrl("b100xxxxx01001", null), null);
+    assert.equal(
+      productUrlForSource("fanza_video", "abcd00123"),
+      fanzaVideoProductUrl("abcd00123"),
+    );
+    assert.match(productUrlForSource("fanza_video", "abcd00123"), /cid=abcd00123/);
+    assert.equal(
+      productUrlForSource("fanza_dlsoft", "brand_0001"),
+      fanzaDlsoftProductUrl("brand_0001"),
+    );
+    assert.match(productUrlForSource("fanza_dlsoft", "brand_0001"), /dlsoft\.dmm\.co\.jp/);
+
+    for (const source of [
+      "dlsite",
+      "fanza_doujin",
+      "fanza_books",
+      "fanza_video",
+      "fanza_dlsoft",
+    ] as const) {
+      const url = productUrlForSource(source, "x", { seriesId: "1" });
+      assert.doesNotMatch(url, /example\.invalid/);
+    }
   });
 });

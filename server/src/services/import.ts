@@ -6,6 +6,7 @@ import {
   maxSalesCursor,
   isStrictUtcIsoInstant,
   type DlsiteSaleEntry,
+  type DlsiteProductInfo,
 } from "@adp/shared/adapters/dlsite";
 import type { DatabaseSync } from "node:sqlite";
 import { recomputeMatchKeys } from "./lookup.js";
@@ -65,13 +66,54 @@ async function mapWithConcurrency<T, R>(
 function productForSale(
   sale: DlsiteSaleEntry,
   productRaw: unknown | null,
-): ReturnType<typeof parseDlsiteProductJson> {
+): DlsiteProductInfo | null {
   if (!productRaw) return null;
   const product = parseDlsiteProductJson(productRaw);
   if (!product) return null;
   // Exact workno equality: never merge another CID's product.json into this sale.
   if (product.workno !== sale.workno.trim().toUpperCase()) return null;
   return product;
+}
+
+function saleEvidence(sale: DlsiteSaleEntry): Record<string, unknown> {
+  if (sale.raw && typeof sale.raw === "object") return sale.raw;
+  return { workno: sale.workno, sales_date: sale.sales_date };
+}
+
+/**
+ * Re-import without valid product enrichment: preserve display metadata, match keys,
+ * and prior product raw evidence. Only sale cursor fields (purchased_at) and sale
+ * evidence inside raw_json are refreshed.
+ */
+function updateExistingWithoutProduct(
+  db: DatabaseSync,
+  listingId: number,
+  sale: DlsiteSaleEntry,
+  now: string,
+): void {
+  const prev = db
+    .prepare("SELECT raw_json FROM listing WHERE id = ?")
+    .get(listingId) as { raw_json: string } | undefined;
+
+  let nextRawJson = prev?.raw_json ?? JSON.stringify({ sale: saleEvidence(sale) });
+  try {
+    const parsed = prev?.raw_json ? JSON.parse(prev.raw_json) : {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      obj.sale = saleEvidence(sale);
+      // Keep prior product evidence when present (including unknown fields).
+      nextRawJson = JSON.stringify(obj);
+    }
+  } catch {
+    // Leave prior raw_json bytes untouched if unparseable.
+  }
+
+  db.prepare(
+    `UPDATE listing SET
+      purchased_at = ?, purchased_at_precision = ?, raw_json = ?, imported_at = ?
+     WHERE id = ?`,
+  ).run(sale.sales_date, "second", nextRawJson, now, listingId);
+  // Intentionally do not recompute match keys — title/maker unchanged.
 }
 
 function upsertListing(
@@ -81,12 +123,19 @@ function upsertListing(
   now: string,
 ): "inserted" | "updated" {
   const product = productForSale(sale, productRaw);
-  const parsed = mergeProductInfo(sale, product);
+  const cid = sale.workno.trim().toUpperCase();
   const existing = db
     .prepare("SELECT id FROM listing WHERE source = 'dlsite' AND cid = ?")
-    .get(parsed.cid) as { id: number } | undefined;
+    .get(cid) as { id: number } | undefined;
 
   if (existing) {
+    if (!product) {
+      // Unavailable / HTTP-failed / malformed / CID-mismatched enrichment.
+      updateExistingWithoutProduct(db, existing.id, sale, now);
+      return "updated";
+    }
+
+    const parsed = mergeProductInfo(sale, product);
     db.prepare(
       `UPDATE listing SET
         title = ?, maker_name = ?, series_id = ?, image_url = ?,
@@ -107,6 +156,7 @@ function upsertListing(
     return "updated";
   }
 
+  const parsed = mergeProductInfo(sale, product);
   db.prepare("INSERT INTO work DEFAULT VALUES").run();
   const workId = Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
   db.prepare(

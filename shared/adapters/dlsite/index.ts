@@ -4,6 +4,12 @@ export {
   dlsiteProductJsonUrl,
   isValidDlsiteWorkno,
   productUrlForSource,
+  fanzaDoujinProductUrl,
+  fanzaBooksProductUrl,
+  fanzaVideoProductUrl,
+  fanzaDlsoftProductUrl,
+  type ListingSource,
+  type ProductUrlOptions,
 } from "./urls.js";
 export {
   parseDlsiteSalesPayload,

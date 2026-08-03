@@ -14,10 +14,12 @@ export declare function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[]
 export declare function listingFromSale(entry: DlsiteSaleEntry): DlsiteParsedListing;
 /** Merge product.json metadata into a sales-derived listing. */
 export declare function mergeProductInfo(sale: DlsiteSaleEntry, product: {
+    workno?: string;
     work_name?: string;
     maker_name?: string | null;
     series_id?: string | null;
     image_url?: string | null;
+    raw?: Record<string, unknown>;
 } | null): DlsiteParsedListing;
 /**
  * Exact chronological compare for validated UTC ISO instants without Date/Number precision loss.

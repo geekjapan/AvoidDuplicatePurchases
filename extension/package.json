@@ -9,7 +9,7 @@
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@adp/shared": "*"
+    "@adp/shared": "0.0.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
