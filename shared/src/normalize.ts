@@ -101,9 +101,17 @@ export function dice(a: string, b: string): number {
   return (2 * hit) / (a.length - 1 + b.length - 1);
 }
 
-/** Regression guard: blanket bracket removal must not become the default path. */
+/**
+ * Regression guard for the production key path (titleMatchKey / key L1–L5).
+ * Distinct identifying brackets must survive; this must pass on the current
+ * implementation and fail only if blanket bracket removal re-enters that path.
+ */
 export function assertNormalizationSelfCheck(): void {
-  if (stripAllBrackets("作品【演者A】") === stripAllBrackets("作品【演者B】")) {
-    throw new Error("stripAllBrackets regression: distinct bracket content collapsed");
+  const a = "作品【演者A】";
+  const b = "作品【演者B】";
+  if (titleMatchKey(a) === titleMatchKey(b) || key(a, 5) === key(b, 5)) {
+    throw new Error(
+      "normalization regression: distinct bracket content collapsed on production key path",
+    );
   }
 }

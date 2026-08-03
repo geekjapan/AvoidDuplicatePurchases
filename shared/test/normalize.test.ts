@@ -29,12 +29,42 @@ describe("normalize", () => {
     assert.equal(l2("【FANZA限定版】"), "【FANZA限定版】");
   });
 
-  it("rejects blanket bracket removal", () => {
-    assert.equal(
-      stripAllBrackets("作品【演者A】"),
-      stripAllBrackets("作品【演者B】"),
-    );
-    assert.throws(() => assertNormalizationSelfCheck(), /regression/);
+  it("self-check passes on the production titleMatchKey/key path", () => {
+    assert.notEqual(titleMatchKey("作品【演者A】"), titleMatchKey("作品【演者B】"));
+    assert.notEqual(key("作品【演者A】", 5), key("作品【演者B】", 5));
+    assert.doesNotThrow(() => assertNormalizationSelfCheck());
+  });
+
+  it("mutation: blanket bracket removal collapses distinct titles and would fail self-check", () => {
+    const a = "作品【演者A】";
+    const b = "作品【演者B】";
+
+    // Rejected helper still collapses identifying brackets (kept only for this guard).
+    assert.equal(stripAllBrackets(a), stripAllBrackets(b));
+
+    // Simulate production-path regression: replace L2 with stripAllBrackets.
+    const regressedKey = (title: string): string => {
+      let t = l1(title);
+      t = stripAllBrackets(t);
+      t = l5(t);
+      t = l3(t);
+      t = l4(t);
+      return t;
+    };
+    assert.equal(regressedKey(a), regressedKey(b));
+
+    // A self-check wired to the mutated path must throw.
+    assert.throws(() => {
+      if (regressedKey(a) === regressedKey(b)) {
+        throw new Error(
+          "normalization regression: distinct bracket content collapsed on production key path",
+        );
+      }
+    }, /regression/);
+
+    // Current production path remains distinct and the real self-check still passes.
+    assert.notEqual(titleMatchKey(a), titleMatchKey(b));
+    assert.doesNotThrow(() => assertNormalizationSelfCheck());
   });
 
   it("L3: symbol removal", () => {
