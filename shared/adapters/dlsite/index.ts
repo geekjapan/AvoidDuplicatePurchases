@@ -10,5 +10,6 @@ export {
   listingFromSale,
   mergeProductInfo,
   maxSalesCursor,
+  isStrictUtcIsoInstant,
 } from "./parse-sales.js";
 export { parseDlsiteProductJson } from "./parse-product.js";

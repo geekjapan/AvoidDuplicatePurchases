@@ -4,6 +4,33 @@ import { isValidDlsiteWorkno } from "./urls.js";
 function normalizeDlsiteCid(workno) {
     return workno.trim().toUpperCase();
 }
+/**
+ * Strict UTC ISO-8601 instant: `YYYY-MM-DDTHH:mm:ss[.fraction]Z` only.
+ * Rejects locale dates, offset timezones, and impossible calendar days (e.g. Feb 30).
+ */
+export function isStrictUtcIsoInstant(value) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/.exec(value);
+    if (!m)
+        return false;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = Number(m[6]);
+    if (month < 1 || month > 12)
+        return false;
+    if (hour > 23 || minute > 59 || second > 59)
+        return false;
+    // Round-trip through UTC components so 2024-02-30 / 2024-04-31 are rejected.
+    const dt = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    return (dt.getUTCFullYear() === year &&
+        dt.getUTCMonth() === month - 1 &&
+        dt.getUTCDate() === day &&
+        dt.getUTCHours() === hour &&
+        dt.getUTCMinutes() === minute &&
+        dt.getUTCSeconds() === second);
+}
 const DlsiteSaleEntrySchema = z.object({
     workno: z
         .string()
@@ -14,7 +41,7 @@ const DlsiteSaleEntrySchema = z.object({
         .string()
         .transform((s) => s.trim())
         .refine((s) => s.length > 0, { message: "sales_date required" })
-        .refine((s) => Number.isFinite(Date.parse(s)), { message: "invalid sales_date" }),
+        .refine((s) => isStrictUtcIsoInstant(s), { message: "invalid sales_date" }),
 });
 const DlsiteSalesArraySchema = z.array(DlsiteSaleEntrySchema).min(1);
 /**

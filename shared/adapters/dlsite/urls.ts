@@ -7,11 +7,16 @@ type ListingSource =
 
 const WORKNO_RE = /^[BRV][JE]\d{6,8}$/;
 
+function dlsiteFloorForWorkno(workno: string): "pro" | "books" | "maniax" {
+  if (workno.startsWith("VJ")) return "pro";
+  if (workno.startsWith("BJ")) return "books";
+  return "maniax";
+}
+
 /** Build a canonical DLsite product page URL for lookup `other` links. */
 export function dlsiteProductUrl(cid: string): string {
   const workno = cid.toUpperCase();
-  const floor =
-    workno.startsWith("VJ") ? "pro" : workno.startsWith("BJ") ? "books" : "maniax";
+  const floor = dlsiteFloorForWorkno(workno);
   return `https://www.dlsite.com/${floor}/work/=/product_id/${workno}.html`;
 }
 
