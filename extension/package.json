@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
+    "build": "tsc -p tsconfig.json && npm run build:sw && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
+    "build:sw": "esbuild src/background/index.ts --bundle --format=esm --platform=browser --target=chrome109 --outfile=dist/background/index.js --legal-comments=none",
     "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
@@ -12,6 +13,7 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.3"
   }
 }
