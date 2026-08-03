@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run build:sw && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
     "build:sw": "esbuild src/background/index.ts --bundle --format=esm --platform=browser --target=chrome109 --outfile=dist/background/index.js --legal-comments=none",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "test:e2e": "node --import tsx --test 'src/**/*.e2e.test.ts'"
   },
   "dependencies": {
     "@adp/shared": "0.0.0"
