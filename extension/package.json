@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/"
+    "build": "tsc -p tsconfig.json && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@adp/shared": "*"

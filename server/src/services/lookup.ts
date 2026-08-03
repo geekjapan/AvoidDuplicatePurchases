@@ -38,43 +38,37 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
   }
 
   const other: LookupResult["other"] = [];
-  if (item.title) {
+  // Other-site ownership: exact normalized title + maker, and different source.
+  if (item.title && item.maker) {
     const titleKey = titleMatchKey(item.title);
-    const makerKey = item.maker ? makerMatchKey(item.maker) : "";
-    const rows = db
-      .prepare(
-        `SELECT l.id, l.source, l.cid, l.title, l.maker_name
-         FROM match_key mk
-         JOIN listing l ON l.id = mk.listing_id
-         WHERE mk.kind = 'title' AND mk.key = ?`,
-      )
-      .all(titleKey) as Array<{
-      id: number;
-      source: Source;
-      cid: string;
-      title: string;
-      maker_name: string | null;
-    }>;
+    const makerKey = makerMatchKey(item.maker);
+    if (titleKey && makerKey) {
+      const rows = db
+        .prepare(
+          `SELECT l.id, l.source, l.cid, l.title, l.maker_name
+           FROM match_key mk
+           JOIN listing l ON l.id = mk.listing_id
+           WHERE mk.kind = 'title' AND mk.key = ?`,
+        )
+        .all(titleKey) as Array<{
+        id: number;
+        source: Source;
+        cid: string;
+        title: string;
+        maker_name: string | null;
+      }>;
 
-    for (const row of rows) {
-      if (
-        item.source &&
-        item.cid &&
-        row.source === item.source &&
-        row.cid === normalizeCid(item.source, item.cid)
-      ) {
-        continue;
-      }
-      if (makerKey) {
+      for (const row of rows) {
+        if (item.source && row.source === item.source) continue;
         const rowMakerKey = makerMatchKey(row.maker_name);
         if (!rowMakerKey || rowMakerKey !== makerKey) continue;
+        other.push({
+          source: row.source,
+          cid: row.cid,
+          title: row.title,
+          url: productUrlForSource(row.source, row.cid),
+        });
       }
-      other.push({
-        source: row.source,
-        cid: row.cid,
-        title: row.title,
-        url: productUrlForSource(row.source, row.cid),
-      });
     }
   }
 
@@ -161,8 +155,14 @@ export function runRematch(db: DatabaseSync): { rematched: number; candidates: n
 
   db.exec("DELETE FROM candidate");
   let candidates = 0;
-  const allListings = db
-    .prepare("SELECT id, title, maker_name, source, cid FROM listing ORDER BY id")
+  // Locked (decided) listings must not reappear as candidates after rematch.
+  const candidateListings = db
+    .prepare(
+      `SELECT id, title, maker_name, source, cid
+       FROM listing
+       WHERE work_id_locked = 0
+       ORDER BY id`,
+    )
     .all() as Array<{
     id: number;
     title: string;
@@ -171,10 +171,10 @@ export function runRematch(db: DatabaseSync): { rematched: number; candidates: n
     cid: string;
   }>;
 
-  for (let i = 0; i < allListings.length; i++) {
-    for (let j = i + 1; j < allListings.length; j++) {
-      const a = allListings[i]!;
-      const b = allListings[j]!;
+  for (let i = 0; i < candidateListings.length; i++) {
+    for (let j = i + 1; j < candidateListings.length; j++) {
+      const a = candidateListings[i]!;
+      const b = candidateListings[j]!;
       if (a.source === b.source && a.cid === b.cid) continue;
       const makerA = makerMatchKey(a.maker_name);
       const makerB = makerMatchKey(b.maker_name);

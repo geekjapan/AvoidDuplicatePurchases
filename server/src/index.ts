@@ -14,7 +14,11 @@ export function startServer(): { close: () => void } {
 
   const server = createServer(async (req, res) => {
     try {
-      const handled = await handleApi(req, res, { db, port: config.port });
+      const handled = await handleApi(req, res, {
+        db,
+        port: config.port,
+        extensionOrigins: config.extensionOrigins,
+      });
       if (!handled) {
         res.writeHead(404, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "not_found" }));

@@ -2,6 +2,7 @@ import type { DlsiteParsedListing, DlsiteSaleEntry } from "./types.js";
 /**
  * Parse raw extension payload from DLsite sales API.
  * Accepts a non-empty array of sale entries or `{ items: [...] }`.
+ * Invalid entries reject the entire batch (no silent drop).
  */
 export declare function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[];
 /** Build a listing stub from sales history alone (product.json unavailable). */

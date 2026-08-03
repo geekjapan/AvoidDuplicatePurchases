@@ -28,4 +28,31 @@ describe("dlsite adapter", () => {
     assert.ok(isValidDlsiteWorkno("RJ123456"));
     assert.match(dlsiteProductUrl("RJ123456"), /product_id\/RJ123456/);
   });
+
+  it("rejects the complete batch when any row is malformed (zod strict)", () => {
+    assert.throws(
+      () =>
+        parseDlsiteSalesPayload([
+          { workno: "RJ000001", sales_date: "2022-06-11T14:20:07.000000Z" },
+          { workno: "RJ000002", sales_date: "not-a-date" },
+        ]),
+      /schema validation|failed/,
+    );
+    assert.throws(
+      () =>
+        parseDlsiteSalesPayload([
+          { workno: "NOT-A-WORKNO", sales_date: "2022-06-11T14:20:07.000000Z" },
+        ]),
+      /schema validation|failed/,
+    );
+    assert.throws(() => parseDlsiteSalesPayload([{ workno: "RJ000001" }]), /schema validation|failed/);
+  });
+
+  it("accepts items wrapper payloads", () => {
+    const sales = parseDlsiteSalesPayload({
+      items: [{ workno: "RJ000003", sales_date: "2023-01-01T00:00:00.000Z" }],
+    });
+    assert.equal(sales.length, 1);
+    assert.equal(sales[0]!.workno, "RJ000003");
+  });
 });

@@ -5,9 +5,12 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { openDatabase } from "../src/db.js";
 import { handleApi } from "../src/http.js";
+import { isAllowedOrigin, loadConfig } from "../src/config.js";
 import type { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const ALLOWED_EXTENSION = "chrome-extension://abcdefghijklmnop";
 
 function request(
   port: number,
@@ -46,6 +49,7 @@ describe("origin protection", () => {
   let server: Server;
   let port: number;
   let db: DatabaseSync;
+  const extensionOrigins = new Set([ALLOWED_EXTENSION]);
 
   before(async () => {
     const dbPath = join(__dirname, `origin-db-${Date.now()}.sqlite`);
@@ -53,7 +57,7 @@ describe("origin protection", () => {
     db = appDb.sqlite;
     let listenPort = 0;
     server = createServer(async (req, res) => {
-      await handleApi(req, res, { db, port: listenPort });
+      await handleApi(req, res, { db, port: listenPort, extensionOrigins });
     });
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", () => {
@@ -70,14 +74,18 @@ describe("origin protection", () => {
     db.close();
   });
 
-  it("allows chrome-extension origin", async () => {
-    const res = await request(
+  it("allows only configured chrome-extension origin (exact allowlist)", async () => {
+    const ok = await request(port, "/api/sync-state/dlsite", ALLOWED_EXTENSION);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers["access-control-allow-origin"], undefined);
+
+    const foreign = await request(
       port,
       "/api/sync-state/dlsite",
-      "chrome-extension://abcdefghijklmnop",
+      "chrome-extension://evil-other-extension",
     );
-    assert.equal(res.status, 200);
-    assert.equal(res.headers["access-control-allow-origin"], undefined);
+    assert.equal(foreign.status, 403);
+    assert.match(foreign.text, /forbidden/);
   });
 
   it("allows same-origin admin requests", async () => {
@@ -96,5 +104,22 @@ describe("origin protection", () => {
   it("allows requests with no Origin header", async () => {
     const res = await request(port, "/api/sync-state/dlsite");
     assert.equal(res.status, 200);
+  });
+
+  it("isAllowedOrigin requires exact extension-origin membership", () => {
+    const allow = new Set(["chrome-extension://allowed"]);
+    assert.equal(isAllowedOrigin("chrome-extension://allowed", 41321, allow), true);
+    assert.equal(isAllowedOrigin("chrome-extension://evil", 41321, allow), false);
+    assert.equal(isAllowedOrigin("chrome-extension://evil", 41321, new Set()), false);
+    assert.equal(isAllowedOrigin(undefined, 41321, allow), true);
+    assert.equal(isAllowedOrigin("http://127.0.0.1:41321", 41321, allow), true);
+  });
+
+  it("loadConfig parses ADP_EXTENSION_ORIGIN into the allowlist", () => {
+    const cfg = loadConfig({
+      ADP_EXTENSION_ORIGIN: "chrome-extension://aaa, chrome-extension://bbb",
+    });
+    assert.ok(cfg.extensionOrigins.has("chrome-extension://aaa"));
+    assert.ok(cfg.extensionOrigins.has("chrome-extension://bbb"));
   });
 });

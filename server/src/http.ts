@@ -19,6 +19,8 @@ import { dispatchRouteMounts } from "./route-mounts.js";
 export interface ApiContext {
   db: DatabaseSync;
   port: number;
+  /** Exact chrome-extension:// origins allowed (from ADP_EXTENSION_ORIGIN). */
+  extensionOrigins?: ReadonlySet<string>;
   productFetcher?: ProductFetcher;
 }
 
@@ -69,7 +71,7 @@ export async function handleApi(
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${ctx.port}`);
   if (!url.pathname.startsWith("/api/")) return false;
 
-  if (!isAllowedOrigin(req.headers.origin, ctx.port)) {
+  if (!isAllowedOrigin(req.headers.origin, ctx.port, ctx.extensionOrigins ?? new Set())) {
     forbidden(res);
     return true;
   }

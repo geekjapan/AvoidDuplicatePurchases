@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { DlsiteParsedListing, DlsiteSaleEntry } from "./types.js";
 import { isValidDlsiteWorkno } from "./urls.js";
 
@@ -6,22 +7,28 @@ function normalizeDlsiteCid(workno: string): string {
   return workno.trim().toUpperCase();
 }
 
-function parseSaleEntry(entry: unknown): DlsiteSaleEntry | null {
-  if (!entry || typeof entry !== "object") return null;
-  const rec = entry as Record<string, unknown>;
-  const workno = typeof rec.workno === "string" ? rec.workno.trim() : "";
-  const salesDate = typeof rec.sales_date === "string" ? rec.sales_date.trim() : "";
-  if (!workno || !salesDate) return null;
-  if (!isValidDlsiteWorkno(workno)) return null;
-  return { workno, sales_date: salesDate };
-}
+const DlsiteSaleEntrySchema = z.object({
+  workno: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length > 0, { message: "workno required" })
+    .refine((s) => isValidDlsiteWorkno(s), { message: "invalid workno" }),
+  sales_date: z
+    .string()
+    .transform((s) => s.trim())
+    .refine((s) => s.length > 0, { message: "sales_date required" })
+    .refine((s) => Number.isFinite(Date.parse(s)), { message: "invalid sales_date" }),
+});
+
+const DlsiteSalesArraySchema = z.array(DlsiteSaleEntrySchema).min(1);
 
 /**
  * Parse raw extension payload from DLsite sales API.
  * Accepts a non-empty array of sale entries or `{ items: [...] }`.
+ * Invalid entries reject the entire batch (no silent drop).
  */
 export function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[] {
-  let entries: unknown[] | null = null;
+  let entries: unknown;
   if (Array.isArray(raw)) {
     entries = raw;
   } else if (
@@ -30,15 +37,18 @@ export function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[] {
     Array.isArray((raw as { items?: unknown }).items)
   ) {
     entries = (raw as { items: unknown[] }).items;
-  }
-  if (!entries || entries.length === 0) {
+  } else {
     throw new Error("DLsite sales payload must be a non-empty array");
   }
-  const parsed = entries.map(parseSaleEntry).filter((e): e is DlsiteSaleEntry => e !== null);
-  if (parsed.length === 0) {
-    throw new Error("DLsite sales payload contained no valid entries");
+
+  const parsed = DlsiteSalesArraySchema.safeParse(entries);
+  if (!parsed.success) {
+    throw new Error("DLsite sales payload failed schema validation");
   }
-  return parsed;
+  return parsed.data.map((e) => ({
+    workno: e.workno,
+    sales_date: e.sales_date,
+  }));
 }
 
 /** Build a listing stub from sales history alone (product.json unavailable). */

@@ -11,6 +11,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");
+const TEST_EXTENSION_ORIGIN = "chrome-extension://test-extension";
+const TEST_EXTENSION_ORIGINS = new Set([TEST_EXTENSION_ORIGIN]);
 
 function request(
   port: number,
@@ -68,7 +70,12 @@ function startTestServer(
   return new Promise((resolve, reject) => {
     let listenPort = 0;
     const server = createServer(async (req, res) => {
-      await handleApi(req, res, { db, port: listenPort, productFetcher });
+      await handleApi(req, res, {
+        db,
+        port: listenPort,
+        productFetcher,
+        extensionOrigins: TEST_EXTENSION_ORIGINS,
+      });
     });
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
@@ -126,7 +133,7 @@ describe("server API", () => {
       "POST",
       "/api/import/dlsite",
       sales,
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
       productFetcher,
     );
     assert.equal(first.status, 200);
@@ -141,7 +148,7 @@ describe("server API", () => {
       "POST",
       "/api/import/dlsite",
       sales,
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
       productFetcher,
     );
     assert.equal(second.status, 200);
@@ -165,7 +172,7 @@ describe("server API", () => {
       "POST",
       "/api/lookup",
       { items: [{ source: "dlsite", cid: "RJ000001" }] },
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
     );
     assert.equal(res.status, 200);
     const body = res.json as { results: Array<{ owned: boolean }> };
@@ -176,7 +183,7 @@ describe("server API", () => {
       "POST",
       "/api/lookup",
       { items: [{ source: "dlsite", cid: "RJ999999" }] },
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
     );
     assert.equal((missing.json as { results: Array<{ owned: boolean }> }).results[0]?.owned, false);
   });
@@ -187,7 +194,7 @@ describe("server API", () => {
       "POST",
       "/api/lookup",
       { items: [{}] },
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
     );
     assert.equal(res.status, 400);
     assert.match(res.text, /invalid_request/);
@@ -200,7 +207,7 @@ describe("server API", () => {
       "GET",
       "/api/sync-state/dlsite",
       undefined,
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
     );
     assert.equal(res.status, 200);
     const body = res.json as { cursor: string | null; lastSyncedAt: string | null };
@@ -213,7 +220,7 @@ describe("server API", () => {
       "POST",
       "/api/rematch",
       {},
-      { Origin: "chrome-extension://test-extension" },
+      { Origin: TEST_EXTENSION_ORIGIN },
     );
     assert.equal(res.status, 200);
     const body = res.json as { rematched: number; candidates: number };
