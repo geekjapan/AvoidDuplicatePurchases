@@ -131,12 +131,31 @@ export function mergeProductInfo(
   };
 }
 
-/** Compute the `last=` cursor from the newest sales_date in a batch. */
+/**
+ * Instant millis for a strict UTC ISO sales_date already accepted by the schema.
+ * Used so seconds-only `...00Z` vs later `...00.999Z` compare chronologically
+ * (lexical string max wrongly prefers `...00Z` because `Z` > `.`).
+ */
+function salesDateInstantMs(salesDate: string): number {
+  const ms = Date.parse(salesDate);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Compute the `last=` cursor from the newest sales_date in a batch.
+ * Compares by parsed UTC instant; returns the original winning sales_date string.
+ */
 export function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null {
   if (entries.length === 0) return null;
-  let max = entries[0]!.sales_date;
-  for (const e of entries) {
-    if (e.sales_date > max) max = e.sales_date;
+  let maxDate = entries[0]!.sales_date;
+  let maxMs = salesDateInstantMs(maxDate);
+  for (let i = 1; i < entries.length; i++) {
+    const candidate = entries[i]!.sales_date;
+    const candidateMs = salesDateInstantMs(candidate);
+    if (candidateMs > maxMs) {
+      maxMs = candidateMs;
+      maxDate = candidate;
+    }
   }
-  return max;
+  return maxDate;
 }

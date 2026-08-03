@@ -109,6 +109,25 @@ describe("dlsite adapter", () => {
     assert.equal(sales[0]!.workno, "RJ000003");
   });
 
+  it("maxSalesCursor uses instant comparison for mixed ISO fractional precision", () => {
+    // Lexical max wrongly picks seconds-only Z because 'Z' > '.'; chronological max is .999Z.
+    const mixed = parseDlsiteSalesPayload([
+      { workno: "RJ000001", sales_date: "2024-01-01T00:00:00Z" },
+      { workno: "RJ000002", sales_date: "2024-01-01T00:00:00.999Z" },
+    ]);
+    assert.equal(maxSalesCursor(mixed), "2024-01-01T00:00:00.999Z");
+    assert.equal(maxSalesCursor([...mixed].reverse()), "2024-01-01T00:00:00.999Z");
+
+    // Probe order: seconds-only first then fractional (completion-verifier failure case).
+    assert.equal(
+      maxSalesCursor([
+        { workno: "RJ000010", sales_date: "2024-01-01T00:00:00Z" },
+        { workno: "RJ000011", sales_date: "2024-01-01T00:00:00.999Z" },
+      ]),
+      "2024-01-01T00:00:00.999Z",
+    );
+  });
+
   it("parses product.json via Zod and returns null for invalid shapes", () => {
     const ok = parseDlsiteProductJson([
       {

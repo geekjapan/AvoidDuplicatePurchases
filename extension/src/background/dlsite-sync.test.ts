@@ -85,9 +85,20 @@ describe("dlsite-sync chunking and rematch propagation", () => {
     assert.equal(maxCursorFromSales([...sales].reverse()), "2024-12-31T23:59:59.000Z");
   });
 
+  it("selects later fractional instant over earlier seconds-only ISO (mixed precision)", () => {
+    // Completion-verifier probe: lexical max would return ...00Z; chronological max is ...00.999Z.
+    const sales = [
+      { workno: "RJ000001", sales_date: "2024-01-01T00:00:00Z" },
+      { workno: "RJ000002", sales_date: "2024-01-01T00:00:00.999Z" },
+    ];
+    assert.equal(maxCursorFromSales(sales), "2024-01-01T00:00:00.999Z");
+    assert.equal(maxCursorFromSales([...sales].reverse()), "2024-01-01T00:00:00.999Z");
+  });
+
   it("imports chunks without advancing cursor and commits global max once after all succeed", async () => {
     // 85 sales with max date in the first logical chunk; final chunk has older dates.
     // Simulates reversed/unordered DLsite response so last chunk max ≠ global max.
+    // Imports are sequential (for-await over chunks); completion-order races cannot occur.
     const sales = Array.from({ length: 85 }, (_, i) => {
       const day = String((i % 28) + 1).padStart(2, "0");
       return {
@@ -128,7 +139,49 @@ describe("dlsite-sync chunking and rematch propagation", () => {
     assert.equal(commits[0], "2024-12-31T23:59:59.000Z");
     // Last import chunk must not determine the committed cursor.
     const lastChunk = importCalls[2]!.payload as Array<{ sales_date: string }>;
-    assert.ok(lastChunk.every((s) => s.sales_date < "2024-12-31T23:59:59.000Z"));
+    assert.ok(lastChunk.every((s) => s.sales_date !== "2024-12-31T23:59:59.000Z"));
+  });
+
+  it("commits global max when chunks are ordered reverse-chronologically (max in last chunk)", async () => {
+    // Sequential chunk import; global max is computed over full sales, not last chunk.
+    // Newest instant is fractional and sits in the final chunk after older seconds-only rows.
+    const sales = [
+      ...Array.from({ length: 40 }, (_, i) => ({
+        workno: `RJ${String(100000 + i).padStart(6, "0")}`,
+        sales_date: "2024-01-01T00:00:00Z",
+      })),
+      ...Array.from({ length: 40 }, (_, i) => ({
+        workno: `RJ${String(200000 + i).padStart(6, "0")}`,
+        sales_date: "2024-06-01T00:00:00Z",
+      })),
+      ...Array.from({ length: 5 }, (_, i) => ({
+        workno: `RJ${String(300000 + i).padStart(6, "0")}`,
+        sales_date:
+          i === 4 ? "2024-01-01T00:00:00.999Z" : "2023-01-01T00:00:00Z",
+      })),
+    ];
+    // Override so the true global max is a mixed-precision later instant after reverse-ish layout.
+    sales[84] = { workno: "RJ300004", sales_date: "2024-12-15T12:00:00.500Z" };
+
+    const commits: string[] = [];
+    const outcome = await runDlsiteSync({
+      getDlsiteSyncState: async () => ({ cursor: "0", lastSyncedAt: null }),
+      fetchDlsiteSales: async () => ({ ok: true, sales }),
+      importDlsiteOnServer: async (_payload, options) => {
+        assert.equal(options?.advanceCursor, false);
+        return { ok: true, counts: { inserted: 1, updated: 0 } };
+      },
+      commitDlsiteCursorOnServer: async (cursor) => {
+        commits.push(cursor);
+        return { ok: true, state: { cursor, lastSyncedAt: cursor } };
+      },
+      rematchOnServer: async () => true,
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.deepEqual(commits, ["2024-12-15T12:00:00.500Z"]);
+    assert.equal(maxCursorFromSales(sales), "2024-12-15T12:00:00.500Z");
+    assert.equal(maxCursorFromSales([...sales].reverse()), "2024-12-15T12:00:00.500Z");
   });
 
   it("does not commit cursor when any import chunk fails", async () => {

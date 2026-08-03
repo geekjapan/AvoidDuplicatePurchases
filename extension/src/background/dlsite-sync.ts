@@ -60,7 +60,7 @@ export function chunkSales<T>(sales: readonly T[], chunkSize = IMPORT_CHUNK_SIZE
 
 /**
  * Best-effort max sales_date across raw sales rows for the single post-sync cursor commit.
- * Uses the same string-max semantics as shared maxSalesCursor when rows are well-formed.
+ * Delegates to shared maxSalesCursor (instant/time comparison, original winning string).
  */
 export function maxCursorFromSales(sales: readonly unknown[]): string | null {
   const entries: DlsiteSaleEntry[] = [];

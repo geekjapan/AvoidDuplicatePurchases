@@ -19,6 +19,9 @@ export declare function mergeProductInfo(sale: DlsiteSaleEntry, product: {
     series_id?: string | null;
     image_url?: string | null;
 } | null): DlsiteParsedListing;
-/** Compute the `last=` cursor from the newest sales_date in a batch. */
+/**
+ * Compute the `last=` cursor from the newest sales_date in a batch.
+ * Compares by parsed UTC instant; returns the original winning sales_date string.
+ */
 export declare function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null;
 //# sourceMappingURL=parse-sales.d.ts.map
