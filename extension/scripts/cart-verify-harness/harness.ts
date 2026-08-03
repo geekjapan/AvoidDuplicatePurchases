@@ -38,6 +38,14 @@ function buildRequests(
     : buildRestoreRequests(site, cids, ctx);
 }
 
+function hasTokenInBody(requests: CartRequest[]): boolean {
+  return requests.every((r) => {
+    if (!r.body) return false;
+    const body = JSON.parse(r.body) as { _token?: string };
+    return body._token === DRY_RUN_CTX.csrfToken;
+  });
+}
+
 function checkDlsiteLoop(
   requests: CartRequest[],
   action: CartAction,
@@ -60,33 +68,37 @@ function checkDlsiteLoop(
   ];
 }
 
-function checkDoujinToken(requests: CartRequest[], action: CartAction): SiteCheck[] {
-  const checks: SiteCheck[] = [
+function checkDoujinToken(
+  requests: CartRequest[],
+  action: CartAction,
+  cidCount: number,
+): SiteCheck[] {
+  if (action === "delete") {
+    return [
+      {
+        name: "single batched delete request",
+        passed:
+          requests.length === 1 && requests[0]?.method === "DELETE",
+      },
+      {
+        name: "_token in body",
+        passed: hasTokenInBody(requests),
+      },
+    ];
+  }
+
+  return [
     {
-      name: "single batched delete request",
+      name: "per-cid restore POST loop",
       passed:
-        action === "delete"
-          ? requests.length === 1 && requests[0]?.method === "DELETE"
-          : true,
+        requests.length === cidCount &&
+        requests.every((r) => r.method === "POST"),
     },
     {
       name: "_token in body",
-      passed: requests.every((r) => {
-        if (!r.body) return false;
-        const body = JSON.parse(r.body) as { _token?: string };
-        return body._token === DRY_RUN_CTX.csrfToken;
-      }),
+      passed: hasTokenInBody(requests),
     },
   ];
-  if (action === "restore") {
-    checks.push({
-      name: "per-cid restore POST loop",
-      passed:
-        requests.length === 2 &&
-        requests.every((r) => r.method === "POST"),
-    });
-  }
-  return checks;
 }
 
 function checkBooksOwnUrl(requests: CartRequest[]): SiteCheck[] {
@@ -124,7 +136,7 @@ function runSiteChecks(
     case "dlsite":
       return checkDlsiteLoop(requests, action, cidCount);
     case "fanza-doujin":
-      return checkDoujinToken(requests, action);
+      return checkDoujinToken(requests, action, cidCount);
     case "fanza-books":
       return checkBooksOwnUrl(requests);
   }
@@ -154,11 +166,17 @@ export function verifySiteDryRun(
   };
 }
 
-export function verifyAllDryRun(): SiteVerifyResult[] {
+export function verifyAllDryRun(
+  action?: CartAction,
+): SiteVerifyResult[] {
   const results: SiteVerifyResult[] = [];
+  const actions: CartAction[] = action
+    ? [action]
+    : ["delete", "restore"];
   for (const site of ALL_SITES) {
-    results.push(verifySiteDryRun(site, "delete"));
-    results.push(verifySiteDryRun(site, "restore"));
+    for (const a of actions) {
+      results.push(verifySiteDryRun(site, a));
+    }
   }
   return results;
 }

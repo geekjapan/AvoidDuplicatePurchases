@@ -4,7 +4,7 @@
  * Builds delete/restore requests via @adp/shared and validates contracts.
  * NEVER sends network requests (no fetch, no live cart mutation).
  */
-import { type CartSource } from "@adp/shared";
+import { z } from "zod";
 
 import { ALL_SITES } from "./fixtures.js";
 import {
@@ -13,28 +13,112 @@ import {
   verifySiteDryRun,
   type CartAction,
 } from "./harness.js";
+import type { CartSource } from "@adp/shared";
 
-function parseArgs(argv: string[]): {
-  dryRun: boolean;
-  site?: CartSource;
-  action?: CartAction;
-} {
-  const dryRun = argv.includes("--dry-run");
-  let site: CartSource | undefined;
-  let action: CartAction | undefined;
+const siteSchema = z.enum(["dlsite", "fanza-doujin", "fanza-books"]);
+const actionSchema = z.enum(["delete", "restore"]);
+
+const cliArgsSchema = z
+  .object({
+    dryRun: z.literal(true, {
+      error: "--dry-run is required (live cart mutation is not supported)",
+    }),
+    site: siteSchema.optional(),
+    action: actionSchema.optional(),
+  })
+  .strict();
+
+export type ParsedCliArgs = z.infer<typeof cliArgsSchema>;
+
+/**
+ * Parse argv into a validated options object.
+ * Unknown flags and incomplete option values are rejected.
+ */
+export function parseArgs(argv: string[]): ParsedCliArgs {
+  const raw: {
+    dryRun?: true;
+    site?: string;
+    action?: string;
+  } = {};
 
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--site" && argv[i + 1]) {
-      site = argv[i + 1] as CartSource;
-      i++;
+    const token = argv[i];
+    if (token === undefined) break;
+
+    if (token === "--dry-run") {
+      raw.dryRun = true;
+      continue;
     }
-    if (argv[i] === "--action" && argv[i + 1]) {
-      action = argv[i + 1] as CartAction;
+
+    if (token === "--site") {
+      const value = argv[i + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error("error: --site requires a value");
+      }
+      raw.site = value;
       i++;
+      continue;
     }
+
+    if (token === "--action") {
+      const value = argv[i + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error("error: --action requires a value");
+      }
+      raw.action = value;
+      i++;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      throw new Error(`error: unknown option ${token}`);
+    }
+
+    throw new Error(`error: unexpected argument ${token}`);
   }
 
-  return { dryRun, site, action };
+  const result = cliArgsSchema.safeParse(raw);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const path = first?.path[0];
+    if (path === "dryRun") {
+      throw new Error(
+        "error: --dry-run is required (live cart mutation is not supported)",
+      );
+    }
+    if (path === "site") {
+      throw new Error(
+        `error: unknown site ${String(raw.site)} (expected ${ALL_SITES.join("|")})`,
+      );
+    }
+    if (path === "action") {
+      throw new Error(
+        `error: unknown action ${String(raw.action)} (expected delete|restore)`,
+      );
+    }
+    const msg = first?.message ?? "invalid arguments";
+    throw new Error(msg.startsWith("error:") ? msg : `error: ${msg}`);
+  }
+  return result.data;
+}
+
+export function selectResults(
+  site: CartSource | undefined,
+  action: CartAction | undefined,
+) {
+  if (site && action) {
+    return [verifySiteDryRun(site, action)];
+  }
+  if (site) {
+    return [
+      verifySiteDryRun(site, "delete"),
+      verifySiteDryRun(site, "restore"),
+    ];
+  }
+  if (action) {
+    return verifyAllDryRun(action);
+  }
+  return verifyAllDryRun();
 }
 
 function usage(): void {
@@ -45,37 +129,17 @@ Dry-run only. Validates cart delete/restore request contracts without network I/
 }
 
 async function main(): Promise<void> {
-  const { dryRun, site, action } = parseArgs(process.argv.slice(2));
-
-  if (!dryRun) {
-    console.error("error: --dry-run is required (live cart mutation is not supported)");
+  let parsed: ParsedCliArgs;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
     usage();
     process.exit(2);
   }
 
-  if (site && !ALL_SITES.includes(site)) {
-    console.error(`error: unknown site ${site}`);
-    usage();
-    process.exit(2);
-  }
-
-  if (action && action !== "delete" && action !== "restore") {
-    console.error(`error: unknown action ${action}`);
-    usage();
-    process.exit(2);
-  }
-
-  let results;
-  if (site && action) {
-    results = [verifySiteDryRun(site, action)];
-  } else if (site) {
-    results = [
-      verifySiteDryRun(site, "delete"),
-      verifySiteDryRun(site, "restore"),
-    ];
-  } else {
-    results = verifyAllDryRun();
-  }
+  const results = selectResults(parsed.site, parsed.action);
 
   for (const r of results) {
     const status = r.passed ? "PASS" : "FAIL";
@@ -95,7 +159,16 @@ async function main(): Promise<void> {
   process.exit(ok ? 0 : 1);
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  (process.argv[1].endsWith("/cli.ts") ||
+    process.argv[1].endsWith("\\cli.ts") ||
+    process.argv[1].endsWith("/cli.js") ||
+    process.argv[1].endsWith("\\cli.js"));
+
+if (isDirectRun) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
