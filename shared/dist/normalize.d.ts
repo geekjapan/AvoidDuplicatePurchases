@@ -26,10 +26,6 @@ export declare function titleMatchKey(title: string): string;
 export declare function makerMatchKey(maker: string | null | undefined): string;
 /** Bigram Dice coefficient for candidate-queue scoring (spec §5). */
 export declare function dice(a: string, b: string): number;
-/**
- * Regression guard for the production key path (titleMatchKey / key L1–L5).
- * Distinct identifying brackets must survive; this must pass on the current
- * implementation and fail only if blanket bracket removal re-enters that path.
- */
+/** Regression guard: blanket bracket removal must not become the default path. */
 export declare function assertNormalizationSelfCheck(): void;
 //# sourceMappingURL=normalize.d.ts.map
