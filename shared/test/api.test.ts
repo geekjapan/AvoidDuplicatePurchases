@@ -27,7 +27,7 @@ import {
   SyncStateResponseSchema,
   WorkAssignmentRequestSchema,
   WorkAssignmentResponseSchema,
-} from "../src/api.js";
+} from "../src/index.js";
 
 describe("LookupItemSchema identity requirements", () => {
   it("accepts source+cid identity", () => {
