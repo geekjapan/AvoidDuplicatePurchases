@@ -27,6 +27,8 @@ function insertListing(
     title: string;
     maker: string | null;
     purchasedAt?: string | null;
+    seriesId?: string | null;
+    rawJson?: string;
   },
 ): void {
   db.prepare("INSERT INTO work DEFAULT VALUES").run();
@@ -35,14 +37,16 @@ function insertListing(
     `INSERT INTO listing (
       source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url,
       purchased_at, purchased_at_precision, raw_json, imported_at
-    ) VALUES (?, ?, ?, 0, ?, ?, NULL, NULL, ?, 'day', '{}', ?)`,
+    ) VALUES (?, ?, ?, 0, ?, ?, ?, NULL, ?, 'day', ?, ?)`,
   ).run(
     opts.source,
     opts.cid,
     workId,
     opts.title,
     opts.maker,
+    opts.seriesId ?? null,
     opts.purchasedAt ?? null,
+    opts.rawJson ?? "{}",
     new Date().toISOString(),
   );
   const id = Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
@@ -172,5 +176,84 @@ describe("cross-store lookup path", () => {
     const banner = doc.getElementById(ADP_BANNER_ID);
     assert.ok(banner);
     assert.equal(banner!.textContent, "✓ 購入済み(2023-12-30)");
+  });
+
+  it("renders FANZA Video exact-match cross-store banner on DLsite fixture", async () => {
+    const title = "動画クロスストア作品";
+    const maker = "動画メーカー";
+    insertListing(db, {
+      source: "fanza_video",
+      cid: "h_175dxua00001",
+      title,
+      maker,
+      rawJson: JSON.stringify({
+        content: { id: "h_175dxua00001", title: "動画AV", floor: "AV" },
+      }),
+    });
+
+    const html = readFileSync(join(fixtures, "dlsite-product.html"), "utf8")
+      .replaceAll("RJ123456", "RJ900001")
+      .replaceAll("サンプル同人作品", title)
+      .replaceAll("サークル名", maker);
+    const doc = parseFixtureDocument(
+      html,
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ900001.html",
+    );
+    const hit = await runProductPageWithLookup(
+      "dlsite",
+      doc as unknown as Document,
+      async (items) => serverLookupItems(db, items),
+    );
+
+    assert.equal(hit?.owned, false);
+    assert.equal(hit?.other.length, 1);
+    assert.equal(hit?.other[0]?.source, "fanza_video");
+    assert.equal(hit?.other[0]?.url, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+
+    const banner = doc.getElementById(ADP_BANNER_ID);
+    assert.ok(banner);
+    const link = banner!.querySelector("a");
+    assert.ok(link);
+    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+    assert.match(link!.textContent ?? "", /FANZA動画/);
+    assert.match(link!.textContent ?? "", /動画クロスストア作品/);
+  });
+
+  it("renders FANZA PC-game exact-match cross-store banner on DLsite fixture", async () => {
+    const title = "PCゲームクロスストア作品";
+    const maker = "PCゲームメーカー";
+    insertListing(db, {
+      source: "fanza_dlsoft",
+      cid: "purple_0049",
+      title,
+      maker,
+    });
+
+    const html = readFileSync(join(fixtures, "dlsite-product.html"), "utf8")
+      .replaceAll("RJ123456", "RJ900002")
+      .replaceAll("サンプル同人作品", title)
+      .replaceAll("サークル名", maker);
+    const doc = parseFixtureDocument(
+      html,
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ900002.html",
+    );
+    const hit = await runProductPageWithLookup(
+      "dlsite",
+      doc as unknown as Document,
+      async (items) => serverLookupItems(db, items),
+    );
+
+    assert.equal(hit?.owned, false);
+    assert.equal(hit?.other.length, 1);
+    assert.equal(hit?.other[0]?.source, "fanza_dlsoft");
+    assert.equal(hit?.other[0]?.url, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+
+    const banner = doc.getElementById(ADP_BANNER_ID);
+    assert.ok(banner);
+    const link = banner!.querySelector("a");
+    assert.ok(link);
+    assert.equal(link!.href, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+    assert.match(link!.textContent ?? "", /FANZA PCゲーム/);
+    assert.match(link!.textContent ?? "", /PCゲームクロスストア作品/);
   });
 });

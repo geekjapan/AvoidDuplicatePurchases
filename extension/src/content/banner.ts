@@ -1,4 +1,4 @@
-import type { LookupHit } from "./types.js";
+import type { LookupHit, LookupOtherHit } from "./types.js";
 import { queryFirst } from "./dom-utils.js";
 import { ensureDisplayStyles } from "./styles.js";
 
@@ -6,15 +6,32 @@ const SOURCE_LABELS: Record<string, string> = {
   dlsite: "DLsite",
   fanza_doujin: "FANZA同人",
   fanza_books: "FANZAブックス",
+  fanza_video: "FANZA動画",
+  fanza_dlsoft: "FANZA PCゲーム",
 };
 
-/** HTTPS product hosts allowed for cross-store warning links. */
-const APPROVED_STORE_HOSTS = new Set([
-  "www.dlsite.com",
-  "play.dlsite.com",
-  "www.dmm.co.jp",
-  "book.dmm.co.jp",
-]);
+/**
+ * Source-specific HTTPS host + path validators for lookup-contract product URLs.
+ * Only verified product page shapes from shared productUrlForSource are accepted.
+ */
+const SOURCE_URL_VALIDATORS: Record<string, (url: URL) => boolean> = {
+  dlsite: (url) =>
+    (url.hostname === "www.dlsite.com" || url.hostname === "play.dlsite.com") &&
+    /^\/[a-z0-9_-]+\/work\/=\/product_id\/[A-Za-z0-9]+\.html$/i.test(url.pathname),
+  fanza_doujin: (url) =>
+    url.hostname === "www.dmm.co.jp" &&
+    /^\/dc\/doujin\/-\/detail\/=\/cid=[^/]+\/?$/i.test(url.pathname),
+  fanza_books: (url) =>
+    url.hostname === "book.dmm.co.jp" &&
+    /^\/product\/[^/]+\/[^/]+\/?$/.test(url.pathname),
+  fanza_video: (url) =>
+    url.hostname === "video.dmm.co.jp" &&
+    /^\/(av|amateur)\/content\/?$/.test(url.pathname) &&
+    Boolean(url.searchParams.get("id")?.trim()),
+  fanza_dlsoft: (url) =>
+    url.hostname === "dlsoft.dmm.co.jp" &&
+    /^\/detail\/[^/]+\/?$/.test(url.pathname),
+};
 
 export const ADP_BANNER_ID = "adp-purchased-banner";
 
@@ -40,16 +57,31 @@ export function formatOwnedBannerText(purchasedAt?: string | null): string {
   return "✓ 購入済み";
 }
 
-/** Allow only https URLs on approved store hosts. */
-export function approvedStoreHttpsUrl(raw: string): string | null {
+/**
+ * Allow only https URLs that match the lookup-contract product shape for `source`.
+ * Rejects non-https, unknown sources, and host/path mismatches.
+ */
+export function approvedStoreHttpsUrl(raw: string, source: string): string | null {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return null;
-    if (!APPROVED_STORE_HOSTS.has(url.hostname)) return null;
+    const validate = SOURCE_URL_VALIDATORS[source];
+    if (!validate || !validate(url)) return null;
     return url.toString();
   } catch {
     return null;
   }
+}
+
+/** First exact-match other hit whose URL is safe to render as a warning link. */
+export function selectRenderableOther(
+  others: LookupOtherHit[],
+): { other: LookupOtherHit; safeUrl: string } | null {
+  for (const other of others) {
+    const safeUrl = approvedStoreHttpsUrl(other.url, other.source);
+    if (safeUrl) return { other, safeUrl };
+  }
+  return null;
 }
 
 export function renderProductBanner(doc: Document, hit: LookupHit): HTMLElement | null {
@@ -61,10 +93,9 @@ export function renderProductBanner(doc: Document, hit: LookupHit): HTMLElement 
     return banner;
   }
 
-  const other = hit.other[0];
-  if (!other) return null;
-  const safeUrl = approvedStoreHttpsUrl(other.url);
-  if (!safeUrl) return null;
+  const selected = selectRenderableOther(hit.other);
+  if (!selected) return null;
+  const { other, safeUrl } = selected;
 
   const banner = doc.createElement("div");
   banner.id = ADP_BANNER_ID;
