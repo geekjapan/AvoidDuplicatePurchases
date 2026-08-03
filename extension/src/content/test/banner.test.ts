@@ -110,24 +110,24 @@ describe("content banner rendering", () => {
     );
     assert.equal(
       approvedStoreHttpsUrl(
-        "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
+        "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001",
         "fanza_video",
       ),
-      "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
+      "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001",
     );
     assert.equal(
       approvedStoreHttpsUrl(
-        "https://video.dmm.co.jp/amateur/content/?id=peep174",
+        "https://video.dmm.co.jp/amateur/content/?id=synthetic_amateur_900001",
         "fanza_video",
       ),
-      "https://video.dmm.co.jp/amateur/content/?id=peep174",
+      "https://video.dmm.co.jp/amateur/content/?id=synthetic_amateur_900001",
     );
     assert.equal(
       approvedStoreHttpsUrl(
-        "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+        "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/",
         "fanza_dlsoft",
       ),
-      "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+      "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/",
     );
   });
 
@@ -138,16 +138,16 @@ describe("content banner rendering", () => {
       other: [
         {
           source: "fanza_video",
-          cid: "h_175dxua00001",
+          cid: "synthetic_av_900001",
           title: "サンプル動画",
-          url: "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
+          url: "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001",
         },
       ],
     });
     assert.ok(banner);
     const link = banner!.querySelector("a");
     assert.ok(link);
-    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001");
     assert.match(link!.textContent ?? "", /FANZA動画/);
     assert.match(link!.textContent ?? "", /サンプル動画/);
   });
@@ -159,16 +159,16 @@ describe("content banner rendering", () => {
       other: [
         {
           source: "fanza_dlsoft",
-          cid: "purple_0049",
+          cid: "synthetic_dlsoft_900001",
           title: "サンプルPCゲーム",
-          url: "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+          url: "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/",
         },
       ],
     });
     assert.ok(banner);
     const link = banner!.querySelector("a");
     assert.ok(link);
-    assert.equal(link!.href, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+    assert.equal(link!.href, "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/");
     assert.match(link!.textContent ?? "", /FANZA PCゲーム/);
     assert.match(link!.textContent ?? "", /サンプルPCゲーム/);
   });
@@ -189,14 +189,14 @@ describe("content banner rendering", () => {
       },
       {
         source: "fanza_dlsoft",
-        cid: "purple_0049",
+        cid: "synthetic_dlsoft_900001",
         title: "安全なPCゲーム",
-        url: "https://dlsoft.dmm.co.jp/detail/purple_0049/",
+        url: "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/",
       },
     ]);
     assert.ok(selected);
     assert.equal(selected!.other.source, "fanza_dlsoft");
-    assert.equal(selected!.safeUrl, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+    assert.equal(selected!.safeUrl, "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/");
 
     const doc = new MockDocument();
     const banner = renderProductBanner(doc as unknown as Document, {
@@ -210,16 +210,16 @@ describe("content banner rendering", () => {
         },
         {
           source: "fanza_video",
-          cid: "h_175dxua00001",
+          cid: "synthetic_av_900001",
           title: "後続の安全な動画",
-          url: "https://video.dmm.co.jp/av/content/?id=h_175dxua00001",
+          url: "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001",
         },
       ],
     });
     assert.ok(banner);
     const link = banner!.querySelector("a");
     assert.ok(link);
-    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001");
     assert.match(link!.textContent ?? "", /FANZA動画/);
     assert.match(link!.textContent ?? "", /後続の安全な動画/);
   });

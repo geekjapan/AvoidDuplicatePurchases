@@ -183,11 +183,11 @@ describe("cross-store lookup path", () => {
     const maker = "動画メーカー";
     insertListing(db, {
       source: "fanza_video",
-      cid: "h_175dxua00001",
+      cid: "synthetic_av_900001",
       title,
       maker,
       rawJson: JSON.stringify({
-        content: { id: "h_175dxua00001", title: "動画AV", floor: "AV" },
+        content: { id: "synthetic_av_900001", title: "動画AV", floor: "AV" },
       }),
     });
 
@@ -208,13 +208,13 @@ describe("cross-store lookup path", () => {
     assert.equal(hit?.owned, false);
     assert.equal(hit?.other.length, 1);
     assert.equal(hit?.other[0]?.source, "fanza_video");
-    assert.equal(hit?.other[0]?.url, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+    assert.equal(hit?.other[0]?.url, "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001");
 
     const banner = doc.getElementById(ADP_BANNER_ID);
     assert.ok(banner);
     const link = banner!.querySelector("a");
     assert.ok(link);
-    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=h_175dxua00001");
+    assert.equal(link!.href, "https://video.dmm.co.jp/av/content/?id=synthetic_av_900001");
     assert.match(link!.textContent ?? "", /FANZA動画/);
     assert.match(link!.textContent ?? "", /動画クロスストア作品/);
   });
@@ -224,7 +224,7 @@ describe("cross-store lookup path", () => {
     const maker = "PCゲームメーカー";
     insertListing(db, {
       source: "fanza_dlsoft",
-      cid: "purple_0049",
+      cid: "synthetic_dlsoft_900001",
       title,
       maker,
     });
@@ -246,13 +246,13 @@ describe("cross-store lookup path", () => {
     assert.equal(hit?.owned, false);
     assert.equal(hit?.other.length, 1);
     assert.equal(hit?.other[0]?.source, "fanza_dlsoft");
-    assert.equal(hit?.other[0]?.url, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+    assert.equal(hit?.other[0]?.url, "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/");
 
     const banner = doc.getElementById(ADP_BANNER_ID);
     assert.ok(banner);
     const link = banner!.querySelector("a");
     assert.ok(link);
-    assert.equal(link!.href, "https://dlsoft.dmm.co.jp/detail/purple_0049/");
+    assert.equal(link!.href, "https://dlsoft.dmm.co.jp/detail/synthetic_dlsoft_900001/");
     assert.match(link!.textContent ?? "", /FANZA PCゲーム/);
     assert.match(link!.textContent ?? "", /PCゲームクロスストア作品/);
   });
