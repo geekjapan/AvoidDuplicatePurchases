@@ -236,8 +236,8 @@ describe("rematch excludes locked listings from candidates", () => {
   let db: DatabaseSync;
 
   before(() => {
-    const dbPath = join(__dirname, `rematch-db-${Date.now()}.sqlite`);
-    db = openDatabase(dbPath).sqlite;
+    // In-memory so read-only review sandboxes can run rematch regressions without file create.
+    db = openDatabase(":memory:").sqlite;
   });
 
   after(() => {
