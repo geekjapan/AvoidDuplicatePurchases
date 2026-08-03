@@ -50,6 +50,7 @@ export declare const LookupOtherSchema: z.ZodObject<{
 }, z.core.$strip>;
 export declare const LookupResultSchema: z.ZodObject<{
     owned: z.ZodBoolean;
+    purchasedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     other: z.ZodArray<z.ZodObject<{
         source: z.ZodEnum<{
             dlsite: "dlsite";
@@ -66,6 +67,7 @@ export declare const LookupResultSchema: z.ZodObject<{
 export declare const LookupResponseSchema: z.ZodObject<{
     results: z.ZodArray<z.ZodObject<{
         owned: z.ZodBoolean;
+        purchasedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         other: z.ZodArray<z.ZodObject<{
             source: z.ZodEnum<{
                 dlsite: "dlsite";

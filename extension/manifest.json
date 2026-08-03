@@ -14,7 +14,26 @@
   "host_permissions": [
     "https://play.dlsite.com/*",
     "https://www.dlsite.com/*",
+    "https://www.dmm.co.jp/*",
+    "https://book.dmm.co.jp/*",
     "http://127.0.0.1:41321/*"
   ],
-  "permissions": ["alarms"]
+  "permissions": ["alarms"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.dlsite.com/maniax/*"],
+      "js": ["dist/content/dlsite.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.dmm.co.jp/dc/doujin/*"],
+      "js": ["dist/content/fanza-doujin.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://book.dmm.co.jp/*"],
+      "js": ["dist/content/fanza-books.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

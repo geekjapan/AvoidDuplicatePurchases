@@ -19,6 +19,7 @@ function insertListing(
     rawJson?: string;
     workIdLocked?: number;
     workId?: number;
+    purchasedAt?: string | null;
   },
 ): number {
   let workId = opts.workId;
@@ -30,7 +31,7 @@ function insertListing(
     `INSERT INTO listing (
       source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url,
       purchased_at, purchased_at_precision, raw_json, imported_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'unknown', ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'day', ?, ?)`,
   ).run(
     opts.source,
     opts.cid,
@@ -39,6 +40,7 @@ function insertListing(
     opts.title,
     opts.maker,
     opts.seriesId ?? null,
+    opts.purchasedAt ?? null,
     opts.rawJson ?? "{}",
     new Date().toISOString(),
   );
@@ -65,6 +67,7 @@ describe("lookup other-site ownership", () => {
       cid: "RJ100001",
       title: "Shared Title",
       maker: "Maker A",
+      purchasedAt: "2023-12-30",
     });
     insertListing(db, {
       source: "dlsite",
@@ -90,6 +93,7 @@ describe("lookup other-site ownership", () => {
       { source: "dlsite", cid: "RJ100001", title: "Shared Title", maker: "Maker A" },
     ]);
     assert.equal(sameSource[0]!.owned, true);
+    assert.equal(sameSource[0]!.purchasedAt, "2023-12-30");
     assert.ok(
       sameSource[0]!.other.every((o) => o.source !== "dlsite"),
       "same-source listings must not be reported as other",
@@ -109,7 +113,7 @@ describe("lookup other-site ownership", () => {
   it("emits verified product URLs and omits unlinkable Books/Video candidates", () => {
     insertListing(db, {
       source: "fanza_doujin",
-      cid: "d_285449",
+      cid: "d_900001",
       title: "Cross Link Title",
       maker: "Link Maker",
     });
@@ -195,8 +199,8 @@ describe("lookup other-site ownership", () => {
     const byCid = Object.fromEntries(other.map((o) => [o.cid, o]));
 
     assert.equal(
-      byCid["d_285449"]?.url,
-      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_285449/",
+      byCid["d_900001"]?.url,
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_900001/",
     );
     assert.equal(
       byCid["b100xxxxx01001"]?.url,
