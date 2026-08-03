@@ -302,4 +302,47 @@ describe("rematch excludes locked listings from candidates", () => {
     assert.equal(lockedInCandidates.c, 0);
     assert.ok(unlockedCount >= 0);
   });
+
+  it("does not merge symbol-only titles that normalize to empty titleMatchKey", () => {
+    // titleMatchKey("!!!") and titleMatchKey("???") are both "" after normalization.
+    // Empty keys must not auto-merge distinct listings onto one work_id.
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ300001",
+      title: "!!!",
+      maker: "Symbol Maker",
+      workIdLocked: 0,
+    });
+    const idB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_300001",
+      title: "???",
+      maker: "Symbol Maker",
+      workIdLocked: 0,
+    });
+
+    const beforeA = db.prepare("SELECT work_id FROM listing WHERE id = ?").get(idA) as {
+      work_id: number;
+    };
+    const beforeB = db.prepare("SELECT work_id FROM listing WHERE id = ?").get(idB) as {
+      work_id: number;
+    };
+    assert.notEqual(beforeA.work_id, beforeB.work_id, "fixtures start on distinct work_ids");
+
+    runRematch(db);
+
+    const afterA = db.prepare("SELECT work_id FROM listing WHERE id = ?").get(idA) as {
+      work_id: number;
+    };
+    const afterB = db.prepare("SELECT work_id FROM listing WHERE id = ?").get(idB) as {
+      work_id: number;
+    };
+    assert.notEqual(
+      afterA.work_id,
+      afterB.work_id,
+      "symbol-only distinct titles must keep separate work_ids after rematch",
+    );
+    assert.equal(afterA.work_id, beforeA.work_id);
+    assert.equal(afterB.work_id, beforeB.work_id);
+  });
 });

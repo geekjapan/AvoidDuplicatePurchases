@@ -181,6 +181,9 @@ export function runRematch(db: DatabaseSync): { rematched: number; candidates: n
   const groups = new Map<string, number[]>();
   for (const listing of unlocked) {
     const key = titleMatchKey(listing.title);
+    // Empty normalized keys (e.g. symbol-only titles "!!!" vs "???") must not
+    // collapse unrelated listings into one automatic work_id group.
+    if (!key) continue;
     const ids = groups.get(key) ?? [];
     ids.push(listing.id);
     groups.set(key, ids);
