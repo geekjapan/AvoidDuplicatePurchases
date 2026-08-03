@@ -4,6 +4,7 @@ import {
   parseDlsiteSalesPayload,
   mergeProductInfo,
   maxSalesCursor,
+  isStrictUtcIsoInstant,
   type DlsiteSaleEntry,
 } from "@adp/shared/adapters/dlsite";
 import type { DatabaseSync } from "node:sqlite";
@@ -13,6 +14,14 @@ export type ProductFetcher = (workno: string) => Promise<unknown | null>;
 
 /** Bound concurrent product.json fetches so first-sync stays within worker lifetime. */
 export const PRODUCT_FETCH_CONCURRENCY = 6;
+
+export interface ImportOptions {
+  /**
+   * When true (default), advance sync_state.cursor to this batch's max sales_date
+   * after all rows upsert. Multi-chunk syncs set false and commit the global max once.
+   */
+  advanceCursor?: boolean;
+}
 
 const defaultProductFetcher: ProductFetcher = async (workno) => {
   try {
@@ -53,13 +62,25 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function productForSale(
+  sale: DlsiteSaleEntry,
+  productRaw: unknown | null,
+): ReturnType<typeof parseDlsiteProductJson> {
+  if (!productRaw) return null;
+  const product = parseDlsiteProductJson(productRaw);
+  if (!product) return null;
+  // Exact workno equality: never merge another CID's product.json into this sale.
+  if (product.workno !== sale.workno.trim().toUpperCase()) return null;
+  return product;
+}
+
 function upsertListing(
   db: DatabaseSync,
   sale: DlsiteSaleEntry,
   productRaw: unknown | null,
   now: string,
 ): "inserted" | "updated" {
-  const product = productRaw ? parseDlsiteProductJson(productRaw) : null;
+  const product = productForSale(sale, productRaw);
   const parsed = mergeProductInfo(sale, product);
   const existing = db
     .prepare("SELECT id FROM listing WHERE source = 'dlsite' AND cid = ?")
@@ -110,26 +131,46 @@ function upsertListing(
   return "inserted";
 }
 
-function advanceCursor(db: DatabaseSync, sales: DlsiteSaleEntry[], now: string): void {
-  const cursor = maxSalesCursor(sales);
-  if (!cursor) return;
+function writeCursor(db: DatabaseSync, cursor: string, now: string): void {
   db.prepare(
     `INSERT INTO sync_state (source, cursor, last_synced_at) VALUES ('dlsite', ?, ?)
      ON CONFLICT(source) DO UPDATE SET cursor = excluded.cursor, last_synced_at = excluded.last_synced_at`,
   ).run(cursor, now);
 }
 
+function advanceCursor(db: DatabaseSync, sales: DlsiteSaleEntry[], now: string): void {
+  const cursor = maxSalesCursor(sales);
+  if (!cursor) return;
+  writeCursor(db, cursor, now);
+}
+
+/**
+ * Persist DLsite `last=` cursor after a complete multi-chunk sync succeeds.
+ * Rejects non-strict UTC ISO instants so cursor storage stays comparable.
+ */
+export function commitDlsiteCursor(db: DatabaseSync, cursor: string, now = new Date().toISOString()): void {
+  const trimmed = cursor.trim();
+  if (!isStrictUtcIsoInstant(trimmed)) {
+    throw new Error("invalid cursor");
+  }
+  writeCursor(db, trimmed, now);
+}
+
 /**
  * Import a DLsite sales batch.
  * Product metadata is fetched with bounded concurrency (deferred relative to parse,
- * not sequential per-row). Cursor advances only after the full batch upserts succeed.
+ * not sequential per-row). Cursor advances only after the full batch upserts succeed
+ * when `advanceCursor` is true (default). Multi-chunk syncs disable per-chunk advance
+ * and call {@link commitDlsiteCursor} once with the global max.
  */
 export async function importDlsitePayload(
   db: DatabaseSync,
   raw: unknown,
   fetchProduct: ProductFetcher = defaultProductFetcher,
   concurrency: number = PRODUCT_FETCH_CONCURRENCY,
+  options: ImportOptions = {},
 ): Promise<ImportCounts> {
+  const advance = options.advanceCursor !== false;
   const sales = parseDlsiteSalesPayload(raw);
   const now = new Date().toISOString();
 
@@ -150,8 +191,11 @@ export async function importDlsitePayload(
     else updated++;
   }
 
-  // Atomic cursor handling: advance only after all rows in this batch are written.
-  advanceCursor(db, sales, now);
+  // Atomic cursor handling: advance only after all rows in this batch are written,
+  // and only when the caller wants this batch to own the cursor commit.
+  if (advance) {
+    advanceCursor(db, sales, now);
+  }
 
   return { inserted, updated };
 }

@@ -1,6 +1,8 @@
+import { maxSalesCursor, type DlsiteSaleEntry } from "@adp/shared/adapters/dlsite";
 import {
   getDlsiteSyncState,
   importDlsiteOnServer,
+  commitDlsiteCursorOnServer,
   rematchOnServer,
   type ImportCounts,
 } from "./server-client.js";
@@ -21,6 +23,7 @@ export interface SyncDeps {
   getDlsiteSyncState: typeof getDlsiteSyncState;
   fetchDlsiteSales: typeof fetchDlsiteSales;
   importDlsiteOnServer: typeof importDlsiteOnServer;
+  commitDlsiteCursorOnServer: typeof commitDlsiteCursorOnServer;
   rematchOnServer: typeof rematchOnServer;
 }
 
@@ -55,11 +58,27 @@ export function chunkSales<T>(sales: readonly T[], chunkSize = IMPORT_CHUNK_SIZE
   return chunks;
 }
 
-/** Full manual sync: fetch sales → chunked import → rematch. */
+/**
+ * Best-effort max sales_date across raw sales rows for the single post-sync cursor commit.
+ * Uses the same string-max semantics as shared maxSalesCursor when rows are well-formed.
+ */
+export function maxCursorFromSales(sales: readonly unknown[]): string | null {
+  const entries: DlsiteSaleEntry[] = [];
+  for (const row of sales) {
+    if (!row || typeof row !== "object") continue;
+    const rec = row as { workno?: unknown; sales_date?: unknown };
+    if (typeof rec.workno !== "string" || typeof rec.sales_date !== "string") continue;
+    entries.push({ workno: rec.workno, sales_date: rec.sales_date });
+  }
+  return maxSalesCursor(entries);
+}
+
+/** Full manual sync: fetch sales → chunked import (no mid-sync cursor) → one cursor commit → rematch. */
 export async function runDlsiteSync(deps: Partial<SyncDeps> = {}): Promise<SyncOutcome> {
   const getState = deps.getDlsiteSyncState ?? getDlsiteSyncState;
   const fetchSales = deps.fetchDlsiteSales ?? fetchDlsiteSales;
   const importOnServer = deps.importDlsiteOnServer ?? importDlsiteOnServer;
+  const commitCursor = deps.commitDlsiteCursorOnServer ?? commitDlsiteCursorOnServer;
   const rematch = deps.rematchOnServer ?? rematchOnServer;
 
   const state = await getState();
@@ -73,8 +92,10 @@ export async function runDlsiteSync(deps: Partial<SyncDeps> = {}): Promise<SyncO
   let inserted = 0;
   let updated = 0;
 
+  // Import every chunk without advancing the stored cursor. A mid-sync failure
+  // must leave the previous cursor unchanged so unimported sales are not skipped.
   for (const chunk of chunkSales(sales, IMPORT_CHUNK_SIZE)) {
-    const imported = await importOnServer(chunk);
+    const imported = await importOnServer(chunk, { advanceCursor: false });
     if (!imported.ok) {
       return {
         ok: false,
@@ -85,6 +106,20 @@ export async function runDlsiteSync(deps: Partial<SyncDeps> = {}): Promise<SyncO
     }
     inserted += imported.counts.inserted;
     updated += imported.counts.updated;
+  }
+
+  // Single cursor commit: global max across the complete fetched history (order-independent).
+  const globalCursor = maxCursorFromSales(sales);
+  if (globalCursor) {
+    const committed = await commitCursor(globalCursor);
+    if (!committed.ok) {
+      return {
+        ok: false,
+        error: committed.error,
+        fetched: sales.length,
+        counts: { inserted, updated },
+      };
+    }
   }
 
   const rematchOk = await rematch();

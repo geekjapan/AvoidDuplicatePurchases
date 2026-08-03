@@ -21,9 +21,15 @@ function request(
   body?: unknown,
   headers: Record<string, string> = {},
   productFetcher?: (workno: string) => Promise<unknown | null>,
+  rawBody?: string,
 ): Promise<{ status: number; json: unknown; text: string }> {
   return new Promise((resolve, reject) => {
-    const payload = body !== undefined ? JSON.stringify(body) : undefined;
+    const payload =
+      rawBody !== undefined
+        ? rawBody
+        : body !== undefined
+          ? JSON.stringify(body)
+          : undefined;
     import("node:http").then(({ request: httpRequest }) => {
       const r = httpRequest(
         {
@@ -32,7 +38,7 @@ function request(
           path,
           method,
           headers: {
-            ...(payload
+            ...(payload !== undefined
               ? {
                   "Content-Type": "application/json",
                   "Content-Length": Buffer.byteLength(payload),
@@ -57,7 +63,7 @@ function request(
         },
       );
       r.on("error", reject);
-      if (payload) r.write(payload);
+      if (payload !== undefined) r.write(payload);
       r.end();
     });
   });
@@ -226,5 +232,105 @@ describe("server API", () => {
     const body = res.json as { rematched: number; candidates: number };
     assert.ok(body.rematched >= 0);
     assert.ok(body.candidates >= 0);
+  });
+
+  it("rejects rematch invalid JSON and extra properties with 400", async () => {
+    const invalidJson = await request(
+      port,
+      "POST",
+      "/api/rematch",
+      undefined,
+      { Origin: TEST_EXTENSION_ORIGIN },
+      undefined,
+      "{not-json",
+    );
+    assert.equal(invalidJson.status, 400);
+    assert.match(invalidJson.text, /invalid_request/);
+    assert.doesNotMatch(invalidJson.text, /\/Users\/|stack|ENOENT/i);
+
+    const extra = await request(
+      port,
+      "POST",
+      "/api/rematch",
+      { extra: true },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(extra.status, 400);
+    assert.match(extra.text, /invalid_request/);
+  });
+
+  it("commits sync cursor only via explicit POST after multi-chunk imports without advance", async () => {
+    const chunkA = [
+      { workno: "RJ000020", sales_date: "2024-12-15T00:00:00.000Z" },
+      { workno: "RJ000021", sales_date: "2024-01-01T00:00:00.000Z" },
+    ];
+    const chunkB = [
+      { workno: "RJ000022", sales_date: "2024-06-01T00:00:00.000Z" },
+    ];
+
+    const before = await request(
+      port,
+      "GET",
+      "/api/sync-state/dlsite",
+      undefined,
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    const beforeCursor = (before.json as { cursor: string | null }).cursor;
+
+    const a = await request(
+      port,
+      "POST",
+      "/api/import/dlsite",
+      { items: chunkA, advanceCursor: false },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(a.status, 200);
+
+    const mid = await request(
+      port,
+      "GET",
+      "/api/sync-state/dlsite",
+      undefined,
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal((mid.json as { cursor: string | null }).cursor, beforeCursor);
+
+    const b = await request(
+      port,
+      "POST",
+      "/api/import/dlsite",
+      { items: chunkB, advanceCursor: false },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(b.status, 200);
+
+    const still = await request(
+      port,
+      "GET",
+      "/api/sync-state/dlsite",
+      undefined,
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal((still.json as { cursor: string | null }).cursor, beforeCursor);
+
+    const globalMax = "2024-12-15T00:00:00.000Z";
+    const commit = await request(
+      port,
+      "POST",
+      "/api/sync-state/dlsite",
+      { cursor: globalMax },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(commit.status, 200);
+    assert.equal((commit.json as { cursor: string }).cursor, globalMax);
+
+    const badCommit = await request(
+      port,
+      "POST",
+      "/api/sync-state/dlsite",
+      { cursor: "01/02/2024", extra: 1 },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(badCommit.status, 400);
   });
 });

@@ -1,18 +1,24 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import {
   LookupRequestSchema,
   LookupResponseSchema,
   ImportRequestSchema,
   ImportResponseSchema,
   SyncStateResponseSchema,
+  RematchRequestSchema,
   RematchResponseSchema,
   SourcePathSchema,
 } from "@adp/shared";
 import type { DatabaseSync } from "node:sqlite";
 import { isAllowedOrigin } from "./config.js";
 import { lookupItems } from "./services/lookup.js";
-import { importDlsitePayload, getSyncState, type ProductFetcher } from "./services/import.js";
+import {
+  importDlsitePayload,
+  getSyncState,
+  commitDlsiteCursor,
+  type ProductFetcher,
+} from "./services/import.js";
 import { runRematch } from "./services/lookup.js";
 import { dispatchRouteMounts } from "./route-mounts.js";
 
@@ -23,6 +29,19 @@ export interface ApiContext {
   extensionOrigins?: ReadonlySet<string>;
   productFetcher?: ProductFetcher;
 }
+
+/** Optional multi-chunk flag on `{ items, advanceCursor? }` import bodies. */
+const ImportAdvanceFlagSchema = z
+  .object({
+    advanceCursor: z.boolean().optional(),
+  })
+  .passthrough();
+
+const CommitCursorRequestSchema = z
+  .object({
+    cursor: z.string().min(1),
+  })
+  .strict();
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -61,6 +80,16 @@ function parseZod<T>(schema: { parse: (v: unknown) => T }, value: unknown): T | 
     if (err instanceof ZodError) return null;
     throw err;
   }
+}
+
+/** Resolve whether this import batch should advance sync_state.cursor. */
+function resolveAdvanceCursor(body: unknown): boolean {
+  if (Array.isArray(body)) return true;
+  if (body && typeof body === "object") {
+    const flagged = ImportAdvanceFlagSchema.safeParse(body);
+    if (flagged.success && flagged.data.advanceCursor === false) return false;
+  }
+  return true;
 }
 
 export async function handleApi(
@@ -113,7 +142,13 @@ export async function handleApi(
       return true;
     }
     try {
-      const counts = await importDlsitePayload(ctx.db, parsed, ctx.productFetcher);
+      const counts = await importDlsitePayload(
+        ctx.db,
+        parsed,
+        ctx.productFetcher,
+        undefined,
+        { advanceCursor: resolveAdvanceCursor(parsed) },
+      );
       json(res, 200, ImportResponseSchema.parse(counts));
     } catch {
       validationError(res);
@@ -127,7 +162,46 @@ export async function handleApi(
     return true;
   }
 
+  // Commit DLsite last= cursor after a multi-chunk sync fully succeeds.
+  if (method === "POST" && url.pathname === "/api/sync-state/dlsite") {
+    const raw = await readBody(req);
+    let body: unknown;
+    try {
+      body = raw.length ? JSON.parse(raw) : null;
+    } catch {
+      validationError(res);
+      return true;
+    }
+    const parsed = parseZod(CommitCursorRequestSchema, body);
+    if (!parsed) {
+      validationError(res);
+      return true;
+    }
+    try {
+      commitDlsiteCursor(ctx.db, parsed.cursor);
+      const state = getSyncState(ctx.db, "dlsite");
+      json(res, 200, SyncStateResponseSchema.parse(state));
+    } catch {
+      validationError(res);
+    }
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/api/rematch") {
+    const raw = await readBody(req);
+    let body: unknown;
+    try {
+      // Empty body is treated as {}; invalid JSON and extra fields are 400.
+      body = raw.length ? JSON.parse(raw) : {};
+    } catch {
+      validationError(res);
+      return true;
+    }
+    const parsed = parseZod(RematchRequestSchema, body);
+    if (!parsed) {
+      validationError(res);
+      return true;
+    }
     const result = runRematch(ctx.db);
     json(res, 200, RematchResponseSchema.parse(result));
     return true;

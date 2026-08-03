@@ -23,6 +23,11 @@ export interface SyncState {
   lastSyncedAt: string | null;
 }
 
+export interface ImportDlsiteOptions {
+  /** When false, server upserts listings but does not advance sync_state.cursor. */
+  advanceCursor?: boolean;
+}
+
 export async function serverFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -58,14 +63,32 @@ export async function lookupOnServer(
 
 export async function importDlsiteOnServer(
   payload: unknown,
+  options: ImportDlsiteOptions = {},
 ): Promise<{ ok: true; counts: ImportCounts } | { ok: false; error: string }> {
+  const body =
+    options.advanceCursor === false
+      ? { items: payload, advanceCursor: false }
+      : payload;
   const res = await serverFetch<ImportCounts>("/api/import/dlsite", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   if (!res.ok) return { ok: false, error: res.error };
   return { ok: true, counts: res.data };
+}
+
+/** Persist the global max `last=` cursor after every import chunk succeeds. */
+export async function commitDlsiteCursorOnServer(
+  cursor: string,
+): Promise<{ ok: true; state: SyncState } | { ok: false; error: string }> {
+  const res = await serverFetch<SyncState>("/api/sync-state/dlsite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cursor }),
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, state: res.data };
 }
 
 export async function rematchOnServer(): Promise<boolean> {
