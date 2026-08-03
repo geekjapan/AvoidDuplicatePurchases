@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Avoid Duplicate Purchases",
+  "description": "DLsite / FANZA 重複購入回避",
+  "version": "0.0.1",
+  "background": {
+    "service_worker": "dist/background/index.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "ADP",
+    "default_popup": "dist/popup/popup.html"
+  },
+  "host_permissions": [
+    "https://play.dlsite.com/*",
+    "https://www.dlsite.com/*",
+    "http://127.0.0.1:41321/*"
+  ],
+  "permissions": ["alarms"]
+}

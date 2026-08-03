@@ -1,0 +1,18 @@
+import type { DlsiteParsedListing, DlsiteSaleEntry } from "./types.js";
+/**
+ * Parse raw extension payload from DLsite sales API.
+ * Accepts a non-empty array of sale entries or `{ items: [...] }`.
+ */
+export declare function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[];
+/** Build a listing stub from sales history alone (product.json unavailable). */
+export declare function listingFromSale(entry: DlsiteSaleEntry): DlsiteParsedListing;
+/** Merge product.json metadata into a sales-derived listing. */
+export declare function mergeProductInfo(sale: DlsiteSaleEntry, product: {
+    work_name?: string;
+    maker_name?: string | null;
+    series_id?: string | null;
+    image_url?: string | null;
+} | null): DlsiteParsedListing;
+/** Compute the `last=` cursor from the newest sales_date in a batch. */
+export declare function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null;
+//# sourceMappingURL=parse-sales.d.ts.map

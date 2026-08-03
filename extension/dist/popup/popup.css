@@ -1,0 +1,37 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  padding: 12px;
+  min-width: 260px;
+}
+
+h1 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.status {
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.status.connected {
+  color: #2e7d32;
+}
+
+.status.disconnected {
+  color: #c62828;
+}
+
+button {
+  width: 100%;
+  padding: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.result {
+  font-size: 11px;
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+}

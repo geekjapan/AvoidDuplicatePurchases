@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/"
   },
   "dependencies": {
     "@adp/shared": "*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "typescript": "^5.9.3"
   }
 }
