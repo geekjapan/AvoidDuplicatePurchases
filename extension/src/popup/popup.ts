@@ -1,4 +1,6 @@
 import { MSG_SERVER_STATUS, MSG_SYNC } from "../messages.js";
+import { refreshSyncStatus, renderSyncStatus } from "./sync-status.js";
+import type { FullSyncOutcome } from "../alarms.js";
 
 const statusEl = document.getElementById("server-status");
 const resultEl = document.getElementById("sync-result");
@@ -15,6 +17,7 @@ async function refreshStatus(): Promise<void> {
 }
 
 if (syncBtn) {
+  syncBtn.textContent = "全ソース同期";
   syncBtn.addEventListener("click", async () => {
     if (resultEl) resultEl.textContent = "同期中…";
     syncBtn.disabled = true;
@@ -23,19 +26,20 @@ if (syncBtn) {
         ok?: boolean;
         outcome?: {
           ok: boolean;
-          counts?: { inserted: number; updated: number };
+          sources?: Record<string, unknown>;
           error?: string;
-          fetched?: number;
         };
       };
       if (!resultEl) return;
       const outcome = reply?.outcome;
-      if (outcome?.ok && outcome.counts) {
-        resultEl.textContent = `取得 ${outcome.fetched ?? "?"} 件\n新規 ${outcome.counts.inserted} / 更新 ${outcome.counts.updated}`;
+      if (outcome?.ok && outcome.sources) {
+        await renderSyncStatus(resultEl, outcome.sources as FullSyncOutcome["sources"]);
       } else if (outcome?.error) {
         resultEl.textContent = `エラー: ${outcome.error}`;
+        await refreshSyncStatus(resultEl);
       } else {
         resultEl.textContent = "同期に失敗しました";
+        await refreshSyncStatus(resultEl);
       }
     } finally {
       syncBtn.disabled = false;
@@ -45,3 +49,6 @@ if (syncBtn) {
 }
 
 refreshStatus();
+if (resultEl) {
+  refreshSyncStatus(resultEl);
+}

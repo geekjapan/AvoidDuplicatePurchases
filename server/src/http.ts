@@ -21,6 +21,7 @@ import {
 } from "./services/import.js";
 import { runRematch } from "./services/lookup.js";
 import { dispatchRouteMounts } from "./route-mounts.js";
+import "./import/fanza/index.js";
 
 export interface ApiContext {
   db: DatabaseSync;
@@ -214,16 +215,22 @@ export async function handleApi(
       validationError(res);
       return true;
     }
+    if (source.source !== "dlsite") {
+      if (await dispatchRouteMounts(req, res, ctx, url)) return true;
+    }
     notFound(res);
     return true;
   }
 
   const syncMatch = url.pathname.match(/^\/api\/sync-state\/([^/]+)$/);
-  if (method === "GET" && syncMatch) {
+  if (syncMatch) {
     const source = parseZod(SourcePathSchema, { source: syncMatch[1] });
     if (!source) {
       validationError(res);
       return true;
+    }
+    if (source.source !== "dlsite") {
+      if (await dispatchRouteMounts(req, res, ctx, url)) return true;
     }
     notFound(res);
     return true;

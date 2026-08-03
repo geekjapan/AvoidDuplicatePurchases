@@ -1,0 +1,1 @@
+{"version":3,"file":"sync-status.d.ts","sourceRoot":"","sources":["../../src/popup/sync-status.ts"],"names":[],"mappings":"AAEA,OAAO,EAAsB,KAAK,eAAe,EAAE,MAAM,cAAc,CAAC;AAiCxE,yDAAyD;AACzD,wBAAsB,gBAAgB,CACpC,SAAS,EAAE,WAAW,EACtB,QAAQ,CAAC,EAAE,eAAe,CAAC,SAAS,CAAC,GACpC,OAAO,CAAC,IAAI,CAAC,CAOf;AAED,+DAA+D;AAC/D,wBAAsB,iBAAiB,CAAC,SAAS,EAAE,WAAW,GAAG,OAAO,CAAC,IAAI,CAAC,CAE7E"}

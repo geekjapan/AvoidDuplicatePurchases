@@ -1,0 +1,16 @@
+{
+  "error": null,
+  "body": {
+    "totalCount": 1,
+    "library": [
+      {
+        "contentId": "brand_0001",
+        "title": "ゲームA",
+        "floor": "Apcgame",
+        "brand": { "name": "メーカーZ" },
+        "packageImageUrl": "https://example.invalid/pkg.jpg",
+        "deliveryBeginDate": "2020-01-01"
+      }
+    ]
+  }
+}
