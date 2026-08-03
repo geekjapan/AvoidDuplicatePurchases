@@ -8,3 +8,6 @@ node_modules/
 .env
 .DS_Store
 .orca/
+
+# Build output for @adp/server (app; run via node dist/index.js)
+server/dist/
