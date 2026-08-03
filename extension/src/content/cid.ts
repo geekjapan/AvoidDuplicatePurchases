@@ -41,7 +41,8 @@ export function extractCidFromDocument(
   source: InterventionSource,
   doc: Document,
 ): string | null {
-  const pageUrl = doc.location?.href || readCanonicalUrl(doc);
+  // Prefer og:url / canonical product identity; location.href is fallback only.
+  const pageUrl = readCanonicalUrl(doc) || doc.location?.href || null;
   if (!pageUrl) return null;
   return extractCidFromUrl(source, pageUrl);
 }

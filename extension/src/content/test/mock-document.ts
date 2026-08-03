@@ -1,7 +1,7 @@
 /** Minimal DOM shim for node:test content-script tests. */
 export class MockElement {
   tagName: string;
-  textContent = "";
+  private _textContent = "";
   innerHTML = "";
   className = "";
   id = "";
@@ -15,15 +15,31 @@ export class MockElement {
     return this.getAttribute("content") ?? this.textContent;
   }
 
+  get textContent(): string {
+    if (this.children.length === 0) return this._textContent;
+    return this.children.map((child) => child.textContent).join("");
+  }
+
+  set textContent(value: string) {
+    this._textContent = value;
+    this.children = [];
+  }
+
   constructor(tag: string) {
     this.tagName = tag.toUpperCase();
   }
 
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
+    if (name === "href") this.href = value;
+    if (name === "class") this.className = value;
+    if (name === "id") this.id = value;
   }
 
   getAttribute(name: string): string | null {
+    if (name === "href" && this.href) return this.href;
+    if (name === "class" && this.className) return this.className;
+    if (name === "id" && this.id) return this.id;
     return this.attributes.get(name) ?? null;
   }
 
@@ -39,8 +55,41 @@ export class MockElement {
     return element;
   }
 
+  matchesSelector(selector: string): boolean {
+    const parts = selector
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return parts.some((part) => this.matchesSimpleSelector(part));
+  }
+
+  private matchesSimpleSelector(selector: string): boolean {
+    // tag[attr="value"] / tag[attr*="value"] / [attr=...]
+    const attrExact = /^([a-zA-Z][\w-]*)?\[([^=\]]+)="([^"]+)"\]$/.exec(selector);
+    if (attrExact) {
+      const tag = attrExact[1];
+      if (tag && this.tagName !== tag.toUpperCase()) return false;
+      return this.getAttribute(attrExact[2]!) === attrExact[3];
+    }
+    const attrContains = /^([a-zA-Z][\w-]*)?\[([^*]+)\*="([^"]+)"\]$/.exec(selector);
+    if (attrContains) {
+      const tag = attrContains[1];
+      if (tag && this.tagName !== tag.toUpperCase()) return false;
+      const value = this.getAttribute(attrContains[2]!) ?? this.href;
+      return value.includes(attrContains[3]!);
+    }
+    if (selector.startsWith("#")) return this.id === selector.slice(1);
+    if (selector.startsWith(".")) {
+      return this.className.split(/\s+/).includes(selector.slice(1));
+    }
+    if (/^[a-zA-Z][\w-]*$/.test(selector)) {
+      return this.tagName === selector.toUpperCase();
+    }
+    return false;
+  }
+
   querySelector(selector: string): MockElement | null {
-    if (selector.includes(" ")) {
+    if (selector.includes(" ") && !selector.includes("[")) {
       const parts = selector.trim().split(/\s+/);
       const parents = this.querySelectorAll(parts[0]!);
       for (const parent of parents) {
@@ -49,20 +98,8 @@ export class MockElement {
       }
       return null;
     }
-    if (selector.startsWith("#") && this.id === selector.slice(1)) return this;
-    if (selector.startsWith(".") && this.className.split(/\s+/).includes(selector.slice(1))) {
-      return this;
-    }
-    if (selector.startsWith("[") && selector.includes("*=")) {
-      const attrMatch = /\[([^*]+)\*="([^"]+)"\]/.exec(selector);
-      if (attrMatch) {
-        const attrName = attrMatch[1]!;
-        const needle = attrMatch[2]!;
-        const value = this.getAttribute(attrName) ?? this.href;
-        if (value.includes(needle)) return this;
-      }
-    }
     for (const child of this.children) {
+      if (child.matchesSelector(selector)) return child;
       const hit = child.querySelector(selector);
       if (hit) return hit;
     }
@@ -72,21 +109,17 @@ export class MockElement {
   querySelectorAll(selector: string): MockElement[] {
     const hits: MockElement[] = [];
     const visit = (node: MockElement): void => {
-      if (selector.startsWith(".") && node.className.split(/\s+/).includes(selector.slice(1))) {
-        hits.push(node);
-      }
+      if (node.matchesSelector(selector)) hits.push(node);
       for (const child of node.children) visit(child);
     };
-    visit(this);
+    for (const child of this.children) visit(child);
     return hits;
   }
 
   closest(selector: string): MockElement | null {
     let node: MockElement | null = this;
     while (node) {
-      if (selector.startsWith(".") && node.className.split(/\s+/).includes(selector.slice(1))) {
-        return node;
-      }
+      if (node.matchesSelector(selector)) return node;
       node = node.parent;
     }
     return null;
@@ -104,6 +137,12 @@ export class MockDocument {
 
   createElement(tag: string): MockElement {
     return new MockElement(tag);
+  }
+
+  createTextNode(text: string): MockElement {
+    const node = new MockElement("#text");
+    node.textContent = text;
+    return node;
   }
 
   getElementById(id: string): MockElement | null {
@@ -136,6 +175,9 @@ export class MockDocument {
   querySelector(selector: string): MockElement | null {
     if (selector === "main") return null;
     if (selector === "body") return this.body;
+    // Document-level query: match head/body descendants (and head/body themselves).
+    if (this.head.matchesSelector(selector)) return this.head;
+    if (this.body.matchesSelector(selector)) return this.body;
     const fromBody = this.body.querySelector(selector);
     if (fromBody) return fromBody;
     return this.head.querySelector(selector);
@@ -144,6 +186,32 @@ export class MockDocument {
   querySelectorAll(selector: string): MockElement[] {
     return [...this.body.querySelectorAll(selector), ...this.head.querySelectorAll(selector)];
   }
+}
+
+function parseImgAttrs(attrs: string | undefined): { src?: string; alt?: string } {
+  if (!attrs) return {};
+  return {
+    src: /src="([^"]+)"/.exec(attrs)?.[1],
+    alt: /alt="([^"]+)"/.exec(attrs)?.[1],
+  };
+}
+
+function appendAnchorWithOptionalImg(
+  parent: MockElement,
+  href: string,
+  imgAttrs?: string,
+): MockElement {
+  const anchor = new MockElement("a");
+  anchor.href = href;
+  if (imgAttrs !== undefined) {
+    const img = new MockElement("img");
+    const parsed = parseImgAttrs(imgAttrs);
+    if (parsed.src) img.setAttribute("src", parsed.src);
+    if (parsed.alt) img.setAttribute("alt", parsed.alt);
+    anchor.appendChild(img);
+  }
+  parent.appendChild(anchor);
+  return anchor;
 }
 
 export function parseFixtureDocument(html: string, pageUrl: string): MockDocument {
@@ -217,10 +285,28 @@ export function parseFixtureDocument(html: string, pageUrl: string): MockDocumen
     doc.body.appendChild(buy);
   }
 
-  for (const match of html.matchAll(/<a href="([^"]+)"/g)) {
-    const anchor = doc.createElement("a");
-    anchor.href = match[1]!;
-    doc.body.appendChild(anchor);
+  // Preserve listing image/container hierarchy used by overlay host selection.
+  const listItems = [
+    ...html.matchAll(
+      /<li([^>]*)>\s*<a href="([^"]+)"[^>]*>\s*(?:<img([^>]*)\/?>)?\s*<\/a>\s*<\/li>/gi,
+    ),
+  ];
+  if (listItems.length > 0) {
+    for (const match of listItems) {
+      const li = doc.createElement("li");
+      const className = /class="([^"]+)"/.exec(match[1]!)?.[1];
+      if (className) li.className = className;
+      appendAnchorWithOptionalImg(li, match[2]!, match[3]);
+      doc.body.appendChild(li);
+    }
+    return doc;
+  }
+
+  const anchors = [
+    ...html.matchAll(/<a href="([^"]+)"[^>]*>\s*(?:<img([^>]*)\/?>)?\s*<\/a>/gi),
+  ];
+  for (const match of anchors) {
+    appendAnchorWithOptionalImg(doc.body, match[1]!, match[2]);
   }
 
   return doc;

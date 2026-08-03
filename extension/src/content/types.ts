@@ -9,6 +9,8 @@ export interface LookupOtherHit {
 
 export interface LookupHit {
   owned: boolean;
+  /** Present when same-store owned and listing.purchased_at is available. */
+  purchasedAt?: string | null;
   other: LookupOtherHit[];
 }
 

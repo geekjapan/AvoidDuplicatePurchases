@@ -29,6 +29,22 @@ export function hasListing(db: DatabaseSync, source: Source, cid: string): boole
   return row !== undefined;
 }
 
+/** Return same-store ownership and stored purchase date when the listing exists. */
+export function getOwnedListing(
+  db: DatabaseSync,
+  source: Source,
+  cid: string,
+): { owned: true; purchasedAt: string | null } | { owned: false; purchasedAt: null } {
+  const row = db
+    .prepare("SELECT purchased_at FROM listing WHERE source = ? AND cid = ?")
+    .get(source, cid) as { purchased_at: string | null } | undefined;
+  if (!row) return { owned: false, purchasedAt: null };
+  return {
+    owned: true,
+    purchasedAt: typeof row.purchased_at === "string" ? row.purchased_at : null,
+  };
+}
+
 export function lookupItems(db: DatabaseSync, items: LookupItem[]): LookupResult[] {
   return items.map((item) => lookupOne(db, item));
 }
@@ -77,9 +93,12 @@ function findVideoFloorEvidence(obj: Record<string, unknown>): string | null {
 
 function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
   let owned = false;
+  let purchasedAt: string | null = null;
   if (item.source && item.cid) {
     const cid = normalizeCid(item.source, item.cid);
-    owned = hasListing(db, item.source, cid);
+    const ownedRow = getOwnedListing(db, item.source, cid);
+    owned = ownedRow.owned;
+    purchasedAt = ownedRow.purchasedAt;
   }
 
   const other: LookupResult["other"] = [];
@@ -131,7 +150,7 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
     }
   }
 
-  return { owned, other };
+  return { owned, purchasedAt, other };
 }
 
 export function recomputeMatchKeys(db: DatabaseSync, listingId: number): void {

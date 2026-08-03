@@ -8,23 +8,48 @@ const SOURCE_LABELS: Record<string, string> = {
   fanza_books: "FANZAブックス",
 };
 
+/** HTTPS product hosts allowed for cross-store warning links. */
+const APPROVED_STORE_HOSTS = new Set([
+  "www.dlsite.com",
+  "play.dlsite.com",
+  "www.dmm.co.jp",
+  "book.dmm.co.jp",
+]);
+
 export const ADP_BANNER_ID = "adp-purchased-banner";
 
 function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source;
 }
 
-export function formatOwnedBannerText(): string {
+/** Format stored purchase timestamp as YYYY-MM-DD when parseable. */
+export function formatPurchaseDate(purchasedAt?: string | null): string | null {
+  if (!purchasedAt) return null;
+  const trimmed = purchasedAt.trim();
+  const day = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed)?.[1];
+  if (day) return day;
+  const parsed = Date.parse(trimmed);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toISOString().slice(0, 10);
+}
+
+/** Approved indicator: date when available, plain owned label otherwise. */
+export function formatOwnedBannerText(purchasedAt?: string | null): string {
+  const day = formatPurchaseDate(purchasedAt);
+  if (day) return `✓ 購入済み(${day})`;
   return "✓ 購入済み";
 }
 
-export function formatOtherBannerHtml(hit: LookupHit): string | null {
-  const other = hit.other[0];
-  if (!other) return null;
-  const label = sourceLabel(other.source);
-  const safeTitle = other.title.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const safeUrl = other.url.replace(/"/g, "&quot;");
-  return `⚠ 他サイトで購入済み: <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}『${safeTitle}』</a>`;
+/** Allow only https URLs on approved store hosts. */
+export function approvedStoreHttpsUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return null;
+    if (!APPROVED_STORE_HOSTS.has(url.hostname)) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 export function renderProductBanner(doc: Document, hit: LookupHit): HTMLElement | null {
@@ -32,15 +57,26 @@ export function renderProductBanner(doc: Document, hit: LookupHit): HTMLElement 
     const banner = doc.createElement("div");
     banner.id = ADP_BANNER_ID;
     banner.className = "adp-purchased-banner adp-purchased-banner--owned";
-    banner.textContent = formatOwnedBannerText();
+    banner.textContent = formatOwnedBannerText(hit.purchasedAt);
     return banner;
   }
-  const html = formatOtherBannerHtml(hit);
-  if (!html) return null;
+
+  const other = hit.other[0];
+  if (!other) return null;
+  const safeUrl = approvedStoreHttpsUrl(other.url);
+  if (!safeUrl) return null;
+
   const banner = doc.createElement("div");
   banner.id = ADP_BANNER_ID;
   banner.className = "adp-purchased-banner adp-purchased-banner--other";
-  banner.innerHTML = html;
+
+  banner.appendChild(doc.createTextNode("⚠ 他サイトで購入済み: "));
+  const link = doc.createElement("a");
+  link.href = safeUrl;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = `${sourceLabel(other.source)}『${other.title}』`;
+  banner.appendChild(link);
   return banner;
 }
 

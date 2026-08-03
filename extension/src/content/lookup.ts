@@ -1,3 +1,4 @@
+import { LookupResponseSchema } from "@adp/shared";
 import { MSG_LOOKUP } from "../messages.js";
 import type { LookupHit } from "./types.js";
 
@@ -8,9 +9,9 @@ export interface LookupRequestItem {
   maker?: string;
 }
 
-interface LookupReply {
-  ok: boolean;
-  results?: LookupHit[];
+interface RawLookupReply {
+  ok?: boolean;
+  results?: unknown;
 }
 
 /** Silent-failure lookup: returns null when the service worker or server is unavailable. */
@@ -22,9 +23,11 @@ export async function lookupItems(
     const reply = (await chrome.runtime.sendMessage({
       type: MSG_LOOKUP,
       items,
-    })) as LookupReply | undefined;
-    if (!reply?.ok || !reply.results) return null;
-    return reply.results;
+    })) as RawLookupReply | undefined;
+    if (!reply?.ok || reply.results === undefined) return null;
+    const parsed = LookupResponseSchema.safeParse({ results: reply.results });
+    if (!parsed.success) return null;
+    return parsed.data.results;
   } catch {
     return null;
   }
