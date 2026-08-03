@@ -20,8 +20,17 @@ export declare function mergeProductInfo(sale: DlsiteSaleEntry, product: {
     image_url?: string | null;
 } | null): DlsiteParsedListing;
 /**
+ * Exact chronological compare for validated UTC ISO instants without Date/Number precision loss.
+ * - Lexical compare of fixed-width second base (YYYY-MM-DDTHH:mm:ss)
+ * - Fraction digits compared after right-padding the shorter with zeros
+ * - Raw-string tie-break for equal instants (e.g. .1Z vs .100Z) so result is order-independent
+ * Returns negative if a < b, positive if a > b, zero if equal after tie-break.
+ */
+export declare function compareUtcIsoInstants(a: string, b: string): number;
+/**
  * Compute the `last=` cursor from the newest sales_date in a batch.
- * Compares by parsed UTC instant; returns the original winning sales_date string.
+ * Uses exact UTC ISO instant comparison (arbitrary fraction digits, no ms truncation);
+ * returns the original winning sales_date string.
  */
 export declare function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null;
 //# sourceMappingURL=parse-sales.d.ts.map

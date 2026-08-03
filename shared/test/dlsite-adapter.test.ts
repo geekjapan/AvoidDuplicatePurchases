@@ -128,6 +128,60 @@ describe("dlsite adapter", () => {
     );
   });
 
+  it("maxSalesCursor orders sub-millisecond six-digit fractions exactly (no Date.parse truncation)", () => {
+    // Date.parse maps both to the same ms; exact compare must pick .000002Z either order.
+    const a = "2024-01-01T00:00:00.000001Z";
+    const b = "2024-01-01T00:00:00.000002Z";
+    assert.equal(isStrictUtcIsoInstant(a), true);
+    assert.equal(isStrictUtcIsoInstant(b), true);
+    assert.equal(
+      maxSalesCursor([
+        { workno: "RJ000001", sales_date: a },
+        { workno: "RJ000002", sales_date: b },
+      ]),
+      b,
+    );
+    assert.equal(
+      maxSalesCursor([
+        { workno: "RJ000002", sales_date: b },
+        { workno: "RJ000001", sales_date: a },
+      ]),
+      b,
+    );
+
+    // Cross-second: later second wins regardless of large earlier fraction.
+    assert.equal(
+      maxSalesCursor([
+        { workno: "RJ000003", sales_date: "2024-01-01T00:00:00.999999Z" },
+        { workno: "RJ000004", sales_date: "2024-01-01T00:00:01Z" },
+      ]),
+      "2024-01-01T00:00:01Z",
+    );
+    assert.equal(
+      maxSalesCursor([
+        { workno: "RJ000004", sales_date: "2024-01-01T00:00:01Z" },
+        { workno: "RJ000003", sales_date: "2024-01-01T00:00:00.999999Z" },
+      ]),
+      "2024-01-01T00:00:01Z",
+    );
+
+    // Mathematically equal fractions: deterministic raw-string winner, both orders.
+    const eq1 = "2024-01-01T00:00:00.1Z";
+    const eq2 = "2024-01-01T00:00:00.100Z";
+    const eqWinner = eq1 < eq2 ? eq2 : eq1; // raw-string max (lexicographic of originals after equal instants)
+    // compareUtcIsoInstants tie-break: if a < b lexically return -1 so max prefers larger raw string
+    const forward = maxSalesCursor([
+      { workno: "RJ000005", sales_date: eq1 },
+      { workno: "RJ000006", sales_date: eq2 },
+    ]);
+    const reverse = maxSalesCursor([
+      { workno: "RJ000006", sales_date: eq2 },
+      { workno: "RJ000005", sales_date: eq1 },
+    ]);
+    assert.equal(forward, reverse);
+    assert.equal(forward, eqWinner);
+  });
+
   it("parses product.json via Zod and returns null for invalid shapes", () => {
     const ok = parseDlsiteProductJson([
       {

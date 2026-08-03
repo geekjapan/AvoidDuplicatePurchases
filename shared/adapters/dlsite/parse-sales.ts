@@ -132,28 +132,54 @@ export function mergeProductInfo(
 }
 
 /**
- * Instant millis for a strict UTC ISO sales_date already accepted by the schema.
- * Used so seconds-only `...00Z` vs later `...00.999Z` compare chronologically
- * (lexical string max wrongly prefers `...00Z` because `Z` > `.`).
+ * Split an already-validated strict UTC ISO instant into second base + fraction digits.
+ * Seconds-only forms (no `.`) use empty fraction (equivalent to all zeros).
  */
-function salesDateInstantMs(salesDate: string): number {
-  const ms = Date.parse(salesDate);
-  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+function splitUtcIsoInstant(salesDate: string): { base: string; fraction: string } {
+  // Validated shape: YYYY-MM-DDTHH:mm:ss[.fraction]Z
+  const body = salesDate.endsWith("Z") ? salesDate.slice(0, -1) : salesDate;
+  const dot = body.indexOf(".");
+  if (dot === -1) {
+    return { base: body, fraction: "" };
+  }
+  return { base: body.slice(0, dot), fraction: body.slice(dot + 1) };
+}
+
+/**
+ * Exact chronological compare for validated UTC ISO instants without Date/Number precision loss.
+ * - Lexical compare of fixed-width second base (YYYY-MM-DDTHH:mm:ss)
+ * - Fraction digits compared after right-padding the shorter with zeros
+ * - Raw-string tie-break for equal instants (e.g. .1Z vs .100Z) so result is order-independent
+ * Returns negative if a < b, positive if a > b, zero if equal after tie-break.
+ */
+export function compareUtcIsoInstants(a: string, b: string): number {
+  if (a === b) return 0;
+  const pa = splitUtcIsoInstant(a);
+  const pb = splitUtcIsoInstant(b);
+  if (pa.base < pb.base) return -1;
+  if (pa.base > pb.base) return 1;
+  const width = Math.max(pa.fraction.length, pb.fraction.length);
+  const fa = pa.fraction.padEnd(width, "0");
+  const fb = pb.fraction.padEnd(width, "0");
+  if (fa < fb) return -1;
+  if (fa > fb) return 1;
+  // Mathematically equal instants: deterministic raw-string preference (lexicographic).
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
 }
 
 /**
  * Compute the `last=` cursor from the newest sales_date in a batch.
- * Compares by parsed UTC instant; returns the original winning sales_date string.
+ * Uses exact UTC ISO instant comparison (arbitrary fraction digits, no ms truncation);
+ * returns the original winning sales_date string.
  */
 export function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null {
   if (entries.length === 0) return null;
   let maxDate = entries[0]!.sales_date;
-  let maxMs = salesDateInstantMs(maxDate);
   for (let i = 1; i < entries.length; i++) {
     const candidate = entries[i]!.sales_date;
-    const candidateMs = salesDateInstantMs(candidate);
-    if (candidateMs > maxMs) {
-      maxMs = candidateMs;
+    if (compareUtcIsoInstants(candidate, maxDate) > 0) {
       maxDate = candidate;
     }
   }

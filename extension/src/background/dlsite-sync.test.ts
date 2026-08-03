@@ -95,6 +95,15 @@ describe("dlsite-sync chunking and rematch propagation", () => {
     assert.equal(maxCursorFromSales([...sales].reverse()), "2024-01-01T00:00:00.999Z");
   });
 
+  it("global cursor path is order-independent for six-digit sub-millisecond fractions", () => {
+    const sales = [
+      { workno: "RJ000001", sales_date: "2024-01-01T00:00:00.000001Z" },
+      { workno: "RJ000002", sales_date: "2024-01-01T00:00:00.000002Z" },
+    ];
+    assert.equal(maxCursorFromSales(sales), "2024-01-01T00:00:00.000002Z");
+    assert.equal(maxCursorFromSales([...sales].reverse()), "2024-01-01T00:00:00.000002Z");
+  });
+
   it("imports chunks without advancing cursor and commits global max once after all succeed", async () => {
     // 85 sales with max date in the first logical chunk; final chunk has older dates.
     // Simulates reversed/unordered DLsite response so last chunk max ≠ global max.
