@@ -1,0 +1,10 @@
+# 実購入データ。public リポジトリなのでコミットしない(#7)
+prototype/normalize/samples/
+*.sqlite
+*.sqlite3
+*.db
+
+node_modules/
+.env
+.DS_Store
+.orca/
