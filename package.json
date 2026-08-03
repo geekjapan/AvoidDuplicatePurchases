@@ -1,0 +1,21 @@
+{
+  "name": "avoid-duplicate-purchases",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "extension",
+    "server"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.50.0"
+  }
+}
