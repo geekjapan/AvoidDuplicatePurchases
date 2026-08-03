@@ -12,11 +12,12 @@ const VideoItemSchema = z
       floor: z.string().optional(),
       contentType: z.string().optional(),
       isDiscontinued: z.boolean().optional(),
-    }),
+    }).passthrough(),
     contentItem: z
       .object({
         latestViewingRightsAcquiredAt: z.string().nullable().optional(),
       })
+      .passthrough()
       .optional(),
   })
   .passthrough();
@@ -40,9 +41,8 @@ const VideoPageSchema = z.object({
 
 function itemEvidence(item: z.infer<typeof VideoItemSchema>): Record<string, unknown> {
   return {
-    id: item.id,
-    content: item.content,
-    contentItem: item.contentItem,
+    ...item,
+    // Keep the established flat evidence path while retaining the untouched item.
     latestViewingRightsAcquiredAt: item.contentItem?.latestViewingRightsAcquiredAt ?? null,
   };
 }

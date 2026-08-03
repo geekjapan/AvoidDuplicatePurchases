@@ -7,6 +7,7 @@ import { createServer, type Server } from "node:http";
 import { openDatabase } from "../src/db.js";
 import { handleApi } from "../src/http.js";
 import type { DatabaseSync } from "node:sqlite";
+import { importListingBatch } from "../src/import/fanza/common.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHARED_FIXTURES = join(__dirname, "../../shared/test/fixtures");
@@ -168,6 +169,54 @@ describe("fanza import API", () => {
     assert.equal((res.json as { totalCount: number }).totalCount, 1);
   });
 
+  it("imports each page in one transaction and defers match keys to rematch", async () => {
+    const res = await request(port, "POST", "/api/import/fanza_doujin", {
+      error_code: 0,
+      data: {
+        items: {
+          "2026年01月02日": [{ contentId: "d_transactional", title: "transactional" }],
+        },
+      },
+    });
+    assert.equal(res.status, 200);
+    const before = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM match_key
+         WHERE listing_id = (SELECT id FROM listing WHERE source = 'fanza_doujin' AND cid = 'd_transactional')`,
+      )
+      .get() as { count: number };
+    assert.equal(before.count, 0);
+
+    const rematch = await request(port, "POST", "/api/rematch", {});
+    assert.equal(rematch.status, 200);
+    const after = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM match_key
+         WHERE listing_id = (SELECT id FROM listing WHERE source = 'fanza_doujin' AND cid = 'd_transactional')`,
+      )
+      .get() as { count: number };
+    assert.equal(after.count, 1);
+  });
+
+  it("rolls back a FANZA page when a row write fails", () => {
+    assert.throws(() =>
+      importListingBatch(db, "fanza_doujin", [{
+        cid: "d_rollback",
+        title: null as unknown as string,
+        maker: null,
+        seriesId: null,
+        imageUrl: null,
+        purchasedAt: null,
+        purchasedAtPrecision: "day",
+        rawJson: "{}",
+      }]),
+    );
+    const row = db
+      .prepare("SELECT id FROM listing WHERE source = 'fanza_doujin' AND cid = 'd_rollback'")
+      .get();
+    assert.equal(row, undefined);
+  });
+
   it("upserts synthetic listings for every FANZA source through the common route", async () => {
     const cases: Array<[string, unknown]> = [
       [
@@ -251,5 +300,24 @@ describe("fanza import API", () => {
     const state = await request(port, "GET", "/api/sync-state/fanza_doujin");
     assert.equal(state.status, 200);
     assert.ok((state.json as { lastSyncedAt: string }).lastSyncedAt);
+  });
+
+  it("persists the latest per-source outcome independently of last-synced time", async () => {
+    const saved = await request(port, "POST", "/api/sync-outcome/fanza_doujin", {
+      ok: false,
+      counts: { inserted: 2, updated: 3 },
+      error: "synthetic_failure",
+      fetched: 4,
+    });
+    assert.equal(saved.status, 200);
+    const state = await request(port, "GET", "/api/sync-state/fanza_doujin");
+    assert.equal(state.status, 200);
+    assert.deepEqual((state.json as { latestOutcome: unknown }).latestOutcome, {
+      ok: false,
+      counts: { inserted: 2, updated: 3 },
+      error: "synthetic_failure",
+      fetched: 4,
+      recordedAt: (state.json as { latestOutcome: { recordedAt: string } }).latestOutcome.recordedAt,
+    });
   });
 });

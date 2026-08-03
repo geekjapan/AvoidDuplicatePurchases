@@ -218,6 +218,30 @@ describe("fanza four-source sync", () => {
     }
   });
 
+  it("renders persisted per-source outcomes on popup startup", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      json({
+        cursor: null,
+        lastSyncedAt: null,
+        latestOutcome: {
+          ok: false,
+          counts: { inserted: 2, updated: 1 },
+          error: "synthetic_failure",
+          fetched: 3,
+          recordedAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+    const container = { textContent: "" } as HTMLElement;
+    try {
+      await renderSyncStatus(container);
+      assert.match(container.textContent, /FANZA 同人: エラー synthetic_failure/);
+      assert.match(container.textContent, /新規 2 \/ 更新 1/);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it("passes failed full-sync source outcomes to popup rendering", () => {
     const popupSource = readFileSync(
       new URL("../../popup/popup.ts", import.meta.url),

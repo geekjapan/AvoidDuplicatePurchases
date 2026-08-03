@@ -35,6 +35,24 @@ describe("fanza_doujin adapter", () => {
     assert.ok(doujinLibraryUrl(1, 200).includes(`limit=${DOUJIN_LIMIT_MAX}`));
   });
 
+  it("preserves unknown nested source evidence", () => {
+    const listings = parseDoujinMylibrariesPayload({
+      error_code: 0,
+      data: {
+        items: {
+          "2026年01月01日": [{
+            contentId: "d_unknown",
+            title: "synthetic",
+            sourceOnly: { nested: ["untouched"] },
+          }],
+        },
+      },
+    });
+    assert.deepEqual(JSON.parse(listings[0]!.rawJson).sale.sourceOnly, {
+      nested: ["untouched"],
+    });
+  });
+
   it("rejects source errors and whitespace-only listing identity", () => {
     assert.throws(() =>
       parseDoujinMylibrariesPayload({ error_code: 1, data: { items: {} } }),
@@ -64,6 +82,44 @@ describe("fanza_books adapter", () => {
     assert.equal(listings[0]!.purchasedAtPrecision, "second");
     assert.equal(listings[0]!.seriesId, "100001");
     assert.equal(listings[0]!.purchasedAt, "2023-12-30T12:00:00+09:00");
+
+    assert.equal(
+      parseBooksImportPayload({
+        seriesId: "synthetic-series",
+        payload: {
+          volume_books: [{
+            content_id: "synthetic-date",
+            title: "synthetic",
+            purchased: { purchased_date: "2024-02-29T12:00:00+09:00" },
+          }],
+        },
+      })[0]!.purchasedAt,
+      "2024-02-29T12:00:00+09:00",
+    );
+    assert.throws(() =>
+      parseBooksImportPayload({
+        seriesId: "synthetic-series",
+        payload: {
+          volume_books: [{
+            content_id: "synthetic-date",
+            title: "synthetic",
+            purchased: { purchased_date: "2023-02-29T12:00:00+09:00" },
+          }],
+        },
+      }),
+    );
+    assert.throws(() =>
+      parseBooksImportPayload({
+        seriesId: "synthetic-series",
+        payload: {
+          volume_books: [{
+            content_id: "synthetic-date",
+            title: "synthetic",
+            purchased: { purchased_date: "not-an-iso-date" },
+          }],
+        },
+      }),
+    );
   });
 
   it("rejects source errors and whitespace-only content identity", () => {
@@ -94,6 +150,37 @@ describe("fanza_video adapter", () => {
     assert.equal(listings[0]!.purchasedAtPrecision, "unknown");
     const evidence = JSON.parse(listings[0]!.rawJson);
     assert.equal(evidence.sale.latestViewingRightsAcquiredAt, "2025-09-23T00:00:00Z");
+  });
+
+  it("preserves unknown top-level and nested source evidence", () => {
+    const listings = parseVideoGraphqlPayload({
+      data: {
+        user: {
+          ppvLibrary: {
+            contentViewingRightsSummaryList: {
+              pageInfo: { hasNext: false },
+              items: [{
+                id: "synthetic-video-raw",
+                unknownTopLevel: { nested: true },
+                content: {
+                  id: "synthetic-video-raw",
+                  title: "synthetic",
+                  unknownContent: { value: 1 },
+                },
+                contentItem: {
+                  latestViewingRightsAcquiredAt: null,
+                  unknownContentItem: ["keep"],
+                },
+              }],
+            },
+          },
+        },
+      },
+    });
+    const sale = JSON.parse(listings[0]!.rawJson).sale;
+    assert.deepEqual(sale.unknownTopLevel, { nested: true });
+    assert.deepEqual(sale.content.unknownContent, { value: 1 });
+    assert.deepEqual(sale.contentItem.unknownContentItem, ["keep"]);
   });
 
   it("rejects GraphQL errors and whitespace-only content identity", () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 const NonBlankString = z.string().trim().min(1);
+const StrictIso8601DateTime = z.string().datetime({ offset: true });
 const OptionalSourceErrorSchema = z
     .unknown()
     .optional()
@@ -30,7 +31,7 @@ const VolumeSchema = z
     content_id: NonBlankString,
     title: NonBlankString,
     volume_number: z.number().optional(),
-    purchased: z.object({ purchased_date: z.string().min(1) }).nullable().optional(),
+    purchased: z.object({ purchased_date: StrictIso8601DateTime }).nullable().optional(),
 })
     .passthrough();
 const ContentsPageSchema = z.object({

@@ -21,6 +21,7 @@ import {
 } from "./services/import.js";
 import { runRematch } from "./services/lookup.js";
 import { dispatchRouteMounts } from "./route-mounts.js";
+import { getLatestSyncOutcome, persistSyncOutcome } from "./import/fanza/common.js";
 import "./import/fanza/index.js";
 
 export interface ApiContext {
@@ -41,6 +42,20 @@ const ImportAdvanceFlagSchema = z
 const CommitCursorRequestSchema = z
   .object({
     cursor: z.string().min(1),
+  })
+  .strict();
+
+const SyncOutcomeRequestSchema = z
+  .object({
+    ok: z.boolean(),
+    counts: z
+      .object({
+        inserted: z.number().int().nonnegative(),
+        updated: z.number().int().nonnegative(),
+      })
+      .optional(),
+    error: z.string().min(1).optional(),
+    fetched: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -159,7 +174,14 @@ export async function handleApi(
 
   if (method === "GET" && url.pathname === "/api/sync-state/dlsite") {
     const state = getSyncState(ctx.db, "dlsite");
-    json(res, 200, SyncStateResponseSchema.parse(state));
+    json(
+      res,
+      200,
+      SyncStateResponseSchema.passthrough().parse({
+        ...state,
+        latestOutcome: getLatestSyncOutcome(ctx.db, "dlsite"),
+      }),
+    );
     return true;
   }
 
@@ -181,10 +203,42 @@ export async function handleApi(
     try {
       commitDlsiteCursor(ctx.db, parsed.cursor);
       const state = getSyncState(ctx.db, "dlsite");
-      json(res, 200, SyncStateResponseSchema.parse(state));
+      json(
+        res,
+        200,
+        SyncStateResponseSchema.passthrough().parse({
+          ...state,
+          latestOutcome: getLatestSyncOutcome(ctx.db, "dlsite"),
+        }),
+      );
     } catch {
       validationError(res);
     }
+    return true;
+  }
+
+  const outcomeMatch = url.pathname.match(/^\/api\/sync-outcome\/([^/]+)$/);
+  if (method === "POST" && outcomeMatch) {
+    const source = parseZod(SourcePathSchema, { source: outcomeMatch[1] });
+    if (!source) {
+      validationError(res);
+      return true;
+    }
+    const raw = await readBody(req);
+    let body: unknown;
+    try {
+      body = raw.length ? JSON.parse(raw) : null;
+    } catch {
+      validationError(res);
+      return true;
+    }
+    const parsed = parseZod(SyncOutcomeRequestSchema, body);
+    if (!parsed) {
+      validationError(res);
+      return true;
+    }
+    persistSyncOutcome(ctx.db, source.source, parsed);
+    json(res, 200, { ok: true });
     return true;
   }
 

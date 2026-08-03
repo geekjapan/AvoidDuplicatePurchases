@@ -83,6 +83,51 @@ describe("alarms full sync", () => {
     assert.equal(Object.keys(outcome.sources).length, 5);
   });
 
+  it("shares one in-flight store sequence between manual and alarm entrypoints", async () => {
+    let dlsiteRuns = 0;
+    let fanzaRuns = 0;
+    let releaseFanza!: () => void;
+    let fanzaStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      fanzaStarted = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseFanza = resolve;
+    });
+    const deps = {
+      runDlsite: async () => {
+        dlsiteRuns++;
+        return { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 };
+      },
+      runFanza: async () => {
+        fanzaRuns++;
+        fanzaStarted();
+        await gate;
+        return {
+          fanza_doujin: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_books: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_video: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_dlsoft: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+        };
+      },
+      rematch: async () => true,
+      persistOutcomes: async () => undefined,
+    };
+
+    const manual = runFullSync(deps);
+    await started;
+    const alarmFinished = new Promise<void>((resolve) => {
+      handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, () =>
+        runFullSync(deps).then(() => resolve()),
+      );
+    });
+    releaseFanza();
+    await manual;
+    await alarmFinished;
+    assert.equal(dlsiteRuns, 1);
+    assert.equal(fanzaRuns, 1);
+  });
+
   it("handleDailySyncAlarm invokes full sync for daily alarm name", async () => {
     let called = 0;
     handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {

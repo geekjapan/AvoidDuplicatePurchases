@@ -1,13 +1,15 @@
 import { z } from "zod";
 const NonBlankString = z.string().trim().min(1);
-const DoujinItemSchema = z.object({
+const DoujinItemSchema = z
+    .object({
     contentId: NonBlankString,
     productId: z.string().optional(),
     title: NonBlankString,
     makerName: z.string().optional(),
     genre: z.string().optional(),
     imageSrc: z.string().optional(),
-});
+})
+    .passthrough();
 const DoujinPageSchema = z.object({
     error_code: z.literal(0),
     data: z.object({
@@ -25,12 +27,7 @@ export function parseJpDateKey(key) {
 }
 function itemEvidence(item, dateKey) {
     return {
-        contentId: item.contentId,
-        productId: item.productId,
-        title: item.title,
-        makerName: item.makerName,
-        genre: item.genre,
-        imageSrc: item.imageSrc,
+        ...item,
         purchasedDateKey: dateKey,
     };
 }

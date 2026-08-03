@@ -117,7 +117,7 @@ async function handleFanzaRoute(
 
     if (method === "GET") {
       const state = getSyncState(ctx.db, sourceParam);
-      json(res, 200, SyncStateResponseSchema.parse(state));
+      json(res, 200, SyncStateResponseSchema.passthrough().parse(state));
       return true;
     }
 
@@ -137,7 +137,7 @@ async function handleFanzaRoute(
       }
       markSourceSynced(ctx.db, sourceParam);
       const state = getSyncState(ctx.db, sourceParam);
-      json(res, 200, SyncStateResponseSchema.parse(state));
+      json(res, 200, SyncStateResponseSchema.passthrough().parse(state));
       return true;
     }
   }

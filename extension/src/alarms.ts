@@ -1,7 +1,11 @@
 import { runDlsiteSync, DAILY_SYNC_ALARM, type SyncOutcome } from "./background/dlsite-sync.js";
 import { rematchOnServer } from "./background/server-client.js";
 import { runAllFanzaSyncs, type SourceSyncOutcome } from "./adapters/fanza/sync.js";
-import { ALL_SYNC_SOURCES } from "./adapters/fanza/server-api.js";
+import {
+  ALL_SYNC_SOURCES,
+  persistSyncOutcomeOnServer,
+  type SyncSource,
+} from "./adapters/fanza/server-api.js";
 
 export { DAILY_SYNC_ALARM };
 
@@ -15,13 +19,32 @@ export interface FullSyncDeps {
   runDlsite?: typeof runDlsiteSync;
   runFanza?: typeof runAllFanzaSyncs;
   rematch?: typeof rematchOnServer;
+  persistOutcomes?: (sources: FullSyncOutcome["sources"]) => Promise<void>;
 }
 
-/** Manual + daily sync: DLsite then FANZA sources sequentially; one rematch at end. */
-export async function runFullSync(deps: FullSyncDeps = {}): Promise<FullSyncOutcome> {
+async function persistLatestOutcomes(
+  sources: FullSyncOutcome["sources"],
+): Promise<void> {
+  // The Node test runner has no extension runtime; persistence is exercised through
+  // the injected dependency and the server API tests instead.
+  if (typeof chrome === "undefined") return;
+  await Promise.all(
+    Object.entries(sources).map(async ([source, outcome]) => {
+      if (!(ALL_SYNC_SOURCES as readonly string[]).includes(source)) return;
+      try {
+        await persistSyncOutcomeOnServer(source as SyncSource, outcome);
+      } catch {
+        // A status write must not turn a completed store sync into a failed sync.
+      }
+    }),
+  );
+}
+
+async function executeFullSync(deps: FullSyncDeps): Promise<FullSyncOutcome> {
   const runDlsite = deps.runDlsite ?? runDlsiteSync;
   const runFanza = deps.runFanza ?? runAllFanzaSyncs;
   const rematch = deps.rematch ?? rematchOnServer;
+  const persistOutcomes = deps.persistOutcomes ?? persistLatestOutcomes;
   const sources: Record<string, SourceSyncOutcome | SyncOutcome> = {};
   let firstError: string | undefined;
 
@@ -42,15 +65,40 @@ export async function runFullSync(deps: FullSyncDeps = {}): Promise<FullSyncOutc
   }
 
   if (firstError !== undefined) {
-    return { ok: false, sources, error: firstError };
+    const outcome = { ok: false, sources, error: firstError };
+    await persistOutcomes(outcome.sources);
+    return outcome;
   }
 
   const rematchOk = await rematch();
   if (!rematchOk) {
-    return { ok: false, sources, error: "rematch_failed" };
+    const outcome = { ok: false, sources, error: "rematch_failed" };
+    await persistOutcomes(outcome.sources);
+    return outcome;
   }
 
-  return { ok: true, sources };
+  const outcome = { ok: true, sources };
+  await persistOutcomes(outcome.sources);
+  return outcome;
+}
+
+let activeFullSync: Promise<FullSyncOutcome> | null = null;
+
+/** Manual + daily sync: DLsite then FANZA sources sequentially; one rematch at end. */
+export function runFullSync(deps: FullSyncDeps = {}): Promise<FullSyncOutcome> {
+  if (activeFullSync) return activeFullSync;
+  const run = executeFullSync(deps);
+  activeFullSync = run.then(
+    (outcome) => {
+      activeFullSync = null;
+      return outcome;
+    },
+    (error: unknown) => {
+      activeFullSync = null;
+      throw error;
+    },
+  );
+  return activeFullSync;
 }
 
 /**

@@ -6,11 +6,25 @@ import {
 
 export type { ImportCounts, SyncState };
 
+export interface PersistedSyncOutcome {
+  ok: boolean;
+  counts: ImportCounts;
+  error: string | null;
+  fetched: number | null;
+  recordedAt: string;
+}
+
+export interface SyncStateWithOutcome extends SyncState {
+  latestOutcome?: PersistedSyncOutcome | null;
+}
+
 export type FanzaImportSource =
   | "fanza_doujin"
   | "fanza_books"
   | "fanza_video"
   | "fanza_dlsoft";
+
+export type SyncSource = (typeof ALL_SYNC_SOURCES)[number];
 
 export const FANZA_SOURCES: readonly FanzaImportSource[] = [
   "fanza_doujin",
@@ -66,13 +80,30 @@ export async function markFanzaSyncedOnServer(
   return { ok: true, state: res.data };
 }
 
-export async function getSourceSyncState(source: string): Promise<SyncState | null> {
-  const res = await serverFetch<SyncState>(`/api/sync-state/${source}`);
+export async function persistSyncOutcomeOnServer(
+  source: SyncSource,
+  outcome: {
+    ok: boolean;
+    counts?: ImportCounts;
+    error?: string;
+    fetched?: number;
+  },
+): Promise<boolean> {
+  const res = await serverFetch<{ ok: boolean }>(`/api/sync-outcome/${source}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(outcome),
+  });
+  return res.ok && res.data.ok === true;
+}
+
+export async function getSourceSyncState(source: string): Promise<SyncStateWithOutcome | null> {
+  const res = await serverFetch<SyncStateWithOutcome>(`/api/sync-state/${source}`);
   return res.ok ? res.data : null;
 }
 
-export async function getAllSyncStates(): Promise<Record<string, SyncState | null>> {
-  const states: Record<string, SyncState | null> = {};
+export async function getAllSyncStates(): Promise<Record<string, SyncStateWithOutcome | null>> {
+  const states: Record<string, SyncStateWithOutcome | null> = {};
   for (const source of ALL_SYNC_SOURCES) {
     states[source] = await getSourceSyncState(source);
   }

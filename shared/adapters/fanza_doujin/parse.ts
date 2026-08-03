@@ -1,16 +1,18 @@
 import { z } from "zod";
-import type { FanzaDoujinItem, FanzaDoujinParsedListing } from "./types.js";
+import type { FanzaDoujinParsedListing } from "./types.js";
 
 const NonBlankString = z.string().trim().min(1);
 
-const DoujinItemSchema = z.object({
-  contentId: NonBlankString,
-  productId: z.string().optional(),
-  title: NonBlankString,
-  makerName: z.string().optional(),
-  genre: z.string().optional(),
-  imageSrc: z.string().optional(),
-});
+const DoujinItemSchema = z
+  .object({
+    contentId: NonBlankString,
+    productId: z.string().optional(),
+    title: NonBlankString,
+    makerName: z.string().optional(),
+    genre: z.string().optional(),
+    imageSrc: z.string().optional(),
+  })
+  .passthrough();
 
 const DoujinPageSchema = z.object({
   error_code: z.literal(0),
@@ -28,19 +30,17 @@ export function parseJpDateKey(key: string): string | null {
   return `${m[1]}-${m[2]}-${m[3]}`;
 }
 
-function itemEvidence(item: FanzaDoujinItem, dateKey: string): Record<string, unknown> {
+function itemEvidence(item: z.infer<typeof DoujinItemSchema>, dateKey: string): Record<string, unknown> {
   return {
-    contentId: item.contentId,
-    productId: item.productId,
-    title: item.title,
-    makerName: item.makerName,
-    genre: item.genre,
-    imageSrc: item.imageSrc,
+    ...item,
     purchasedDateKey: dateKey,
   };
 }
 
-function listingFromItem(item: FanzaDoujinItem, dateKey: string): FanzaDoujinParsedListing {
+function listingFromItem(
+  item: z.infer<typeof DoujinItemSchema>,
+  dateKey: string,
+): FanzaDoujinParsedListing {
   const purchasedDay = parseJpDateKey(dateKey);
   const maker =
     typeof item.makerName === "string" && item.makerName.trim() ? item.makerName.trim() : null;

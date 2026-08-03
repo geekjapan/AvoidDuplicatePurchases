@@ -1,5 +1,8 @@
-import type { SyncState } from "../background/server-client.js";
-import { getAllSyncStates, listSyncSources } from "../adapters/fanza/server-api.js";
+import {
+  getAllSyncStates,
+  listSyncSources,
+  type SyncStateWithOutcome,
+} from "../adapters/fanza/server-api.js";
 import { SYNC_SOURCE_LABELS, type FullSyncOutcome } from "../alarms.js";
 import type { SourceSyncOutcome } from "../adapters/fanza/sync.js";
 import type { SyncOutcome } from "../background/dlsite-sync.js";
@@ -15,20 +18,24 @@ function formatLastSynced(lastSyncedAt: string | null): string {
 
 function formatOutcomeLine(
   source: string,
-  state: SyncState | null,
+  state: SyncStateWithOutcome | null,
   outcome?: SourceSyncOutcome | SyncOutcome,
 ): string {
   const label = SYNC_SOURCE_LABELS[source] ?? source;
   const last = formatLastSynced(state?.lastSyncedAt ?? null);
-  if (!outcome) {
+  const latest = outcome ?? state?.latestOutcome;
+  if (!latest) {
     return `${label}: 最終 ${last}`;
   }
-  if (outcome.ok && outcome.counts) {
-    const fetched = outcome.fetched ?? "?";
-    return `${label}: 取得 ${fetched} ページ / 新規 ${outcome.counts.inserted} / 更新 ${outcome.counts.updated}（${last}）`;
+  if (latest.ok && latest.counts) {
+    const fetched = latest.fetched ?? "?";
+    return `${label}: 取得 ${fetched} ページ / 新規 ${latest.counts.inserted} / 更新 ${latest.counts.updated}（${last}）`;
   }
-  if (outcome.error) {
-    return `${label}: エラー ${outcome.error}（${last}）`;
+  if (latest.error) {
+    const counts = latest.counts
+      ? ` / 新規 ${latest.counts.inserted} / 更新 ${latest.counts.updated}`
+      : "";
+    return `${label}: エラー ${latest.error}${counts}（${last}）`;
   }
   return `${label}: 失敗（${last}）`;
 }
