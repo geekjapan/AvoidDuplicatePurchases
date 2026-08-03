@@ -1,11 +1,13 @@
 import { z } from "zod";
 import type { FanzaDlsoftParsedListing } from "./types.js";
 
+const NonBlankString = z.string().trim().min(1);
+
 const LibraryItemSchema = z
   .object({
-    contentId: z.string().min(1),
+    contentId: NonBlankString,
     productId: z.string().optional(),
-    title: z.string().min(1),
+    title: NonBlankString,
     floor: z.string().optional(),
     brand: z.object({ name: z.string().optional() }).nullable().optional(),
     authorArray: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
@@ -15,7 +17,10 @@ const LibraryItemSchema = z
   .passthrough();
 
 const LibraryPageSchema = z.object({
-  error: z.unknown().optional(),
+  error: z
+    .unknown()
+    .optional()
+    .refine((value) => value === undefined || value === null, { message: "source error" }),
   body: z.object({
     totalCount: z.number().optional(),
     library: z.array(LibraryItemSchema).optional(),
@@ -61,4 +66,16 @@ export function dlsoftPageHasNext(raw: unknown, fetchedSoFar: number): boolean {
   if (library.length === 0) return false;
   const total = parsed.data.body.totalCount ?? fetchedSoFar;
   return fetchedSoFar < total;
+}
+
+export function dlsoftPageInfo(raw: unknown): { itemCount: number; totalCount: number } {
+  const parsed = LibraryPageSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error("fanza_dlsoft payload failed schema validation");
+  }
+  const itemCount = (parsed.data.body.library ?? []).length;
+  return {
+    itemCount,
+    totalCount: parsed.data.body.totalCount ?? itemCount,
+  };
 }

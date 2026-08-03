@@ -34,6 +34,18 @@ describe("fanza_doujin adapter", () => {
     assert.equal(listings[1]!.purchasedAt, null);
     assert.ok(doujinLibraryUrl(1, 200).includes(`limit=${DOUJIN_LIMIT_MAX}`));
   });
+
+  it("rejects source errors and whitespace-only listing identity", () => {
+    assert.throws(() =>
+      parseDoujinMylibrariesPayload({ error_code: 1, data: { items: {} } }),
+    );
+    assert.throws(() =>
+      parseDoujinMylibrariesPayload({
+        error_code: 0,
+        data: { items: { "2026年01月01日": [{ contentId: "   ", title: "synthetic" }] } },
+      }),
+    );
+  });
 });
 
 describe("fanza_books adapter", () => {
@@ -53,6 +65,24 @@ describe("fanza_books adapter", () => {
     assert.equal(listings[0]!.seriesId, "100001");
     assert.equal(listings[0]!.purchasedAt, "2023-12-30T12:00:00+09:00");
   });
+
+  it("rejects source errors and whitespace-only content identity", () => {
+    assert.throws(() => parseBooksLibraryPayload({ error: "synthetic_error" }));
+    assert.throws(() =>
+      parseBooksImportPayload({
+        seriesId: "synthetic-series",
+        payload: {
+          volume_books: [
+            {
+              content_id: "synthetic-book",
+              title: "   ",
+              purchased: { purchased_date: "2026-01-01T00:00:00Z" },
+            },
+          ],
+        },
+      }),
+    );
+  });
 });
 
 describe("fanza_video adapter", () => {
@@ -65,6 +95,24 @@ describe("fanza_video adapter", () => {
     const evidence = JSON.parse(listings[0]!.rawJson);
     assert.equal(evidence.sale.latestViewingRightsAcquiredAt, "2025-09-23T00:00:00Z");
   });
+
+  it("rejects GraphQL errors and whitespace-only content identity", () => {
+    assert.throws(() => parseVideoGraphqlPayload({ errors: [{ message: "synthetic" }] }));
+    assert.throws(() =>
+      parseVideoGraphqlPayload({
+        data: {
+          user: {
+            ppvLibrary: {
+              contentViewingRightsSummaryList: {
+                pageInfo: { hasNext: false },
+                items: [{ content: { id: "synthetic-video", title: "   " } }],
+              },
+            },
+          },
+        },
+      }),
+    );
+  });
 });
 
 describe("fanza_dlsoft adapter", () => {
@@ -76,5 +124,20 @@ describe("fanza_dlsoft adapter", () => {
     assert.equal(listings[0]!.purchasedAt, null);
     assert.equal(listings[0]!.purchasedAtPrecision, "unknown");
     assert.equal(listings[0]!.maker, "メーカーZ");
+  });
+
+  it("rejects source errors and whitespace-only listing identity", () => {
+    assert.throws(() =>
+      parseDlsoftLibraryPayload({
+        error: { message: "synthetic" },
+        body: { totalCount: 0, library: [] },
+      }),
+    );
+    assert.throws(() =>
+      parseDlsoftLibraryPayload({
+        error: null,
+        body: { totalCount: 1, library: [{ contentId: "   ", title: "synthetic" }] },
+      }),
+    );
   });
 });

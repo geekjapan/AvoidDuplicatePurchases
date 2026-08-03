@@ -40,7 +40,7 @@ describe("alarms full sync", () => {
     assert.equal(Object.keys(outcome.sources).length, 5);
   });
 
-  it("runFullSync stops on first FANZA failure without rematch", async () => {
+  it("runFullSync retains every source outcome on failure without rematch", async () => {
     let rematched = false;
     const outcome = await runFullSync({
       runDlsite: async () => ({ ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 }),
@@ -58,6 +58,29 @@ describe("alarms full sync", () => {
     assert.equal(outcome.ok, false);
     assert.equal(outcome.error, "http_403");
     assert.equal(rematched, false);
+    assert.deepEqual(Object.keys(outcome.sources), [
+      "dlsite",
+      "fanza_doujin",
+      "fanza_books",
+      "fanza_video",
+      "fanza_dlsoft",
+    ]);
+  });
+
+  it("runFullSync still records FANZA outcomes when DLsite fails", async () => {
+    const outcome = await runFullSync({
+      runDlsite: async () => ({ ok: false, error: "dlsite_failed" }),
+      runFanza: async () => ({
+        fanza_doujin: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+        fanza_books: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+        fanza_video: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+        fanza_dlsoft: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+      }),
+      rematch: async () => true,
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error, "dlsite_failed");
+    assert.equal(Object.keys(outcome.sources).length, 5);
   });
 
   it("handleDailySyncAlarm invokes full sync for daily alarm name", async () => {
@@ -88,5 +111,30 @@ describe("alarms full sync", () => {
   it("registerAlarms and daily alarm name are defined", () => {
     assert.equal(typeof registerAlarms, "function");
     assert.equal(DAILY_SYNC_ALARM, "adp-daily-sync");
+  });
+
+  it("registerAlarms keeps an existing daily alarm schedule", async () => {
+    const previousChrome = globalThis.chrome;
+    let getCalls = 0;
+    let createCalls = 0;
+    globalThis.chrome = {
+      alarms: {
+        get: async (name: string) => {
+          getCalls++;
+          return { name, scheduledTime: 1, periodInMinutes: 1440 };
+        },
+        create: () => {
+          createCalls++;
+        },
+        onAlarm: { addListener: () => undefined },
+      },
+    } as unknown as typeof chrome;
+    try {
+      await registerAlarms();
+      assert.equal(getCalls, 1);
+      assert.equal(createCalls, 0);
+    } finally {
+      globalThis.chrome = previousChrome;
+    }
   });
 });

@@ -103,7 +103,7 @@ async function handleFanzaRoute(
     }
     try {
       const counts = importPayload(ctx.db, sourceParam, parsed);
-      json(res, 200, ImportResponseSchema.parse(counts));
+      json(res, 200, ImportResponseSchema.passthrough().parse(counts));
     } catch {
       validationError(res);
     }

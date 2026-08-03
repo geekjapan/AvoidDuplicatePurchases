@@ -1,10 +1,11 @@
 import { z } from "zod";
+const NonBlankString = z.string().trim().min(1);
 const VideoItemSchema = z
     .object({
     id: z.string().optional(),
     content: z.object({
-        id: z.string().min(1),
-        title: z.string().min(1),
+        id: NonBlankString,
+        title: NonBlankString,
         floor: z.string().optional(),
         contentType: z.string().optional(),
         isDiscontinued: z.boolean().optional(),
@@ -17,6 +18,7 @@ const VideoItemSchema = z
 })
     .passthrough();
 const VideoPageSchema = z.object({
+    errors: z.array(z.unknown()).max(0).optional(),
     data: z.object({
         user: z.object({
             ppvLibrary: z.object({

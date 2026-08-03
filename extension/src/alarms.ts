@@ -23,21 +23,26 @@ export async function runFullSync(deps: FullSyncDeps = {}): Promise<FullSyncOutc
   const runFanza = deps.runFanza ?? runAllFanzaSyncs;
   const rematch = deps.rematch ?? rematchOnServer;
   const sources: Record<string, SourceSyncOutcome | SyncOutcome> = {};
+  let firstError: string | undefined;
 
   const dlsite = await runDlsite({
     rematchOnServer: async () => true,
   });
   sources.dlsite = dlsite;
   if (!dlsite.ok) {
-    return { ok: false, sources, error: dlsite.error };
+    firstError = dlsite.error ?? "dlsite_failed";
   }
 
   const fanzaOutcomes = await runFanza();
   for (const [source, outcome] of Object.entries(fanzaOutcomes)) {
     sources[source] = outcome;
-    if (!outcome.ok) {
-      return { ok: false, sources, error: outcome.error };
+    if (!outcome.ok && firstError === undefined) {
+      firstError = outcome.error ?? `${source}_failed`;
     }
+  }
+
+  if (firstError !== undefined) {
+    return { ok: false, sources, error: firstError };
   }
 
   const rematchOk = await rematch();
@@ -62,11 +67,14 @@ export function handleDailySyncAlarm(
   });
 }
 
-export function registerAlarms(): void {
-  chrome.alarms.create(DAILY_SYNC_ALARM, { periodInMinutes: 1440 });
+export async function registerAlarms(): Promise<void> {
   chrome.alarms.onAlarm.addListener((alarm) => {
     handleDailySyncAlarm(alarm);
   });
+  const existing = await chrome.alarms.get(DAILY_SYNC_ALARM);
+  if (!existing) {
+    chrome.alarms.create(DAILY_SYNC_ALARM, { periodInMinutes: 1440 });
+  }
 }
 
 export const SYNC_SOURCE_LABELS: Record<string, string> = {

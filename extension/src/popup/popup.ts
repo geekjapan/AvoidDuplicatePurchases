@@ -32,7 +32,7 @@ if (syncBtn) {
       };
       if (!resultEl) return;
       const outcome = reply?.outcome;
-      if (outcome?.ok && outcome.sources) {
+      if (outcome?.sources) {
         await renderSyncStatus(resultEl, outcome.sources as FullSyncOutcome["sources"]);
       } else if (outcome?.error) {
         resultEl.textContent = `エラー: ${outcome.error}`;

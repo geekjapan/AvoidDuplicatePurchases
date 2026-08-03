@@ -1,10 +1,16 @@
 import { z } from "zod";
 import type { FanzaBooksImportPayload, FanzaBooksParsedListing, FanzaBooksSeriesRef } from "./types.js";
 
+const NonBlankString = z.string().trim().min(1);
+const OptionalSourceErrorSchema = z
+  .unknown()
+  .optional()
+  .refine((value) => value === undefined || value === null, { message: "source error" });
+
 const SeriesEntrySchema = z
   .object({
-    series_id: z.union([z.string(), z.number()]).optional(),
-    id: z.union([z.string(), z.number()]).optional(),
+    series_id: z.union([NonBlankString, z.number()]).optional(),
+    id: z.union([NonBlankString, z.number()]).optional(),
     author: z.string().optional(),
     author_name: z.string().optional(),
     authors: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
@@ -12,7 +18,9 @@ const SeriesEntrySchema = z
   .passthrough();
 
 const LibraryPageSchema = z.object({
-  series_books: z.array(SeriesEntrySchema).optional(),
+  error: OptionalSourceErrorSchema,
+  errors: OptionalSourceErrorSchema,
+  series_books: z.array(SeriesEntrySchema),
   pager: z
     .object({
       page: z.number().optional(),
@@ -24,15 +32,17 @@ const LibraryPageSchema = z.object({
 
 const VolumeSchema = z
   .object({
-    content_id: z.string().min(1),
-    title: z.string().min(1),
+    content_id: NonBlankString,
+    title: NonBlankString,
     volume_number: z.number().optional(),
     purchased: z.object({ purchased_date: z.string().min(1) }).nullable().optional(),
   })
   .passthrough();
 
 const ContentsPageSchema = z.object({
-  volume_books: z.array(VolumeSchema).optional(),
+  error: OptionalSourceErrorSchema,
+  errors: OptionalSourceErrorSchema,
+  volume_books: z.array(VolumeSchema),
   pager: z
     .object({
       page: z.number().optional(),
@@ -43,7 +53,7 @@ const ContentsPageSchema = z.object({
 });
 
 const ImportBodySchema = z.object({
-  seriesId: z.string().min(1),
+  seriesId: NonBlankString,
   author: z.string().nullable().optional(),
   payload: z.unknown(),
 });

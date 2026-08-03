@@ -4,22 +4,14 @@ import {
 } from "@adp/shared/adapters/fanza_doujin";
 import {
   booksLibraryUrl,
-  booksLibraryHasNext,
   booksContentsUrl,
-  booksContentsHasNext,
-  parseBooksLibraryPayload,
-  type FanzaBooksSeriesRef,
 } from "@adp/shared/adapters/fanza_books";
 import {
   VIDEO_GRAPHQL_URL,
   videoPurchasedGraphqlBody,
   videoPageHasNext,
 } from "@adp/shared/adapters/fanza_video";
-import {
-  dlsoftLibraryUrl,
-  dlsoftPageHasNext,
-  parseDlsoftLibraryPayload,
-} from "@adp/shared/adapters/fanza_dlsoft";
+import { dlsoftLibraryUrl } from "@adp/shared/adapters/fanza_dlsoft";
 import {
   importFanzaOnServer,
   markFanzaSyncedOnServer,
@@ -61,8 +53,8 @@ export async function runFanzaDoujinSync(): Promise<SourceSyncOutcome> {
     if (!imported.ok) {
       return { ok: false, error: imported.error, counts: { inserted, updated }, fetched };
     }
-    inserted += imported.counts.inserted;
-    updated += imported.counts.updated;
+    inserted += imported.result.inserted;
+    updated += imported.result.updated;
     fetched += 1;
 
     if (!doujinPageHasNext(res.data)) break;
@@ -79,7 +71,7 @@ export async function runFanzaDoujinSync(): Promise<SourceSyncOutcome> {
 
 export async function runFanzaBooksSync(): Promise<SourceSyncOutcome> {
   let libPage = 1;
-  const seriesQueue: FanzaBooksSeriesRef[] = [];
+  const seriesQueue: Array<{ seriesId: string; author: string | null }> = [];
   let inserted = 0;
   let updated = 0;
   let fetched = 0;
@@ -89,12 +81,19 @@ export async function runFanzaBooksSync(): Promise<SourceSyncOutcome> {
     if (!libRes.ok) {
       return { ok: false, error: libRes.error, counts: { inserted, updated }, fetched };
     }
+    const inspected = await importFanzaOnServer("fanza_books", libRes.data);
+    if (!inspected.ok || !inspected.result.series) {
+      return {
+        ok: false,
+        error: inspected.ok ? "invalid_import_response" : inspected.error,
+        counts: { inserted, updated },
+        fetched,
+      };
+    }
     fetched += 1;
+    seriesQueue.push(...inspected.result.series);
 
-    const seriesOnPage = parseBooksLibraryPayload(libRes.data);
-    seriesQueue.push(...seriesOnPage);
-
-    if (!booksLibraryHasNext(libRes.data)) break;
+    if (inspected.result.hasNext !== true) break;
     libPage += 1;
   }
 
@@ -115,10 +114,10 @@ export async function runFanzaBooksSync(): Promise<SourceSyncOutcome> {
       if (!imported.ok) {
         return { ok: false, error: imported.error, counts: { inserted, updated }, fetched };
       }
-      inserted += imported.counts.inserted;
-      updated += imported.counts.updated;
+      inserted += imported.result.inserted;
+      updated += imported.result.updated;
 
-      if (!booksContentsHasNext(contentsRes.data)) break;
+      if (imported.result.hasNext !== true) break;
       contentsPage += 1;
     }
   }
@@ -153,8 +152,8 @@ export async function runFanzaVideoSync(): Promise<SourceSyncOutcome> {
     if (!imported.ok) {
       return { ok: false, error: imported.error, counts: { inserted, updated }, fetched };
     }
-    inserted += imported.counts.inserted;
-    updated += imported.counts.updated;
+    inserted += imported.result.inserted;
+    updated += imported.result.updated;
     fetched += 1;
 
     if (!videoPageHasNext(res.data)) break;
@@ -186,14 +185,24 @@ export async function runFanzaDlsoftSync(): Promise<SourceSyncOutcome> {
     if (!imported.ok) {
       return { ok: false, error: imported.error, counts: { inserted, updated }, fetched };
     }
-    inserted += imported.counts.inserted;
-    updated += imported.counts.updated;
+    inserted += imported.result.inserted;
+    updated += imported.result.updated;
     fetched += 1;
 
-    const items = parseDlsoftLibraryPayload(res.data);
-    totalFetchedItems += items.length;
+    if (
+      imported.result.itemCount === undefined ||
+      imported.result.totalCount === undefined
+    ) {
+      return {
+        ok: false,
+        error: "invalid_import_response",
+        counts: { inserted, updated },
+        fetched,
+      };
+    }
+    totalFetchedItems += imported.result.itemCount;
 
-    if (!dlsoftPageHasNext(res.data, totalFetchedItems)) break;
+    if (imported.result.itemCount === 0 || totalFetchedItems >= imported.result.totalCount) break;
     page += 1;
   }
 

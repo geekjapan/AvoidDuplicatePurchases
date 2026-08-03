@@ -21,6 +21,13 @@ export const FANZA_SOURCES: readonly FanzaImportSource[] = [
 
 export const ALL_SYNC_SOURCES = ["dlsite", ...FANZA_SOURCES] as const;
 
+export interface FanzaImportResult extends ImportCounts {
+  series?: Array<{ seriesId: string; author: string | null }>;
+  hasNext?: boolean;
+  itemCount?: number;
+  totalCount?: number;
+}
+
 async function serverFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -37,14 +44,14 @@ async function serverFetch<T>(
 export async function importFanzaOnServer(
   source: FanzaImportSource,
   payload: unknown,
-): Promise<{ ok: true; counts: ImportCounts } | { ok: false; error: string }> {
-  const res = await serverFetch<ImportCounts>(`/api/import/${source}`, {
+): Promise<{ ok: true; result: FanzaImportResult } | { ok: false; error: string }> {
+  const res = await serverFetch<FanzaImportResult>(`/api/import/${source}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) return { ok: false, error: res.error };
-  return { ok: true, counts: res.data };
+  return { ok: true, result: res.data };
 }
 
 export async function markFanzaSyncedOnServer(

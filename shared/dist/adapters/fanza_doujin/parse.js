@@ -1,14 +1,15 @@
 import { z } from "zod";
+const NonBlankString = z.string().trim().min(1);
 const DoujinItemSchema = z.object({
-    contentId: z.string().min(1),
+    contentId: NonBlankString,
     productId: z.string().optional(),
-    title: z.string().min(1),
+    title: NonBlankString,
     makerName: z.string().optional(),
     genre: z.string().optional(),
     imageSrc: z.string().optional(),
 });
 const DoujinPageSchema = z.object({
-    error_code: z.number(),
+    error_code: z.literal(0),
     data: z.object({
         items: z.record(z.string(), z.array(DoujinItemSchema)),
         total: z.number().optional(),

@@ -124,6 +124,20 @@ describe("fanza import API", () => {
     assert.match(row.purchased_at, /2023-12-30/);
   });
 
+  it("parses Books library pagination at the server import boundary", async () => {
+    const res = await request(port, "POST", "/api/import/fanza_books", {
+      series_books: [{ series_id: "synthetic-series", author: "synthetic-author" }],
+      pager: { page: 1, per_page: 1, total_count: 2 },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, {
+      inserted: 0,
+      updated: 0,
+      series: [{ seriesId: "synthetic-series", author: "synthetic-author" }],
+      hasNext: true,
+    });
+  });
+
   it("imports fanza_video with unknown purchased_at", async () => {
     const raw = JSON.parse(readFileSync(join(SHARED_FIXTURES, "fanza-video-page.json"), "utf8"));
     const res = await request(port, "POST", "/api/import/fanza_video", raw);
@@ -150,6 +164,85 @@ describe("fanza import API", () => {
       .get() as { purchased_at: null; purchased_at_precision: string };
     assert.equal(row.purchased_at, null);
     assert.equal(row.purchased_at_precision, "unknown");
+    assert.equal((res.json as { itemCount: number }).itemCount, 1);
+    assert.equal((res.json as { totalCount: number }).totalCount, 1);
+  });
+
+  it("upserts synthetic listings for every FANZA source through the common route", async () => {
+    const cases: Array<[string, unknown]> = [
+      [
+        "fanza_doujin",
+        {
+          error_code: 0,
+          data: {
+            items: {
+              "2026年01月01日": [{ contentId: "synthetic-doujin-upsert", title: "synthetic" }],
+            },
+          },
+        },
+      ],
+      [
+        "fanza_books",
+        {
+          seriesId: "synthetic-series-upsert",
+          payload: {
+            volume_books: [{
+              content_id: "synthetic-book-upsert",
+              title: "synthetic",
+              purchased: { purchased_date: "2026-01-01T00:00:00Z" },
+            }],
+          },
+        },
+      ],
+      [
+        "fanza_video",
+        {
+          data: { user: { ppvLibrary: { contentViewingRightsSummaryList: {
+            pageInfo: { hasNext: false },
+            items: [{ content: { id: "synthetic-video-upsert", title: "synthetic" } }],
+          } } } },
+        },
+      ],
+      [
+        "fanza_dlsoft",
+        {
+          error: null,
+          body: {
+            totalCount: 1,
+            library: [{ contentId: "synthetic-dlsoft-upsert", title: "synthetic" }],
+          },
+        },
+      ],
+    ];
+
+    for (const [source, payload] of cases) {
+      const inserted = await request(port, "POST", `/api/import/${source}`, payload);
+      const updated = await request(port, "POST", `/api/import/${source}`, payload);
+      assert.equal(inserted.status, 200, source);
+      assert.deepEqual(
+        { inserted: (inserted.json as { inserted: number }).inserted, updated: (inserted.json as { updated: number }).updated },
+        { inserted: 1, updated: 0 },
+        source,
+      );
+      assert.deepEqual(
+        { inserted: (updated.json as { inserted: number }).inserted, updated: (updated.json as { updated: number }).updated },
+        { inserted: 0, updated: 1 },
+        source,
+      );
+    }
+  });
+
+  it("rejects source error payloads without writing listings", async () => {
+    const cases: Array<[string, unknown]> = [
+      ["fanza_doujin", { error_code: 1, data: { items: {} } }],
+      ["fanza_books", { error: "synthetic_error", series_books: [] }],
+      ["fanza_video", { errors: [{ message: "synthetic_error" }] }],
+      ["fanza_dlsoft", { error: "synthetic_error", body: { library: [] } }],
+    ];
+    for (const [source, payload] of cases) {
+      const res = await request(port, "POST", `/api/import/${source}`, payload);
+      assert.equal(res.status, 400, source);
+    }
   });
 
   it("marks fanza source synced via POST sync-state", async () => {
