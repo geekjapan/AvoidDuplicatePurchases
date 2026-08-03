@@ -9,6 +9,9 @@ import {
 
 const SALES_URL = "https://play.dlsite.com/api/v3/content/sales";
 
+/** Daily chrome.alarms name for automatic DLsite sync (spec §4). */
+export const DAILY_SYNC_ALARM = "adp-daily-sync";
+
 /** Chunk size for POST /api/import/dlsite to keep MV3 worker lifetime safe. */
 export const IMPORT_CHUNK_SIZE = 40;
 
@@ -39,8 +42,10 @@ export async function fetchDlsiteSales(last = "0"): Promise<
       return { ok: false, error: `sales_${res.status}` };
     }
     const sales = await res.json();
-    if (!Array.isArray(sales) || sales.length === 0) {
-      return { ok: false, error: "sales_empty" };
+    // Legitimate empty history / no new purchases is a zero-length array, not an error.
+    // Reject only non-array (malformed) payloads.
+    if (!Array.isArray(sales)) {
+      return { ok: false, error: "sales_malformed" };
     }
     return { ok: true, sales };
   } catch {
@@ -71,6 +76,21 @@ export function maxCursorFromSales(sales: readonly unknown[]): string | null {
     entries.push({ workno: rec.workno, sales_date: rec.sales_date });
   }
   return maxSalesCursor(entries);
+}
+
+/**
+ * Alarm listener entrypoint used by the service worker.
+ * Must be called via a static import path (MV3 forbids dynamic import() in SW).
+ * Never leaves an unhandled rejection on the alarm callback.
+ */
+export function handleDailySyncAlarm(
+  alarm: { name: string },
+  sync: typeof runDlsiteSync = runDlsiteSync,
+): void {
+  if (alarm.name !== DAILY_SYNC_ALARM) return;
+  void Promise.resolve(sync()).catch(() => {
+    // Swallow so the service-worker alarm callback never surfaces unhandled rejection.
+  });
 }
 
 /** Full manual sync: fetch sales → chunked import (no mid-sync cursor) → one cursor commit → rematch. */

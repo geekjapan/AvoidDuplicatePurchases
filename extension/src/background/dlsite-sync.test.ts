@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   chunkSales,
+  DAILY_SYNC_ALARM,
+  handleDailySyncAlarm,
   IMPORT_CHUNK_SIZE,
   maxCursorFromSales,
   runDlsiteSync,
   type SyncDeps,
 } from "./dlsite-sync.ts";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("dlsite-sync chunking and rematch propagation", () => {
   it("splits sales into bounded import chunks", () => {
@@ -86,7 +93,6 @@ describe("dlsite-sync chunking and rematch propagation", () => {
   });
 
   it("selects later fractional instant over earlier seconds-only ISO (mixed precision)", () => {
-    // Completion-verifier probe: lexical max would return ...00Z; chronological max is ...00.999Z.
     const sales = [
       { workno: "RJ000001", sales_date: "2024-01-01T00:00:00Z" },
       { workno: "RJ000002", sales_date: "2024-01-01T00:00:00.999Z" },
@@ -105,9 +111,6 @@ describe("dlsite-sync chunking and rematch propagation", () => {
   });
 
   it("imports chunks without advancing cursor and commits global max once after all succeed", async () => {
-    // 85 sales with max date in the first logical chunk; final chunk has older dates.
-    // Simulates reversed/unordered DLsite response so last chunk max ≠ global max.
-    // Imports are sequential (for-await over chunks); completion-order races cannot occur.
     const sales = Array.from({ length: 85 }, (_, i) => {
       const day = String((i % 28) + 1).padStart(2, "0");
       return {
@@ -146,14 +149,11 @@ describe("dlsite-sync chunking and rematch propagation", () => {
     assert.equal(importCalls.length, 3);
     assert.equal(commits.length, 1);
     assert.equal(commits[0], "2024-12-31T23:59:59.000Z");
-    // Last import chunk must not determine the committed cursor.
     const lastChunk = importCalls[2]!.payload as Array<{ sales_date: string }>;
     assert.ok(lastChunk.every((s) => s.sales_date !== "2024-12-31T23:59:59.000Z"));
   });
 
   it("commits global max when chunks are ordered reverse-chronologically (max in last chunk)", async () => {
-    // Sequential chunk import; global max is computed over full sales, not last chunk.
-    // Newest instant is fractional and sits in the final chunk after older seconds-only rows.
     const sales = [
       ...Array.from({ length: 40 }, (_, i) => ({
         workno: `RJ${String(100000 + i).padStart(6, "0")}`,
@@ -169,7 +169,6 @@ describe("dlsite-sync chunking and rematch propagation", () => {
           i === 4 ? "2024-01-01T00:00:00.999Z" : "2023-01-01T00:00:00Z",
       })),
     ];
-    // Override so the true global max is a mixed-precision later instant after reverse-ish layout.
     sales[84] = { workno: "RJ300004", sales_date: "2024-12-15T12:00:00.500Z" };
 
     const commits: string[] = [];
@@ -223,5 +222,108 @@ describe("dlsite-sync chunking and rematch propagation", () => {
     assert.equal(outcome.error, "http_500");
     assert.equal(importCount, 2);
     assert.deepEqual(commits, []);
+  });
+
+  it("treats initial empty sales history as successful zero-count sync", async () => {
+    let importCalls = 0;
+    const commits: string[] = [];
+    let rematchCalls = 0;
+
+    const outcome = await runDlsiteSync({
+      getDlsiteSyncState: async () => ({ cursor: "0", lastSyncedAt: null }),
+      fetchDlsiteSales: async () => ({ ok: true, sales: [] }),
+      importDlsiteOnServer: async () => {
+        importCalls++;
+        return { ok: true, counts: { inserted: 1, updated: 0 } };
+      },
+      commitDlsiteCursorOnServer: async (cursor) => {
+        commits.push(cursor);
+        return { ok: true, state: { cursor, lastSyncedAt: null } };
+      },
+      rematchOnServer: async () => {
+        rematchCalls++;
+        return true;
+      },
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.error, undefined);
+    assert.deepEqual(outcome.counts, { inserted: 0, updated: 0 });
+    assert.equal(outcome.fetched, 0);
+    assert.equal(importCalls, 0);
+    assert.deepEqual(commits, []);
+    assert.equal(rematchCalls, 1);
+  });
+
+  it("treats empty incremental sales response as successful zero-count sync without cursor commit", async () => {
+    let importCalls = 0;
+    const commits: string[] = [];
+
+    const outcome = await runDlsiteSync({
+      getDlsiteSyncState: async () => ({
+        cursor: "2024-06-01T00:00:00.000Z",
+        lastSyncedAt: "2024-06-02T00:00:00.000Z",
+      }),
+      fetchDlsiteSales: async (last) => {
+        assert.equal(last, "2024-06-01T00:00:00.000Z");
+        return { ok: true, sales: [] };
+      },
+      importDlsiteOnServer: async () => {
+        importCalls++;
+        return { ok: true, counts: { inserted: 1, updated: 0 } };
+      },
+      commitDlsiteCursorOnServer: async (cursor) => {
+        commits.push(cursor);
+        return { ok: true, state: { cursor, lastSyncedAt: null } };
+      },
+      rematchOnServer: async () => true,
+    });
+
+    assert.equal(outcome.ok, true);
+    assert.equal(outcome.error, undefined);
+    assert.deepEqual(outcome.counts, { inserted: 0, updated: 0 });
+    assert.equal(outcome.fetched, 0);
+    assert.equal(importCalls, 0);
+    assert.deepEqual(commits, []);
+  });
+});
+
+describe("MV3 service worker alarm static import contract", () => {
+  it("background index statically imports alarm handler and never uses dynamic import()", () => {
+    const src = readFileSync(join(__dirname, "index.ts"), "utf8");
+    // Chrome MV3 extension service workers do not support dynamic import expressions.
+    assert.doesNotMatch(src, /\bimport\s*\(\s*["'`]/);
+    assert.match(
+      src,
+      /import\s*\{[^}]*handleDailySyncAlarm[^}]*\}\s*from\s*["']\.\/dlsite-sync\.js["']/,
+    );
+    assert.match(src, /handleDailySyncAlarm\s*\(\s*alarm\s*\)/);
+    assert.match(src, /chrome\.alarms\.onAlarm\.addListener/);
+  });
+
+  it("handleDailySyncAlarm invokes sync entrypoint and swallows rejection", async () => {
+    let called = 0;
+    handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {
+      called++;
+      return { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 };
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(called, 1);
+
+    let rejectedHandled = false;
+    handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {
+      rejectedHandled = true;
+      throw new Error("boom");
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(rejectedHandled, true);
+
+    let skipped = 0;
+    handleDailySyncAlarm({ name: "other" }, async () => {
+      skipped++;
+      return { ok: true };
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(skipped, 0);
   });
 });

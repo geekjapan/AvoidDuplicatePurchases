@@ -1,12 +1,12 @@
 import { registerMessaging, updateDisconnectedBadge } from "./messaging.js";
+import { DAILY_SYNC_ALARM, handleDailySyncAlarm } from "./dlsite-sync.js";
 
 registerMessaging();
 
-chrome.alarms.create("adp-daily-sync", { periodInMinutes: 1440 });
+chrome.alarms.create(DAILY_SYNC_ALARM, { periodInMinutes: 1440 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "adp-daily-sync") {
-    import("./dlsite-sync.js").then(({ runDlsiteSync }) => runDlsiteSync());
-  }
+  // Static import of handleDailySyncAlarm → runDlsiteSync (MV3 SW: dynamic imports unsupported).
+  handleDailySyncAlarm(alarm);
 });
 
 updateDisconnectedBadge();
