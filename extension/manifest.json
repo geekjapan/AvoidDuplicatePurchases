@@ -36,21 +36,6 @@
       "matches": ["https://book.dmm.co.jp/*"],
       "js": ["dist/content/fanza-books.js"],
       "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://www.dlsite.com/maniax/cart*"],
-      "js": ["dist/content/cart/dlsite-cart.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://www.dmm.co.jp/dc/doujin/-/basket/*"],
-      "js": ["dist/content/cart/doujin-cart.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["https://book.dmm.co.jp/basket/*"],
-      "js": ["dist/content/cart/books-cart.js"],
-      "run_at": "document_idle"
     }
   ]
 }
