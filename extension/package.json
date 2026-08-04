@@ -11,7 +11,8 @@
     "test:e2e": "node --import tsx --test 'src/**/*.e2e.test.ts'"
   },
   "dependencies": {
-    "@adp/shared": "0.0.0"
+    "@adp/shared": "0.0.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

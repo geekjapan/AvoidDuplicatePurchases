@@ -6,7 +6,15 @@ import { after, before, describe, it } from "node:test";
 import type { DatabaseSync } from "node:sqlite";
 
 import { openDatabase } from "../../../../../server/src/db.js";
-import { lookupItems as serverLookupItems, recomputeMatchKeys } from "../../../../../server/src/services/lookup.js";
+import { importFanzaDoujinPayload } from "../../../../../server/src/import/fanza/doujin.js";
+import {
+  lookupItems as serverLookupItems,
+  recomputeMatchKeys,
+} from "../../../../../server/src/services/lookup.js";
+import {
+  CART_GATE_REFERENCE,
+  FANZA_CART_RECHECK_CHECKPOINT,
+} from "../../../cart-deleter/gate-reference.js";
 import { buildCartFixtureDocument } from "./build-cart-fixture.js";
 import { ADP_CART_WARNING_CLASS } from "../warning.js";
 import { parseDoujinCartRowsFromPayload } from "../parse-doujin.js";
@@ -16,7 +24,31 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
 
 /** Synthetic FANZA doujin cid used only in fixtures (not a measured product ID). */
-const SYNTHETIC_FANZA_DOUJIN_CID = "d_900001";
+const SYNTHETIC_FANZA_DOUJIN_CID = FANZA_CART_RECHECK_CHECKPOINT.syntheticCid;
+
+/**
+ * Clearly synthetic/redacted FANZA mylibraries payload for the real import pipeline.
+ * Shapes match shared Doujin schema; IDs are fixture-only.
+ */
+const SYNTHETIC_FANZA_DOUJIN_IMPORT_PAYLOAD = {
+  error_code: 0 as const,
+  data: {
+    total: 1,
+    hasNext: false,
+    items: {
+      "2024年01月15日": [
+        {
+          contentId: SYNTHETIC_FANZA_DOUJIN_CID,
+          productId: SYNTHETIC_FANZA_DOUJIN_CID,
+          title: "サンプル同人作品",
+          makerName: "サークル名",
+          genre: "CG",
+          imageSrc: "https://example.invalid/redacted.jpg",
+        },
+      ],
+    },
+  },
+};
 
 function insertListing(
   db: DatabaseSync,
@@ -68,7 +100,40 @@ describe("e2e cart surfaces", () => {
     db.close();
   });
 
-  it("rechecks integrated FANZA doujin listing in cart context with redacted evidence", async () => {
+  it("exposes referenceable redacted local checkpoint linked to T-FANZA and T-CART-HUMAN", () => {
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.fanzaCommit,
+      "a31b7e3d97dc0f394d53aa608742e822931fb92a",
+    );
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.cartHumanCommit,
+      "24c4bbe166f02c1ab5679789d58ea2627809f965",
+    );
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.cartHumanCommit,
+      CART_GATE_REFERENCE.humanGateCommit,
+    );
+    assert.equal(FANZA_CART_RECHECK_CHECKPOINT.mode, "synthetic-local-import-pipeline");
+    assert.equal(FANZA_CART_RECHECK_CHECKPOINT.syntheticCid, "d_900001");
+  });
+
+  it("rechecks FANZA listing via real import pipeline then cart warning mount (synthetic)", async () => {
+    // Actual existing FANZA import pipeline (not a direct listing INSERT).
+    const importResult = importFanzaDoujinPayload(db, SYNTHETIC_FANZA_DOUJIN_IMPORT_PAYLOAD);
+    assert.ok(importResult.inserted + importResult.updated >= 1);
+    assert.equal(importResult.itemCount, 1);
+
+    const stored = db
+      .prepare(
+        "SELECT source, cid, title, maker_name FROM listing WHERE source = ? AND cid = ?",
+      )
+      .get("fanza_doujin", SYNTHETIC_FANZA_DOUJIN_CID) as
+      | { source: string; cid: string; title: string; maker_name: string | null }
+      | undefined;
+    assert.ok(stored, "import pipeline must persist synthetic FANZA listing");
+    assert.equal(stored!.cid, SYNTHETIC_FANZA_DOUJIN_CID);
+    assert.equal(stored!.title, "サンプル同人作品");
+
     const html = readFileSync(join(fixtures, "fanza-doujin-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(
       html,
@@ -87,7 +152,9 @@ describe("e2e cart surfaces", () => {
       ],
     });
     assert.equal(rows.length, 1);
+    assert.notEqual(rows[0]!.host, doc.body);
 
+    // Lookup the listing stored by the import pipeline from a FANZA cart row.
     const [lookup] = serverLookupItems(db, [
       {
         source: "fanza_doujin",
@@ -96,9 +163,7 @@ describe("e2e cart surfaces", () => {
         maker: "サークル名",
       },
     ]);
-    assert.equal(lookup!.owned, false);
-    assert.equal(lookup!.other[0]!.source, "dlsite");
-    assert.equal(lookup!.other[0]!.cid, "RJ123456");
+    assert.equal(lookup!.owned, true, "imported FANZA listing must be owned same-store");
 
     const warned = await runCartPage(
       "fanza_doujin",
@@ -107,10 +172,11 @@ describe("e2e cart surfaces", () => {
       async (items) => serverLookupItems(db, items),
     );
     assert.equal(warned, 1);
-    const warning = doc.body.querySelector(`.${ADP_CART_WARNING_CLASS}`);
-    assert.ok(warning);
-    assert.match(warning!.textContent ?? "", /他サイトで購入済み/);
+    const warning = rows[0]!.host.querySelector(`.${ADP_CART_WARNING_CLASS}`);
+    assert.ok(warning, "warning must attach to exact product row host");
+    assert.match(warning!.textContent ?? "", /購入済み/);
     assert.ok(warning!.querySelector(".adp-cart-warning__delete"));
+    assert.equal(doc.body.querySelectorAll(`.${ADP_CART_WARNING_CLASS}`).length, 1);
   });
 
   it("shows same-store owned warning on DLsite cart fixture", async () => {

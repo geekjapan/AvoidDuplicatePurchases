@@ -5,15 +5,46 @@ import {
   type CartSource,
 } from "@adp/shared";
 
+import { readCartContext } from "./context.js";
 import { executeCartRequests } from "./executor.js";
 import { isCartPage } from "./page-guard.js";
 import type { CartDeleter, CartDeleterResult, FetchFn } from "./types.js";
 
 export interface CreateCartDeleterOptions {
   source: CartSource;
-  pathname: string;
-  context: CartRequestContext;
+  /** Live document; pathname and page-context values are re-read on every remove/restore. */
+  doc: Document;
   fetchFn?: FetchFn;
+}
+
+function readLivePathname(doc: Document): string {
+  const loc = doc.location;
+  if (loc?.pathname) return loc.pathname;
+  if (loc?.href) {
+    try {
+      return new URL(loc.href).pathname;
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+/**
+ * Re-read cart page guard + page-context at invocation time.
+ * Never uses boot-captured pathname / csrf token / own_url.
+ */
+function readLiveMutationState(
+  source: CartSource,
+  doc: Document,
+): CartRequestContext | null {
+  const pathname = readLivePathname(doc);
+  if (!isCartPage(source, pathname)) return null;
+  try {
+    return readCartContext(source, doc);
+  } catch {
+    return null;
+  }
 }
 
 export function createCartDeleter(opts: CreateCartDeleterOptions): CartDeleter {
@@ -22,10 +53,12 @@ export function createCartDeleter(opts: CreateCartDeleterOptions): CartDeleter {
   return {
     source: opts.source,
     async remove(cids: string[]): Promise<CartDeleterResult> {
-      if (!isCartPage(opts.source, opts.pathname) || cids.length === 0) {
+      if (cids.length === 0) return { ok: [], failed: [] };
+      const context = readLiveMutationState(opts.source, opts.doc);
+      if (!context) {
         return { ok: [], failed: [...cids] };
       }
-      const requests = buildDeleteRequests(opts.source, cids, opts.context);
+      const requests = buildDeleteRequests(opts.source, cids, context);
       const ok: string[] = [];
       const failed: string[] = [];
 
@@ -43,8 +76,10 @@ export function createCartDeleter(opts: CreateCartDeleterOptions): CartDeleter {
       return success ? { ok: [...cids], failed: [] } : { ok: [], failed: [...cids] };
     },
     async restore(cids: string[]): Promise<void> {
-      if (!isCartPage(opts.source, opts.pathname) || cids.length === 0) return;
-      const requests = buildRestoreRequests(opts.source, cids, opts.context);
+      if (cids.length === 0) return;
+      const context = readLiveMutationState(opts.source, opts.doc);
+      if (!context) return;
+      const requests = buildRestoreRequests(opts.source, cids, context);
       if (opts.source === "dlsite") {
         for (const req of requests) {
           await executeCartRequests([req], fetchFn);
