@@ -25,6 +25,10 @@ function listingBlock(side: { source: string; cid: string; title: string; maker?
   ]);
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function renderCandidates(root: HTMLElement): Promise<void> {
   root.replaceChildren(
     el("div", { className: "panel" }, [
@@ -36,50 +40,103 @@ export async function renderCandidates(root: HTMLElement): Promise<void> {
     ]),
   );
 
+  const statusRegion = el("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "candidates-status",
+  });
   const listHost = el("div", { "data-testid": "candidate-list" });
-  root.append(listHost);
+  root.append(statusRegion, listHost);
+
+  let pending = false;
+
+  function setStatus(message: string, kind: "info" | "success" | "error" = "info"): void {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+
+  function clearStatus(): void {
+    statusRegion.textContent = "";
+    statusRegion.className = "status-region";
+    statusRegion.removeAttribute("data-kind");
+    statusRegion.setAttribute("role", "status");
+    statusRegion.setAttribute("aria-live", "polite");
+  }
 
   async function load(): Promise<void> {
     listHost.replaceChildren(el("p", { className: "muted", textContent: "読み込み中…" }));
-    const data = await fetchCandidates();
-    listHost.replaceChildren();
-    if (data.candidates.length === 0) {
-      listHost.append(el("p", { className: "empty", textContent: "候補はありません。" }));
-      return;
-    }
+    try {
+      const data = await fetchCandidates();
+      listHost.replaceChildren();
+      if (data.candidates.length === 0) {
+        listHost.append(el("p", { className: "empty", textContent: "候補はありません。" }));
+        return;
+      }
 
-    for (const candidate of data.candidates) {
-      const card = el("article", {
-        className: "candidate-card",
-        "data-candidate-id": String(candidate.id),
-      });
-      card.append(
-        el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
-        el("div", { className: "candidate-pair" }, [
-          listingBlock(candidate.a),
-          listingBlock(candidate.b),
-        ]),
-      );
-      const approve = el("button", {
-        className: "primary",
-        textContent: "○ 同一",
-        "data-testid": `approve-${candidate.id}`,
-      });
-      const reject = el("button", {
-        className: "danger",
-        textContent: "× 別物",
-        "data-testid": `reject-${candidate.id}`,
-      });
-      approve.addEventListener("click", async () => {
-        await decideCandidate(candidate.id, true);
-        await load();
-      });
-      reject.addEventListener("click", async () => {
-        await decideCandidate(candidate.id, false);
-        await load();
-      });
-      card.append(el("div", { className: "candidate-actions" }, [approve, reject]));
-      listHost.append(card);
+      for (const candidate of data.candidates) {
+        const card = el("article", {
+          className: "candidate-card",
+          "data-candidate-id": String(candidate.id),
+        });
+        card.append(
+          el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
+          el("div", { className: "candidate-pair" }, [
+            listingBlock(candidate.a),
+            listingBlock(candidate.b),
+          ]),
+        );
+        const approve = el("button", {
+          className: "primary",
+          textContent: "○ 同一",
+          "data-testid": `approve-${candidate.id}`,
+        });
+        const reject = el("button", {
+          className: "danger",
+          textContent: "× 別物",
+          "data-testid": `reject-${candidate.id}`,
+        });
+
+        const runDecision = async (same: boolean): Promise<void> => {
+          if (pending) return;
+          pending = true;
+          approve.disabled = true;
+          reject.disabled = true;
+          clearStatus();
+          try {
+            await decideCandidate(candidate.id, same);
+            setStatus(same ? "同一として結合しました。" : "別物として確定しました。", "success");
+            await load();
+          } catch (err) {
+            setStatus(errorMessage(err), "error");
+            approve.disabled = false;
+            reject.disabled = false;
+          } finally {
+            pending = false;
+          }
+        };
+
+        approve.addEventListener("click", () => {
+          void runDecision(true);
+        });
+        reject.addEventListener("click", () => {
+          void runDecision(false);
+        });
+        card.append(el("div", { className: "candidate-actions" }, [approve, reject]));
+        listHost.append(card);
+      }
+    } catch (err) {
+      listHost.replaceChildren();
+      setStatus(errorMessage(err), "error");
     }
   }
 

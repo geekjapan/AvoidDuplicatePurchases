@@ -144,3 +144,32 @@ button.danger {
   color: #71717a;
   padding: 1rem 0;
 }
+
+.status-region {
+  min-height: 1.25rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+
+.status-region:empty {
+  margin: 0;
+  min-height: 0;
+}
+
+.status-region.status-error {
+  color: #b91c1c;
+}
+
+.status-region.status-success {
+  color: #15803d;
+}
+
+.status-region.status-info {
+  color: #3f3f46;
+}
+
+.filters label {
+  font-size: 0.85rem;
+  color: #3f3f46;
+  align-self: center;
+}

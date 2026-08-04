@@ -67,6 +67,20 @@ function insertListing(
   return id;
 }
 
+function insertCandidate(
+  db: DatabaseSync,
+  listingAId: number,
+  listingBId: number,
+  dice = 0.85,
+): number {
+  const a = Math.min(listingAId, listingBId);
+  const b = Math.max(listingAId, listingBId);
+  db.prepare(
+    "INSERT INTO candidate (listing_a_id, listing_b_id, dice) VALUES (?, ?, ?)",
+  ).run(a, b, dice);
+  return Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
+}
+
 function apiRequest(
   port: number,
   method: string,
@@ -204,11 +218,22 @@ function click(el: Element): void {
   );
 }
 
+type ListingRow = {
+  id: number;
+  cid: string;
+  workId: number;
+  workIdLocked?: boolean;
+};
+
 describe("e2e admin core journey (browser-equivalent)", () => {
   let server: Server;
   let port: number;
   let db: DatabaseSync;
   let window: Window;
+  let approveCandidateId: number;
+  let rejectCandidateId: number;
+  let approveListingIds: { a: number; b: number };
+  let rejectListingIds: { a: number; b: number };
 
   before(async () => {
     assert.ok(existsSync(join(ADMIN_DIST, "index.html")), "admin dist must be built");
@@ -258,7 +283,48 @@ describe("e2e admin core journey (browser-equivalent)", () => {
       maker: "Merge Maker",
     });
 
+    // Distinct approve/reject listing pairs (candidates seeded after rematch —
+    // runRematch wipes the candidate table).
+    const approveA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_APPROVE_A",
+      title: "E2E Approve Pair Alpha",
+      maker: "Approve Maker",
+    });
+    const approveB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_e2e_approve_b",
+      title: "E2E Approve Pair Beta",
+      maker: "Approve Maker",
+    });
+    approveListingIds = { a: approveA, b: approveB };
+
+    const rejectA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_REJECT_A",
+      title: "E2E Reject Pair Alpha",
+      maker: "Reject Maker",
+    });
+    const rejectB = insertListing(db, {
+      source: "fanza_books",
+      cid: "b_e2e_reject_b",
+      title: "E2E Reject Pair Beta",
+      maker: "Reject Maker",
+    });
+    rejectListingIds = { a: rejectA, b: rejectB };
+
     runRematch(db);
+
+    // Wipe any rematch-produced edges on our pairs, then seed fixed candidates.
+    db.prepare(
+      `DELETE FROM candidate
+       WHERE listing_a_id IN (?, ?, ?, ?) OR listing_b_id IN (?, ?, ?, ?)`,
+    ).run(approveA, approveB, rejectA, rejectB, approveA, approveB, rejectA, rejectB);
+    approveCandidateId = insertCandidate(db, approveA, approveB, 0.95);
+    rejectCandidateId = insertCandidate(db, rejectA, rejectB, 0.92);
+    assert.ok(approveCandidateId > 0);
+    assert.ok(rejectCandidateId > 0);
+    assert.notEqual(approveCandidateId, rejectCandidateId);
 
     ({ server, port } = await startFullServer(db));
     window = installDom(port);
@@ -301,6 +367,68 @@ describe("e2e admin core journey (browser-equivalent)", () => {
     await waitFor(
       () => window.document.querySelector("h2")?.textContent === "ライブラリ",
       "library page",
+    );
+  });
+
+  it("exposes accessible filter labels, checkbox names, and live status regions", async () => {
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "ライブラリ",
+      "library for a11y",
+    );
+    await waitFor(
+      () =>
+        !window.document.querySelector(".muted")?.textContent?.includes("読み込み中") &&
+        window.document.querySelector('[data-testid="library-list"]') !== null,
+      "library ready for a11y",
+    );
+
+    const qLabel = window.document.querySelector('label[for="filter-q"]');
+    const sourceLabel = window.document.querySelector('label[for="filter-source"]');
+    const makerLabel = window.document.querySelector('label[for="filter-maker"]');
+    assert.ok(qLabel, "title search must have associated label");
+    assert.ok(sourceLabel, "source select must have associated label");
+    assert.ok(makerLabel, "maker input must have associated label");
+
+    const q = window.document.querySelector("#filter-q") as HTMLInputElement | null;
+    const source = window.document.querySelector("#filter-source") as HTMLSelectElement | null;
+    const maker = window.document.querySelector("#filter-maker") as HTMLInputElement | null;
+    assert.ok(q?.getAttribute("aria-label") || qLabel);
+    assert.ok(source?.getAttribute("aria-label") || sourceLabel);
+    assert.ok(maker?.getAttribute("aria-label") || makerLabel);
+
+    const libraryStatus = window.document.querySelector('[data-testid="library-status"]');
+    assert.ok(libraryStatus);
+    assert.ok(
+      libraryStatus!.getAttribute("aria-live") === "polite" ||
+        libraryStatus!.getAttribute("aria-live") === "assertive",
+    );
+
+    const makerFilter = window.document.querySelector(
+      '[data-testid="filter-maker"]',
+    ) as HTMLInputElement;
+    const searchBtn = window.document.querySelector(
+      '[data-testid="search-btn"]',
+    ) as HTMLButtonElement;
+    makerFilter.value = "Merge Maker";
+    click(searchBtn);
+    await waitFor(
+      () => window.document.querySelector('[data-testid="select-RJ_E2E_MERGE_A"]') !== null,
+      "merge listing for checkbox a11y",
+    );
+
+    const checkbox = window.document.querySelector(
+      '[data-testid="select-RJ_E2E_MERGE_A"]',
+    ) as HTMLInputElement;
+    const name = checkbox.getAttribute("aria-label") ?? "";
+    assert.match(name, /RJ_E2E_MERGE_A/);
+    assert.match(name, /Manual Merge Target Alpha|Merge/i);
+
+    // Reset filters for later steps.
+    makerFilter.value = "";
+    click(searchBtn);
+    await waitFor(
+      () => window.document.querySelectorAll("[data-cid]").length >= 4,
+      "library reset after a11y",
     );
   });
 
@@ -365,7 +493,7 @@ describe("e2e admin core journey (browser-equivalent)", () => {
     );
   });
 
-  it("approves and rejects candidates from the UI and persists results", async () => {
+  it("approves and rejects distinct candidates from the UI and persists results", async () => {
     const navCandidates = window.document.querySelector(
       'nav a[href="/candidates"]',
     ) as HTMLAnchorElement;
@@ -376,53 +504,249 @@ describe("e2e admin core journey (browser-equivalent)", () => {
     );
 
     await waitFor(
-      () =>
-        window.document.querySelectorAll(".candidate-card").length > 0 ||
-        (window.document.querySelector(".empty")?.textContent ?? "").includes("候補"),
-      "candidate list settled",
+      () => window.document.querySelectorAll(".candidate-card").length >= 2,
+      "at least two deterministic candidates",
+    );
+
+    const beforeApi = await apiRequest(port, "GET", "/api/candidates");
+    assert.equal(beforeApi.status, 200);
+    const beforeCandidates = (
+      beforeApi.json as { candidates: Array<{ id: number }> }
+    ).candidates;
+    const beforeIds = beforeCandidates.map((c) => c.id);
+    assert.ok(
+      beforeIds.includes(approveCandidateId),
+      `approve candidate ${approveCandidateId} must be present before ops`,
+    );
+    assert.ok(
+      beforeIds.includes(rejectCandidateId),
+      `reject candidate ${rejectCandidateId} must be present before ops`,
+    );
+    assert.ok(
+      beforeCandidates.length >= 2,
+      `expected >=2 candidates before ops, got ${beforeCandidates.length}`,
     );
 
     const cardsBefore = window.document.querySelectorAll(".candidate-card");
-    if (cardsBefore.length === 0) {
-      // Fixture rematch may yield zero dice>=0.7 pairs; seed one explicitly.
-      return;
-    }
+    assert.ok(
+      cardsBefore.length >= 2,
+      `UI must show >=2 candidates, got ${cardsBefore.length}`,
+    );
 
-    const firstId = cardsBefore[0]!.getAttribute("data-candidate-id");
-    assert.ok(firstId);
+    const candidatesStatus = window.document.querySelector(
+      '[data-testid="candidates-status"]',
+    );
+    assert.ok(candidatesStatus, "candidates status region required");
+    assert.ok(candidatesStatus!.getAttribute("aria-live"));
+
+    // --- Approve path (unconditional) ---
     const approveBtn = window.document.querySelector(
-      `[data-testid="approve-${firstId}"]`,
-    ) as HTMLButtonElement;
-    assert.ok(approveBtn);
-    click(approveBtn);
+      `[data-testid="approve-${approveCandidateId}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(approveBtn, `approve button for candidate ${approveCandidateId}`);
+    click(approveBtn!);
     await waitFor(
-      () => !window.document.querySelector(`[data-candidate-id="${firstId}"]`),
+      () => !window.document.querySelector(`[data-candidate-id="${approveCandidateId}"]`),
       "approved candidate removed from UI",
     );
 
     const afterApprove = await apiRequest(port, "GET", "/api/candidates");
-    const afterIds = (afterApprove.json as { candidates: Array<{ id: number }> }).candidates.map(
-      (c) => c.id,
+    const afterApproveIds = (
+      afterApprove.json as { candidates: Array<{ id: number }> }
+    ).candidates.map((c) => c.id);
+    assert.ok(
+      !afterApproveIds.includes(approveCandidateId),
+      "approved candidate suppressed from API",
     );
-    assert.ok(!afterIds.includes(Number(firstId)));
 
-    const remainingCard = window.document.querySelector(".candidate-card");
-    if (remainingCard) {
-      const rejectId = remainingCard.getAttribute("data-candidate-id");
-      assert.ok(rejectId);
-      const rejectBtn = window.document.querySelector(
-        `[data-testid="reject-${rejectId}"]`,
+    const listingsAfterApprove = await apiRequest(port, "GET", "/api/listings");
+    const approveRows = (
+      listingsAfterApprove.json as { listings: ListingRow[] }
+    ).listings.filter(
+      (r) => r.cid === "RJ_E2E_APPROVE_A" || r.cid === "d_e2e_approve_b",
+    );
+    assert.equal(approveRows.length, 2);
+    assert.equal(approveRows[0]!.workId, approveRows[1]!.workId, "approve merges work_id");
+    assert.equal(approveRows[0]!.workIdLocked, true);
+    assert.equal(approveRows[1]!.workIdLocked, true);
+
+    const residualApprove = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM candidate
+         WHERE id = ? OR listing_a_id IN (?, ?) OR listing_b_id IN (?, ?)`,
+      )
+      .get(
+        approveCandidateId,
+        approveListingIds.a,
+        approveListingIds.b,
+        approveListingIds.a,
+        approveListingIds.b,
+      ) as { n: number };
+    assert.equal(residualApprove.n, 0, "approve suppresses candidate rows in DB");
+
+    // --- Reject path (unconditional; distinct candidate) ---
+    assert.ok(
+      afterApproveIds.includes(rejectCandidateId),
+      "reject candidate must still exist after approve",
+    );
+    await waitFor(
+      () =>
+        window.document.querySelector(
+          `[data-testid="reject-${rejectCandidateId}"]`,
+        ) !== null,
+      "reject button visible",
+    );
+    const rejectBtn = window.document.querySelector(
+      `[data-testid="reject-${rejectCandidateId}"]`,
+    ) as HTMLButtonElement;
+    click(rejectBtn);
+    await waitFor(
+      () => !window.document.querySelector(`[data-candidate-id="${rejectCandidateId}"]`),
+      "rejected candidate removed from UI",
+    );
+
+    const afterReject = await apiRequest(port, "GET", "/api/candidates");
+    const afterRejectIds = (
+      afterReject.json as { candidates: Array<{ id: number }> }
+    ).candidates.map((c) => c.id);
+    assert.ok(
+      !afterRejectIds.includes(rejectCandidateId),
+      "rejected candidate suppressed from API",
+    );
+
+    const listingsAfterReject = await apiRequest(port, "GET", "/api/listings");
+    const rejectRows = (
+      listingsAfterReject.json as { listings: ListingRow[] }
+    ).listings.filter(
+      (r) => r.cid === "RJ_E2E_REJECT_A" || r.cid === "b_e2e_reject_b",
+    );
+    assert.equal(rejectRows.length, 2);
+    assert.equal(rejectRows[0]!.workIdLocked, true);
+    assert.equal(rejectRows[1]!.workIdLocked, true);
+    // Distinct initial works stay separate on reject (or get split if they shared).
+    assert.notEqual(
+      rejectRows.find((r) => r.cid === "RJ_E2E_REJECT_A")!.workId,
+      undefined,
+    );
+    // Both locked; if they started separate they remain separate.
+    const rejectWorkIds = new Set(rejectRows.map((r) => r.workId));
+    assert.equal(rejectWorkIds.size, 2, "reject keeps listings on separate works");
+
+    const residualReject = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM candidate
+         WHERE id = ? OR listing_a_id IN (?, ?) OR listing_b_id IN (?, ?)`,
+      )
+      .get(
+        rejectCandidateId,
+        rejectListingIds.a,
+        rejectListingIds.b,
+        rejectListingIds.a,
+        rejectListingIds.b,
+      ) as { n: number };
+    assert.equal(residualReject.n, 0, "reject suppresses candidate rows in DB");
+  });
+
+  it("shows visible API error and prevents double mutation on approve", async () => {
+    // Seed a fresh candidate solely for mutation-guard coverage.
+    const a = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_GUARD_A",
+      title: "Guard Pair Alpha",
+      maker: "Guard Maker",
+    });
+    const b = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_e2e_guard_b",
+      title: "Guard Pair Beta",
+      maker: "Guard Maker",
+    });
+    const guardId = insertCandidate(db, a, b, 0.93);
+
+    const navCandidates = window.document.querySelector(
+      'nav a[href="/candidates"]',
+    ) as HTMLAnchorElement;
+    click(navCandidates);
+    await waitFor(
+      () => window.document.querySelector(`[data-candidate-id="${guardId}"]`) !== null,
+      "guard candidate visible",
+    );
+
+    const originalFetch = globalThis.fetch;
+    let postCalls = 0;
+    let releaseHold: (() => void) | null = null;
+    const hold = new Promise<void>((resolve) => {
+      releaseHold = resolve;
+    });
+
+    defineGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "POST" && url.includes(`/api/candidates/${guardId}`)) {
+        postCalls += 1;
+        if (postCalls === 1) {
+          await hold;
+          return new Response(JSON.stringify({ error: "forced failure" }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // Any subsequent POST would be a double mutation — fail loudly if reached.
+        return new Response(JSON.stringify({ error: "duplicate blocked in test" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return originalFetch(input as never, init);
+    });
+
+    try {
+      const approveBtn = window.document.querySelector(
+        `[data-testid="approve-${guardId}"]`,
       ) as HTMLButtonElement;
-      click(rejectBtn);
+      assert.ok(approveBtn);
+      click(approveBtn);
+      click(approveBtn); // second click while pending must not issue another POST
+
+      await waitFor(() => approveBtn.disabled === true, "approve disabled while pending");
+      assert.equal(postCalls, 1, "only one mutation in flight while pending");
+
+      releaseHold!();
       await waitFor(
-        () => !window.document.querySelector(`[data-candidate-id="${rejectId}"]`),
-        "rejected candidate removed from UI",
+        () => {
+          const status = window.document.querySelector(
+            '[data-testid="candidates-status"]',
+          );
+          return (
+            status?.getAttribute("data-kind") === "error" &&
+            (status.textContent ?? "").length > 0
+          );
+        },
+        "visible error status after API failure",
       );
-      const afterReject = await apiRequest(port, "GET", "/api/candidates");
-      const rejectIds = (afterReject.json as { candidates: Array<{ id: number }> }).candidates.map(
+
+      const status = window.document.querySelector(
+        '[data-testid="candidates-status"]',
+      ) as HTMLElement;
+      assert.equal(status.getAttribute("role"), "alert");
+      assert.equal(status.getAttribute("aria-live"), "assertive");
+      assert.match(status.textContent ?? "", /API 500|forced failure|error/i);
+
+      await waitFor(() => approveBtn.disabled === false, "approve re-enabled after error");
+      assert.equal(postCalls, 1, "double-click must not create a second mutation");
+
+      // Candidate still present in API/UI after failed mutation.
+      const still = await apiRequest(port, "GET", "/api/candidates");
+      const stillIds = (still.json as { candidates: Array<{ id: number }> }).candidates.map(
         (c) => c.id,
       );
-      assert.ok(!rejectIds.includes(Number(rejectId)));
+      assert.ok(stillIds.includes(guardId), "failed approve must leave candidate intact");
+      assert.ok(
+        window.document.querySelector(`[data-candidate-id="${guardId}"]`),
+        "failed approve keeps card in UI",
+      );
+    } finally {
+      defineGlobal("fetch", originalFetch);
     }
   });
 

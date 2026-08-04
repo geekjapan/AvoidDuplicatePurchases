@@ -14745,6 +14745,9 @@ function listingBlock(side) {
     side.maker ? el("div", { className: "muted", textContent: side.maker }) : document.createComment("")
   ]);
 }
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
 async function renderCandidates(root) {
   root.replaceChildren(
     el("div", { className: "panel" }, [
@@ -14755,48 +14758,96 @@ async function renderCandidates(root) {
       })
     ])
   );
+  const statusRegion = el("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "candidates-status"
+  });
   const listHost = el("div", { "data-testid": "candidate-list" });
-  root.append(listHost);
+  root.append(statusRegion, listHost);
+  let pending = false;
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  function clearStatus() {
+    statusRegion.textContent = "";
+    statusRegion.className = "status-region";
+    statusRegion.removeAttribute("data-kind");
+    statusRegion.setAttribute("role", "status");
+    statusRegion.setAttribute("aria-live", "polite");
+  }
   async function load() {
     listHost.replaceChildren(el("p", { className: "muted", textContent: "\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026" }));
-    const data = await fetchCandidates();
-    listHost.replaceChildren();
-    if (data.candidates.length === 0) {
-      listHost.append(el("p", { className: "empty", textContent: "\u5019\u88DC\u306F\u3042\u308A\u307E\u305B\u3093\u3002" }));
-      return;
-    }
-    for (const candidate of data.candidates) {
-      const card = el("article", {
-        className: "candidate-card",
-        "data-candidate-id": String(candidate.id)
-      });
-      card.append(
-        el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
-        el("div", { className: "candidate-pair" }, [
-          listingBlock(candidate.a),
-          listingBlock(candidate.b)
-        ])
-      );
-      const approve = el("button", {
-        className: "primary",
-        textContent: "\u25CB \u540C\u4E00",
-        "data-testid": `approve-${candidate.id}`
-      });
-      const reject = el("button", {
-        className: "danger",
-        textContent: "\xD7 \u5225\u7269",
-        "data-testid": `reject-${candidate.id}`
-      });
-      approve.addEventListener("click", async () => {
-        await decideCandidate(candidate.id, true);
-        await load();
-      });
-      reject.addEventListener("click", async () => {
-        await decideCandidate(candidate.id, false);
-        await load();
-      });
-      card.append(el("div", { className: "candidate-actions" }, [approve, reject]));
-      listHost.append(card);
+    try {
+      const data = await fetchCandidates();
+      listHost.replaceChildren();
+      if (data.candidates.length === 0) {
+        listHost.append(el("p", { className: "empty", textContent: "\u5019\u88DC\u306F\u3042\u308A\u307E\u305B\u3093\u3002" }));
+        return;
+      }
+      for (const candidate of data.candidates) {
+        const card = el("article", {
+          className: "candidate-card",
+          "data-candidate-id": String(candidate.id)
+        });
+        card.append(
+          el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
+          el("div", { className: "candidate-pair" }, [
+            listingBlock(candidate.a),
+            listingBlock(candidate.b)
+          ])
+        );
+        const approve = el("button", {
+          className: "primary",
+          textContent: "\u25CB \u540C\u4E00",
+          "data-testid": `approve-${candidate.id}`
+        });
+        const reject = el("button", {
+          className: "danger",
+          textContent: "\xD7 \u5225\u7269",
+          "data-testid": `reject-${candidate.id}`
+        });
+        const runDecision = async (same) => {
+          if (pending) return;
+          pending = true;
+          approve.disabled = true;
+          reject.disabled = true;
+          clearStatus();
+          try {
+            await decideCandidate(candidate.id, same);
+            setStatus(same ? "\u540C\u4E00\u3068\u3057\u3066\u7D50\u5408\u3057\u307E\u3057\u305F\u3002" : "\u5225\u7269\u3068\u3057\u3066\u78BA\u5B9A\u3057\u307E\u3057\u305F\u3002", "success");
+            await load();
+          } catch (err) {
+            setStatus(errorMessage(err), "error");
+            approve.disabled = false;
+            reject.disabled = false;
+          } finally {
+            pending = false;
+          }
+        };
+        approve.addEventListener("click", () => {
+          void runDecision(true);
+        });
+        reject.addEventListener("click", () => {
+          void runDecision(false);
+        });
+        card.append(el("div", { className: "candidate-actions" }, [approve, reject]));
+        listHost.append(card);
+      }
+    } catch (err) {
+      listHost.replaceChildren();
+      setStatus(errorMessage(err), "error");
     }
   }
   await load();
@@ -14824,74 +14875,157 @@ function groupByWork(listings) {
   }
   return map2;
 }
+function errorMessage2(err) {
+  return err instanceof Error ? err.message : String(err);
+}
 async function renderLibrary(root) {
   root.replaceChildren(el2("div", { className: "panel" }, [
     el2("h2", { textContent: "\u30E9\u30A4\u30D6\u30E9\u30EA" }),
     el2("p", { className: "muted", textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u3067\u691C\u7D22\u3057\u3001\u6B63\u898F work \u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059\u3002" })
   ]));
   const filters = el2("div", { className: "filters" });
+  const qLabel = el2("label", { for: "filter-q", textContent: "\u30BF\u30A4\u30C8\u30EB\u691C\u7D22" });
   const qInput = el2("input", {
+    id: "filter-q",
     type: "search",
     placeholder: "\u691C\u7D22\uFF08\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\uFF09",
-    "data-testid": "filter-q"
+    "data-testid": "filter-q",
+    "aria-label": "\u30BF\u30A4\u30C8\u30EB\u691C\u7D22"
   });
-  const sourceSelect = el2("select", { "data-testid": "filter-source" });
+  const sourceLabel = el2("label", { for: "filter-source", textContent: "\u30BD\u30FC\u30B9" });
+  const sourceSelect = el2("select", {
+    id: "filter-source",
+    "data-testid": "filter-source",
+    "aria-label": "\u30BD\u30FC\u30B9"
+  });
   sourceSelect.append(el2("option", { value: "", textContent: "\u5168\u30BD\u30FC\u30B9" }));
   for (const source of SOURCES) {
     sourceSelect.append(el2("option", { value: source, textContent: source }));
   }
+  const makerLabel = el2("label", { for: "filter-maker", textContent: "\u30E1\u30FC\u30AB\u30FC" });
   const makerInput = el2("input", {
+    id: "filter-maker",
     type: "search",
     placeholder: "\u30E1\u30FC\u30AB\u30FC\uFF08\u6B63\u898F\u5316\u4E00\u81F4\uFF09",
-    "data-testid": "filter-maker"
+    "data-testid": "filter-maker",
+    "aria-label": "\u30E1\u30FC\u30AB\u30FC"
   });
   const searchBtn = el2("button", {
     className: "primary",
     textContent: "\u691C\u7D22",
     "data-testid": "search-btn"
   });
-  filters.append(qInput, sourceSelect, makerInput, searchBtn);
+  filters.append(
+    qLabel,
+    qInput,
+    sourceLabel,
+    sourceSelect,
+    makerLabel,
+    makerInput,
+    searchBtn
+  );
+  const statusRegion = el2("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "library-status"
+  });
   const listHost = el2("div", { "data-testid": "library-list" });
-  root.append(filters, listHost);
+  root.append(filters, statusRegion, listHost);
   const selected = /* @__PURE__ */ new Set();
+  let pending = false;
+  let mergeBtn = null;
+  const splitButtons = /* @__PURE__ */ new Set();
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  function clearStatus() {
+    statusRegion.textContent = "";
+    statusRegion.className = "status-region";
+    statusRegion.removeAttribute("data-kind");
+    statusRegion.setAttribute("role", "status");
+    statusRegion.setAttribute("aria-live", "polite");
+  }
+  function setActionDisabled(disabled) {
+    searchBtn.disabled = disabled;
+    if (mergeBtn) mergeBtn.disabled = disabled;
+    for (const btn of splitButtons) btn.disabled = disabled;
+  }
   async function load() {
     listHost.replaceChildren(el2("p", { className: "muted", textContent: "\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026" }));
-    const q = qInput.value.trim();
-    const source = sourceSelect.value;
-    const maker = makerInput.value.trim();
-    const data = await fetchListings({
-      q: q || void 0,
-      source: source || void 0,
-      maker: maker || void 0
-    });
-    renderListings(data.listings);
+    mergeBtn = null;
+    splitButtons.clear();
+    try {
+      const q = qInput.value.trim();
+      const source = sourceSelect.value;
+      const maker = makerInput.value.trim();
+      const data = await fetchListings({
+        q: q || void 0,
+        source: source || void 0,
+        maker: maker || void 0
+      });
+      renderListings(data.listings);
+    } catch (err) {
+      listHost.replaceChildren();
+      setStatus(errorMessage2(err), "error");
+    }
   }
   function renderListings(listings) {
     listHost.replaceChildren();
+    mergeBtn = null;
+    splitButtons.clear();
     if (listings.length === 0) {
       listHost.append(el2("p", { className: "empty", textContent: "\u8A72\u5F53\u3059\u308B listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002" }));
       return;
     }
     const actions = el2("div", { className: "filters" });
-    const mergeBtn = el2("button", {
+    const nextMergeBtn = el2("button", {
       className: "primary",
       textContent: "\u9078\u629E\u3092\u7D50\u5408",
       "data-testid": "merge-btn"
     });
-    mergeBtn.addEventListener("click", async () => {
-      const picked = listings.filter((l) => selected.has(l.id));
-      if (picked.length < 2) return;
-      const targetWorkId = Math.min(...picked.map((l) => l.workId));
-      for (const listing of picked) {
-        await assignWork(listing.source, listing.cid, {
-          workId: targetWorkId,
-          lock: true
-        });
-      }
-      selected.clear();
-      await load();
+    mergeBtn = nextMergeBtn;
+    nextMergeBtn.addEventListener("click", () => {
+      void (async () => {
+        if (pending) return;
+        const picked = listings.filter((l) => selected.has(l.id));
+        if (picked.length < 2) {
+          setStatus("\u7D50\u5408\u3059\u308B\u306B\u306F2\u4EF6\u4EE5\u4E0A\u9078\u629E\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "error");
+          return;
+        }
+        pending = true;
+        setActionDisabled(true);
+        clearStatus();
+        try {
+          const targetWorkId = Math.min(...picked.map((l) => l.workId));
+          for (const listing of picked) {
+            await assignWork(listing.source, listing.cid, {
+              workId: targetWorkId,
+              lock: true
+            });
+          }
+          selected.clear();
+          setStatus("\u9078\u629E\u3057\u305F listing \u3092\u7D50\u5408\u3057\u307E\u3057\u305F\u3002", "success");
+          await load();
+        } catch (err) {
+          setStatus(errorMessage2(err), "error");
+        } finally {
+          pending = false;
+          setActionDisabled(false);
+        }
+      })();
     });
-    actions.append(mergeBtn);
+    actions.append(nextMergeBtn);
     listHost.append(actions);
     const groups = groupByWork(listings);
     for (const [workId, items] of groups) {
@@ -14903,9 +15037,11 @@ async function renderLibrary(root) {
         el2("header", { textContent: `work #${workId}\uFF08${items.length} \u4EF6\uFF09` })
       );
       for (const listing of items) {
+        const accessibleName = `\u9078\u629E: ${listing.title}\uFF08${listing.source} / ${listing.cid}\uFF09`;
         const checkbox = el2("input", {
           type: "checkbox",
-          "data-testid": `select-${listing.cid}`
+          "data-testid": `select-${listing.cid}`,
+          "aria-label": accessibleName
         });
         checkbox.checked = selected.has(listing.id);
         checkbox.addEventListener("change", () => {
@@ -14916,12 +15052,27 @@ async function renderLibrary(root) {
           textContent: "\u5206\u96E2",
           "data-testid": `split-${listing.cid}`
         });
-        splitBtn.addEventListener("click", async () => {
-          await assignWork(listing.source, listing.cid, {
-            allocateNew: true,
-            lock: true
-          });
-          await load();
+        splitButtons.add(splitBtn);
+        splitBtn.addEventListener("click", () => {
+          void (async () => {
+            if (pending) return;
+            pending = true;
+            setActionDisabled(true);
+            clearStatus();
+            try {
+              await assignWork(listing.source, listing.cid, {
+                allocateNew: true,
+                lock: true
+              });
+              setStatus("listing \u3092\u5206\u96E2\u3057\u307E\u3057\u305F\u3002", "success");
+              await load();
+            } catch (err) {
+              setStatus(errorMessage2(err), "error");
+            } finally {
+              pending = false;
+              setActionDisabled(false);
+            }
+          })();
         });
         const row = el2("div", {
           className: `listing-row${listing.workIdLocked ? " locked" : ""}`,
@@ -14943,7 +15094,20 @@ async function renderLibrary(root) {
       listHost.append(group);
     }
   }
-  searchBtn.addEventListener("click", () => load());
+  searchBtn.addEventListener("click", () => {
+    void (async () => {
+      if (pending) return;
+      pending = true;
+      setActionDisabled(true);
+      clearStatus();
+      try {
+        await load();
+      } finally {
+        pending = false;
+        setActionDisabled(false);
+      }
+    })();
+  });
   await load();
 }
 
@@ -14990,15 +15154,32 @@ function setActive(route) {
     links[key2].classList.toggle("active", key2 === route);
   }
 }
-async function navigate() {
-  const route = parseRoute(window.location.pathname);
-  setActive(route);
+function showShellError(err) {
   main.replaceChildren();
-  const pageRoot = document.createElement("div");
-  main.append(pageRoot);
-  await renderRoute(route, pageRoot);
+  const errorEl = document.createElement("div");
+  errorEl.className = "status-region status-error";
+  errorEl.setAttribute("role", "alert");
+  errorEl.setAttribute("aria-live", "assertive");
+  errorEl.setAttribute("aria-atomic", "true");
+  errorEl.setAttribute("data-testid", "shell-error");
+  errorEl.textContent = err instanceof Error ? err.message : String(err);
+  main.append(errorEl);
 }
-window.addEventListener("popstate", () => navigate());
+async function navigate() {
+  try {
+    const route = parseRoute(window.location.pathname);
+    setActive(route);
+    main.replaceChildren();
+    const pageRoot = document.createElement("div");
+    main.append(pageRoot);
+    await renderRoute(route, pageRoot);
+  } catch (err) {
+    showShellError(err);
+  }
+}
+window.addEventListener("popstate", () => {
+  void navigate();
+});
 nav.addEventListener("click", (event) => {
   const raw = event.target;
   if (!(raw instanceof Node)) return;
@@ -15007,6 +15188,6 @@ nav.addEventListener("click", (event) => {
   if (anchor.origin !== window.location.origin) return;
   event.preventDefault();
   window.history.pushState(null, "", anchor.pathname);
-  navigate();
+  void navigate();
 });
-navigate();
+void navigate();

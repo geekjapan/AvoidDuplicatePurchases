@@ -29,16 +29,34 @@ function setActive(route: AdminRoute): void {
   }
 }
 
-async function navigate(): Promise<void> {
-  const route = parseRoute(window.location.pathname);
-  setActive(route);
+function showShellError(err: unknown): void {
   main.replaceChildren();
-  const pageRoot = document.createElement("div");
-  main.append(pageRoot);
-  await renderRoute(route, pageRoot);
+  const errorEl = document.createElement("div");
+  errorEl.className = "status-region status-error";
+  errorEl.setAttribute("role", "alert");
+  errorEl.setAttribute("aria-live", "assertive");
+  errorEl.setAttribute("aria-atomic", "true");
+  errorEl.setAttribute("data-testid", "shell-error");
+  errorEl.textContent = err instanceof Error ? err.message : String(err);
+  main.append(errorEl);
 }
 
-window.addEventListener("popstate", () => navigate());
+async function navigate(): Promise<void> {
+  try {
+    const route = parseRoute(window.location.pathname);
+    setActive(route);
+    main.replaceChildren();
+    const pageRoot = document.createElement("div");
+    main.append(pageRoot);
+    await renderRoute(route, pageRoot);
+  } catch (err) {
+    showShellError(err);
+  }
+}
+
+window.addEventListener("popstate", () => {
+  void navigate();
+});
 nav.addEventListener("click", (event) => {
   const raw = event.target;
   if (!(raw instanceof Node)) return;
@@ -52,7 +70,7 @@ nav.addEventListener("click", (event) => {
   if (anchor.origin !== window.location.origin) return;
   event.preventDefault();
   window.history.pushState(null, "", anchor.pathname);
-  navigate();
+  void navigate();
 });
 
-navigate();
+void navigate();

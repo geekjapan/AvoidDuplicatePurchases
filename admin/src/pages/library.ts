@@ -32,6 +32,10 @@ function groupByWork(listings: Listing[]): Map<number, Listing[]> {
   return map;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export async function renderLibrary(root: HTMLElement): Promise<void> {
   root.replaceChildren(el("div", { className: "panel" }, [
     el("h2", { textContent: "ライブラリ" }),
@@ -39,74 +43,161 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
   ]));
 
   const filters = el("div", { className: "filters" });
+
+  const qLabel = el("label", { for: "filter-q", textContent: "タイトル検索" });
   const qInput = el("input", {
+    id: "filter-q",
     type: "search",
     placeholder: "検索（タイトル・メーカー・ソース）",
     "data-testid": "filter-q",
+    "aria-label": "タイトル検索",
   });
-  const sourceSelect = el("select", { "data-testid": "filter-source" });
+
+  const sourceLabel = el("label", { for: "filter-source", textContent: "ソース" });
+  const sourceSelect = el("select", {
+    id: "filter-source",
+    "data-testid": "filter-source",
+    "aria-label": "ソース",
+  });
   sourceSelect.append(el("option", { value: "", textContent: "全ソース" }));
   for (const source of SOURCES) {
     sourceSelect.append(el("option", { value: source, textContent: source }));
   }
+
+  const makerLabel = el("label", { for: "filter-maker", textContent: "メーカー" });
   const makerInput = el("input", {
+    id: "filter-maker",
     type: "search",
     placeholder: "メーカー（正規化一致）",
     "data-testid": "filter-maker",
+    "aria-label": "メーカー",
   });
+
   const searchBtn = el("button", {
     className: "primary",
     textContent: "検索",
     "data-testid": "search-btn",
   });
-  filters.append(qInput, sourceSelect, makerInput, searchBtn);
+  filters.append(
+    qLabel,
+    qInput,
+    sourceLabel,
+    sourceSelect,
+    makerLabel,
+    makerInput,
+    searchBtn,
+  );
 
+  const statusRegion = el("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "library-status",
+  });
   const listHost = el("div", { "data-testid": "library-list" });
-  root.append(filters, listHost);
+  root.append(filters, statusRegion, listHost);
 
   const selected = new Set<number>();
+  let pending = false;
+  let mergeBtn: HTMLButtonElement | null = null;
+  const splitButtons = new Set<HTMLButtonElement>();
+
+  function setStatus(message: string, kind: "info" | "success" | "error" = "info"): void {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+
+  function clearStatus(): void {
+    statusRegion.textContent = "";
+    statusRegion.className = "status-region";
+    statusRegion.removeAttribute("data-kind");
+    statusRegion.setAttribute("role", "status");
+    statusRegion.setAttribute("aria-live", "polite");
+  }
+
+  function setActionDisabled(disabled: boolean): void {
+    searchBtn.disabled = disabled;
+    if (mergeBtn) mergeBtn.disabled = disabled;
+    for (const btn of splitButtons) btn.disabled = disabled;
+  }
 
   async function load(): Promise<void> {
     listHost.replaceChildren(el("p", { className: "muted", textContent: "読み込み中…" }));
-    const q = qInput.value.trim();
-    const source = sourceSelect.value;
-    const maker = makerInput.value.trim();
-    const data = await fetchListings({
-      q: q || undefined,
-      source: source || undefined,
-      maker: maker || undefined,
-    });
-    renderListings(data.listings);
+    mergeBtn = null;
+    splitButtons.clear();
+    try {
+      const q = qInput.value.trim();
+      const source = sourceSelect.value;
+      const maker = makerInput.value.trim();
+      const data = await fetchListings({
+        q: q || undefined,
+        source: source || undefined,
+        maker: maker || undefined,
+      });
+      renderListings(data.listings);
+    } catch (err) {
+      listHost.replaceChildren();
+      setStatus(errorMessage(err), "error");
+    }
   }
 
   function renderListings(listings: Listing[]): void {
     listHost.replaceChildren();
+    mergeBtn = null;
+    splitButtons.clear();
     if (listings.length === 0) {
       listHost.append(el("p", { className: "empty", textContent: "該当する listing がありません。" }));
       return;
     }
 
     const actions = el("div", { className: "filters" });
-    const mergeBtn = el("button", {
+    const nextMergeBtn = el("button", {
       className: "primary",
       textContent: "選択を結合",
       "data-testid": "merge-btn",
     });
-    mergeBtn.addEventListener("click", async () => {
-      const picked = listings.filter((l) => selected.has(l.id));
-      if (picked.length < 2) return;
-      // Explicit merge onto the lowest existing work among the selection.
-      const targetWorkId = Math.min(...picked.map((l) => l.workId));
-      for (const listing of picked) {
-        await assignWork(listing.source, listing.cid, {
-          workId: targetWorkId,
-          lock: true,
-        });
-      }
-      selected.clear();
-      await load();
+    mergeBtn = nextMergeBtn;
+    nextMergeBtn.addEventListener("click", () => {
+      void (async () => {
+        if (pending) return;
+        const picked = listings.filter((l) => selected.has(l.id));
+        if (picked.length < 2) {
+          setStatus("結合するには2件以上選択してください。", "error");
+          return;
+        }
+        pending = true;
+        setActionDisabled(true);
+        clearStatus();
+        try {
+          // Explicit merge onto the lowest existing work among the selection.
+          const targetWorkId = Math.min(...picked.map((l) => l.workId));
+          for (const listing of picked) {
+            await assignWork(listing.source, listing.cid, {
+              workId: targetWorkId,
+              lock: true,
+            });
+          }
+          selected.clear();
+          setStatus("選択した listing を結合しました。", "success");
+          await load();
+        } catch (err) {
+          setStatus(errorMessage(err), "error");
+        } finally {
+          pending = false;
+          setActionDisabled(false);
+        }
+      })();
     });
-    actions.append(mergeBtn);
+    actions.append(nextMergeBtn);
     listHost.append(actions);
 
     const groups = groupByWork(listings);
@@ -119,9 +210,11 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
         el("header", { textContent: `work #${workId}（${items.length} 件）` }),
       );
       for (const listing of items) {
+        const accessibleName = `選択: ${listing.title}（${listing.source} / ${listing.cid}）`;
         const checkbox = el("input", {
           type: "checkbox",
           "data-testid": `select-${listing.cid}`,
+          "aria-label": accessibleName,
         });
         checkbox.checked = selected.has(listing.id);
         checkbox.addEventListener("change", () => {
@@ -132,13 +225,28 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
           textContent: "分離",
           "data-testid": `split-${listing.cid}`,
         });
-        splitBtn.addEventListener("click", async () => {
-          // Server allocates a fresh work id transactionally; client never invents one.
-          await assignWork(listing.source, listing.cid, {
-            allocateNew: true,
-            lock: true,
-          });
-          await load();
+        splitButtons.add(splitBtn);
+        splitBtn.addEventListener("click", () => {
+          void (async () => {
+            if (pending) return;
+            pending = true;
+            setActionDisabled(true);
+            clearStatus();
+            try {
+              // Server allocates a fresh work id transactionally; client never invents one.
+              await assignWork(listing.source, listing.cid, {
+                allocateNew: true,
+                lock: true,
+              });
+              setStatus("listing を分離しました。", "success");
+              await load();
+            } catch (err) {
+              setStatus(errorMessage(err), "error");
+            } finally {
+              pending = false;
+              setActionDisabled(false);
+            }
+          })();
         });
         const row = el("div", {
           className: `listing-row${listing.workIdLocked ? " locked" : ""}`,
@@ -165,6 +273,19 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
     }
   }
 
-  searchBtn.addEventListener("click", () => load());
+  searchBtn.addEventListener("click", () => {
+    void (async () => {
+      if (pending) return;
+      pending = true;
+      setActionDisabled(true);
+      clearStatus();
+      try {
+        await load();
+      } finally {
+        pending = false;
+        setActionDisabled(false);
+      }
+    })();
+  });
   await load();
 }
