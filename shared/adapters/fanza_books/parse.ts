@@ -56,6 +56,7 @@ const ContentsPageSchema = z.object({
 const ImportBodySchema = z.object({
   seriesId: NonBlankString,
   author: z.string().nullable().optional(),
+  seriesRaw: z.record(z.string(), z.unknown()).nullable().optional(),
   payload: z.unknown(),
 });
 
@@ -86,7 +87,12 @@ export function parseBooksLibraryPayload(raw: unknown): FanzaBooksSeriesRef[] {
   for (const entry of parsed.data.series_books ?? []) {
     const seriesId = seriesIdFromEntry(entry);
     if (!seriesId) continue;
-    out.push({ seriesId, author: seriesAuthor(entry) });
+    // Keep the full series entry (unknown/nested fields included) for listing.raw_json.
+    out.push({
+      seriesId,
+      author: seriesAuthor(entry),
+      seriesRaw: { ...entry },
+    });
   }
   return out;
 }
@@ -106,12 +112,18 @@ function volumeEvidence(
   volume: z.infer<typeof VolumeSchema>,
   seriesId: string,
   author: string | null,
+  seriesRaw: Record<string, unknown> | null,
 ): Record<string, unknown> {
-  return {
+  const evidence: Record<string, unknown> = {
     ...volume,
     seriesId,
     author,
   };
+  // Preserve untouched series-level source entry alongside volume evidence.
+  if (seriesRaw) {
+    evidence.series = { ...seriesRaw };
+  }
+  return evidence;
 }
 
 /** Parse one contents page; purchased volumes only; second-precision ISO8601 dates. */
@@ -119,6 +131,7 @@ export function parseBooksContentsPayload(
   raw: unknown,
   seriesId: string,
   author: string | null = null,
+  seriesRaw: Record<string, unknown> | null = null,
 ): FanzaBooksParsedListing[] {
   const parsed = ContentsPageSchema.safeParse(raw);
   if (!parsed.success) {
@@ -138,13 +151,13 @@ export function parseBooksContentsPayload(
       imageUrl: null,
       purchasedAt: purchasedDate.trim(),
       purchasedAtPrecision: "second",
-      rawJson: JSON.stringify({ sale: volumeEvidence(volume, sid, maker) }),
+      rawJson: JSON.stringify({ sale: volumeEvidence(volume, sid, maker, seriesRaw) }),
     });
   }
   return out;
 }
 
-/** Normalize extension POST body `{ seriesId, author?, payload }`. */
+/** Normalize extension POST body `{ seriesId, author?, seriesRaw?, payload }`. */
 export function parseBooksImportBody(raw: unknown): FanzaBooksImportPayload {
   const parsed = ImportBodySchema.safeParse(raw);
   if (!parsed.success) {
@@ -153,13 +166,19 @@ export function parseBooksImportBody(raw: unknown): FanzaBooksImportPayload {
   return {
     seriesId: parsed.data.seriesId.trim(),
     author: parsed.data.author ?? null,
+    seriesRaw: parsed.data.seriesRaw ?? null,
     payload: parsed.data.payload,
   };
 }
 
 export function parseBooksImportPayload(raw: unknown): FanzaBooksParsedListing[] {
   const body = parseBooksImportBody(raw);
-  return parseBooksContentsPayload(body.payload, body.seriesId, body.author);
+  return parseBooksContentsPayload(
+    body.payload,
+    body.seriesId,
+    body.author ?? null,
+    body.seriesRaw ?? null,
+  );
 }
 
 export function booksContentsHasNext(raw: unknown): boolean {

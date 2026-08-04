@@ -127,14 +127,26 @@ describe("fanza import API", () => {
 
   it("parses Books library pagination at the server import boundary", async () => {
     const res = await request(port, "POST", "/api/import/fanza_books", {
-      series_books: [{ series_id: "synthetic-series", author: "synthetic-author" }],
+      series_books: [{
+        series_id: "synthetic-series",
+        author: "synthetic-author",
+        unknownSeriesField: { nested: true },
+      }],
       pager: { page: 1, per_page: 1, total_count: 2 },
     });
     assert.equal(res.status, 200);
     assert.deepEqual(res.json, {
       inserted: 0,
       updated: 0,
-      series: [{ seriesId: "synthetic-series", author: "synthetic-author" }],
+      series: [{
+        seriesId: "synthetic-series",
+        author: "synthetic-author",
+        seriesRaw: {
+          series_id: "synthetic-series",
+          author: "synthetic-author",
+          unknownSeriesField: { nested: true },
+        },
+      }],
       hasNext: true,
     });
   });
@@ -319,5 +331,265 @@ describe("fanza import API", () => {
       fetched: 4,
       recordedAt: (state.json as { latestOutcome: { recordedAt: string } }).latestOutcome.recordedAt,
     });
+  });
+
+  it("returns validated Doujin and Video pagination metadata from import", async () => {
+    const doujin = await request(port, "POST", "/api/import/fanza_doujin", {
+      error_code: 0,
+      data: {
+        items: {
+          "2026年03月01日": [{ contentId: "synthetic-doujin-page", title: "synthetic" }],
+        },
+        hasNext: true,
+      },
+    });
+    assert.equal(doujin.status, 200);
+    assert.equal((doujin.json as { hasNext: boolean }).hasNext, true);
+
+    const video = await request(port, "POST", "/api/import/fanza_video", {
+      data: {
+        user: {
+          ppvLibrary: {
+            contentViewingRightsSummaryList: {
+              pageInfo: { hasNext: false, totalCount: 1 },
+              items: [{ content: { id: "synthetic-video-page", title: "synthetic" } }],
+            },
+          },
+        },
+      },
+    });
+    assert.equal(video.status, 200);
+    assert.equal((video.json as { hasNext: boolean }).hasNext, false);
+  });
+
+  it("GET sync-state does not create schema objects for outcomes", async () => {
+    const before = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name = 'sync_outcome'`,
+      )
+      .get() as { name: string } | undefined;
+    assert.equal(before, undefined);
+
+    const state = await request(port, "GET", "/api/sync-state/fanza_video");
+    assert.equal(state.status, 200);
+    assert.equal((state.json as { latestOutcome: unknown }).latestOutcome, null);
+
+    const after = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name = 'sync_outcome'`,
+      )
+      .get() as { name: string } | undefined;
+    assert.equal(after, undefined);
+
+    // Outcomes reuse migration-backed sync_state rows with a reserved source key.
+    await request(port, "POST", "/api/sync-outcome/fanza_video", {
+      ok: true,
+      counts: { inserted: 1, updated: 0 },
+      fetched: 1,
+    });
+    const stored = db
+      .prepare("SELECT source, cursor FROM sync_state WHERE source = ?")
+      .get("__sync_outcome__:fanza_video") as { source: string; cursor: string } | undefined;
+    assert.ok(stored);
+    assert.match(stored.cursor, /"ok":true/);
+  });
+
+  it("preserves existing enrichment and merges raw evidence across partial re-imports", async () => {
+    const sources: Array<[string, unknown, unknown]> = [
+      [
+        "fanza_doujin",
+        {
+          error_code: 0,
+          data: {
+            items: {
+              "2026年05月01日": [{
+                contentId: "synthetic-partial-doujin",
+                title: "synthetic full",
+                makerName: "Maker Full",
+                imageSrc: "https://example.test/doujin.png",
+                nestedKeep: { a: 1 },
+              }],
+            },
+          },
+        },
+        {
+          error_code: 0,
+          data: {
+            items: {
+              "2026年05月02日": [{
+                contentId: "synthetic-partial-doujin",
+                title: "synthetic partial",
+              }],
+            },
+          },
+        },
+      ],
+      [
+        "fanza_books",
+        {
+          seriesId: "synthetic-partial-series",
+          author: "Author Full",
+          seriesRaw: {
+            series_id: "synthetic-partial-series",
+            author: "Author Full",
+            unknownSeriesField: { nested: ["keep"] },
+          },
+          payload: {
+            volume_books: [{
+              content_id: "synthetic-partial-book",
+              title: "synthetic full book",
+              image_url_source: "https://example.test/book.png",
+              purchased: { purchased_date: "2026-05-01T00:00:00Z" },
+            }],
+          },
+        },
+        {
+          seriesId: "synthetic-partial-series",
+          author: null,
+          payload: {
+            volume_books: [{
+              content_id: "synthetic-partial-book",
+              title: "synthetic partial book",
+              purchased: { purchased_date: "2026-05-02T00:00:00Z" },
+            }],
+          },
+        },
+      ],
+      [
+        "fanza_video",
+        {
+          data: {
+            user: {
+              ppvLibrary: {
+                contentViewingRightsSummaryList: {
+                  pageInfo: { hasNext: false },
+                  items: [{
+                    content: {
+                      id: "synthetic-partial-video",
+                      title: "synthetic full video",
+                      floor: "videoa",
+                    },
+                    contentItem: {
+                      latestViewingRightsAcquiredAt: "2025-01-01T00:00:00Z",
+                      keepMe: true,
+                    },
+                  }],
+                },
+              },
+            },
+          },
+        },
+        {
+          data: {
+            user: {
+              ppvLibrary: {
+                contentViewingRightsSummaryList: {
+                  pageInfo: { hasNext: false },
+                  items: [{
+                    content: {
+                      id: "synthetic-partial-video",
+                      title: "synthetic partial video",
+                    },
+                  }],
+                },
+              },
+            },
+          },
+        },
+      ],
+      [
+        "fanza_dlsoft",
+        {
+          error: null,
+          body: {
+            totalCount: 1,
+            library: [{
+              contentId: "synthetic-partial-dlsoft",
+              title: "synthetic full dlsoft",
+              brand: { name: "Brand Full" },
+              packageImageUrl: "https://example.test/dlsoft.png",
+              keepField: { nested: "yes" },
+            }],
+          },
+        },
+        {
+          error: null,
+          body: {
+            totalCount: 1,
+            library: [{
+              contentId: "synthetic-partial-dlsoft",
+              title: "synthetic partial dlsoft",
+            }],
+          },
+        },
+      ],
+    ];
+
+    for (const [source, fullPayload, partialPayload] of sources) {
+      const first = await request(port, "POST", `/api/import/${source}`, fullPayload);
+      assert.equal(first.status, 200, source);
+      const second = await request(port, "POST", `/api/import/${source}`, partialPayload);
+      assert.equal(second.status, 200, source);
+
+      const row = db
+        .prepare(
+          `SELECT title, maker_name, series_id, image_url, purchased_at, raw_json
+           FROM listing WHERE source = ? AND cid LIKE 'synthetic-partial-%'`,
+        )
+        .get(source) as {
+        title: string;
+        maker_name: string | null;
+        series_id: string | null;
+        image_url: string | null;
+        purchased_at: string | null;
+        raw_json: string;
+      };
+      assert.match(row.title, /partial/, source);
+      const raw = JSON.parse(row.raw_json) as Record<string, unknown>;
+
+      if (source === "fanza_doujin") {
+        assert.equal(row.maker_name, "Maker Full");
+        assert.equal(row.image_url, "https://example.test/doujin.png");
+        assert.equal(row.purchased_at, "2026-05-02");
+        assert.deepEqual((raw.sale as Record<string, unknown>).nestedKeep, { a: 1 });
+      }
+      if (source === "fanza_books") {
+        assert.equal(row.maker_name, "Author Full");
+        assert.equal(row.series_id, "synthetic-partial-series");
+        assert.equal(row.purchased_at, "2026-05-02T00:00:00Z");
+        assert.deepEqual(
+          ((raw.sale as Record<string, unknown>).series as Record<string, unknown>)
+            .unknownSeriesField,
+          { nested: ["keep"] },
+        );
+        assert.equal(
+          (raw.sale as Record<string, unknown>).image_url_source,
+          "https://example.test/book.png",
+        );
+      }
+      if (source === "fanza_video") {
+        assert.equal(
+          (raw.sale as { contentItem?: { keepMe?: boolean; latestViewingRightsAcquiredAt?: string } })
+            .contentItem?.keepMe,
+          true,
+        );
+        assert.equal(
+          (raw.sale as { contentItem?: { latestViewingRightsAcquiredAt?: string } })
+            .contentItem?.latestViewingRightsAcquiredAt,
+          "2025-01-01T00:00:00Z",
+        );
+        assert.equal(
+          (raw.sale as { content?: { floor?: string } }).content?.floor,
+          "videoa",
+        );
+      }
+      if (source === "fanza_dlsoft") {
+        assert.equal(row.maker_name, "Brand Full");
+        assert.equal(row.image_url, "https://example.test/dlsoft.png");
+        assert.deepEqual((raw.sale as Record<string, unknown>).keepField, { nested: "yes" });
+      }
+    }
   });
 });

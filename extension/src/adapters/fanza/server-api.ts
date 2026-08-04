@@ -36,7 +36,11 @@ export const FANZA_SOURCES: readonly FanzaImportSource[] = [
 export const ALL_SYNC_SOURCES = ["dlsite", ...FANZA_SOURCES] as const;
 
 export interface FanzaImportResult extends ImportCounts {
-  series?: Array<{ seriesId: string; author: string | null }>;
+  series?: Array<{
+    seriesId: string;
+    author: string | null;
+    seriesRaw?: Record<string, unknown> | null;
+  }>;
   hasNext?: boolean;
   itemCount?: number;
   totalCount?: number;

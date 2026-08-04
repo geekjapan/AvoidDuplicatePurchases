@@ -35,6 +35,17 @@ describe("fanza_doujin adapter", () => {
     assert.ok(doujinLibraryUrl(1, 200).includes(`limit=${DOUJIN_LIMIT_MAX}`));
   });
 
+  it("accepts valid leap days and rejects impossible calendar dates", () => {
+    assert.equal(parseJpDateKey("2024年02月29日"), "2024-02-29");
+    assert.equal(parseJpDateKey("2000年02月29日"), "2000-02-29");
+    assert.equal(parseJpDateKey("2023年02月29日"), null);
+    assert.equal(parseJpDateKey("2026年02月30日"), null);
+    assert.equal(parseJpDateKey("2026年04月31日"), null);
+    assert.equal(parseJpDateKey("2026年13月01日"), null);
+    assert.equal(parseJpDateKey("2026年00月01日"), null);
+    assert.equal(parseJpDateKey("2026年01月00日"), null);
+  });
+
   it("preserves unknown nested source evidence", () => {
     const listings = parseDoujinMylibrariesPayload({
       error_code: 0,
@@ -138,6 +149,47 @@ describe("fanza_books adapter", () => {
         },
       }),
     );
+  });
+
+  it("preserves untouched series-level raw fields alongside volume evidence", () => {
+    const library = parseBooksLibraryPayload({
+      series_books: [{
+        series_id: "synthetic-series-raw",
+        author: "synthetic-author",
+        unknownSeriesField: { nested: ["keep-series"] },
+        redactedMetadata: { shop: "all", tag: "synthetic" },
+      }],
+      pager: { page: 1, per_page: 20, total_count: 1 },
+    });
+    assert.equal(library[0]!.seriesId, "synthetic-series-raw");
+    assert.deepEqual(library[0]!.seriesRaw.unknownSeriesField, { nested: ["keep-series"] });
+    assert.deepEqual(library[0]!.seriesRaw.redactedMetadata, {
+      shop: "all",
+      tag: "synthetic",
+    });
+
+    const listings = parseBooksImportPayload({
+      seriesId: library[0]!.seriesId,
+      author: library[0]!.author,
+      seriesRaw: library[0]!.seriesRaw,
+      payload: {
+        volume_books: [{
+          content_id: "synthetic-volume-raw",
+          title: "synthetic volume",
+          unknownVolumeField: { nested: true },
+          purchased: { purchased_date: "2026-01-01T00:00:00Z" },
+        }],
+      },
+    });
+    const sale = JSON.parse(listings[0]!.rawJson).sale as Record<string, unknown>;
+    assert.deepEqual(sale.unknownVolumeField, { nested: true });
+    assert.deepEqual((sale.series as Record<string, unknown>).unknownSeriesField, {
+      nested: ["keep-series"],
+    });
+    assert.deepEqual((sale.series as Record<string, unknown>).redactedMetadata, {
+      shop: "all",
+      tag: "synthetic",
+    });
   });
 });
 

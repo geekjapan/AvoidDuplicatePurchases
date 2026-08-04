@@ -1,5 +1,5 @@
 import type { FanzaDoujinParsedListing } from "./types.js";
-/** Parse Japanese calendar date key `YYYY年MM月DD日` → `YYYY-MM-DD`. */
+/** Parse Japanese calendar date key `YYYY年MM月DD日` → valid `YYYY-MM-DD` only. */
 export declare function parseJpDateKey(key: string): string | null;
 /** Parse one mylibraries page payload into listing stubs (day-precision purchased_at). */
 export declare function parseDoujinMylibrariesPayload(raw: unknown): FanzaDoujinParsedListing[];

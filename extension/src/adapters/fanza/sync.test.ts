@@ -25,10 +25,16 @@ describe("fanza four-source sync", () => {
     ]);
   });
 
-  it("keeps Books and Dlsoft payload parsing behind the server import boundary", () => {
+  it("keeps raw-response parsing and pagination behind the server import boundary", () => {
     const source = readFileSync(new URL("./sync.ts", import.meta.url), "utf8");
     assert.doesNotMatch(source, /parseBooksLibraryPayload/);
     assert.doesNotMatch(source, /parseDlsoftLibraryPayload/);
+    assert.doesNotMatch(source, /parseDoujinMylibrariesPayload/);
+    assert.doesNotMatch(source, /parseVideoGraphqlPayload/);
+    assert.doesNotMatch(source, /doujinPageHasNext/);
+    assert.doesNotMatch(source, /videoPageHasNext/);
+    assert.doesNotMatch(source, /dlsoftPageHasNext/);
+    assert.doesNotMatch(source, /dlsoftPageInfo/);
   });
 
   it("fetches, imports, and paginates all four sources sequentially", async () => {
@@ -48,14 +54,27 @@ describe("fanza four-source sync", () => {
           return json({
             inserted: 0,
             updated: 0,
-            series: [{ seriesId: `synthetic-series-${page}`, author: null }],
+            series: [{
+              seriesId: `synthetic-series-${page}`,
+              author: null,
+              seriesRaw: {
+                series_id: `synthetic-series-${page}`,
+                unknownSeriesField: { nested: true },
+              },
+            }],
             hasNext: page === 1,
           });
+        }
+        if (source === "fanza_doujin" || source === "fanza_video") {
+          const page = (pageBySource.get(`${source}:import`) ?? 0) + 1;
+          pageBySource.set(`${source}:import`, page);
+          return json({ inserted: 1, updated: 0, hasNext: page === 1 });
         }
         if (source === "fanza_dlsoft") {
           return json({ inserted: 1, updated: 0, itemCount: 1, totalCount: 2 });
         }
-        return json({ inserted: 1, updated: 0 });
+        // Books contents import
+        return json({ inserted: 1, updated: 0, hasNext: false });
       }
       if (url.startsWith("http://127.0.0.1:41321/api/sync-state/")) {
         return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
@@ -249,5 +268,48 @@ describe("fanza four-source sync", () => {
     );
     assert.match(popupSource, /if \(outcome\?\.sources\) \{/);
     assert.doesNotMatch(popupSource, /outcome\?\.ok && outcome\.sources/);
+  });
+
+  it("treats Dlsoft empty page with positive remaining total as source error", async () => {
+    const previousFetch = globalThis.fetch;
+    let markedSynced = false;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("http://127.0.0.1:41321/api/import/fanza_dlsoft")) {
+        return json({ inserted: 0, updated: 0, itemCount: 0, totalCount: 5 });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/import/")) {
+        return json({ inserted: 0, updated: 0, series: [], hasNext: false, itemCount: 0, totalCount: 0 });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/fanza_dlsoft")) {
+        markedSynced = true;
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/")) {
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      if (url.includes("/dc/doujin/")) {
+        return json({ error_code: 0, data: { items: {}, hasNext: false } });
+      }
+      if (url.includes("book.dmm.co.jp")) {
+        return json({ series_books: [], pager: { page: 1, per_page: 1, total_count: 0 } });
+      }
+      if (url.includes("api.video.dmm.co.jp")) {
+        return json({
+          data: { user: { ppvLibrary: { contentViewingRightsSummaryList: {
+            pageInfo: { hasNext: false, totalCount: 0 }, items: [],
+          } } } },
+        });
+      }
+      return json({ error: null, body: { totalCount: 5, library: [] } });
+    };
+    try {
+      const outcomes = await runAllFanzaSyncs();
+      assert.equal(outcomes.fanza_dlsoft?.ok, false);
+      assert.equal(outcomes.fanza_dlsoft?.error, "empty_page_positive_total");
+      assert.equal(markedSynced, false);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

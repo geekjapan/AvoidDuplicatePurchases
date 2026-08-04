@@ -1,6 +1,8 @@
 export interface FanzaBooksSeriesRef {
   seriesId: string;
   author: string | null;
+  /** Untouched synthetic/redacted series-level source entry from the library response. */
+  seriesRaw: Record<string, unknown>;
 }
 
 export interface FanzaBooksParsedListing {
@@ -18,5 +20,7 @@ export interface FanzaBooksParsedListing {
 export interface FanzaBooksImportPayload {
   seriesId: string;
   author?: string | null;
+  /** Optional full series-level raw entry preserved from the first library response. */
+  seriesRaw?: Record<string, unknown> | null;
   payload: unknown;
 }

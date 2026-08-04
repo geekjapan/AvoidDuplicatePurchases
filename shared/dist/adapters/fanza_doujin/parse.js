@@ -18,11 +18,26 @@ const DoujinPageSchema = z.object({
         hasNext: z.boolean().optional(),
     }),
 });
-/** Parse Japanese calendar date key `YYYY年MM月DD日` → `YYYY-MM-DD`. */
+/** Parse Japanese calendar date key `YYYY年MM月DD日` → valid `YYYY-MM-DD` only. */
 export function parseJpDateKey(key) {
     const m = /^(\d{4})年(\d{2})月(\d{2})日$/.exec(key.trim());
     if (!m)
         return null;
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+        return null;
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31)
+        return null;
+    // Reject impossible calendar dates (e.g. Feb 30, Apr 31) while accepting leap days.
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (probe.getUTCFullYear() !== year ||
+        probe.getUTCMonth() !== month - 1 ||
+        probe.getUTCDate() !== day) {
+        return null;
+    }
     return `${m[1]}-${m[2]}-${m[3]}`;
 }
 function itemEvidence(item, dateKey) {

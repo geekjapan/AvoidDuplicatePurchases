@@ -5,8 +5,6 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   chunkSales,
-  DAILY_SYNC_ALARM,
-  handleDailySyncAlarm,
   IMPORT_CHUNK_SIZE,
   maxCursorFromSales,
   runDlsiteSync,

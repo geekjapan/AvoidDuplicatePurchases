@@ -49,6 +49,7 @@ const ContentsPageSchema = z.object({
 const ImportBodySchema = z.object({
     seriesId: NonBlankString,
     author: z.string().nullable().optional(),
+    seriesRaw: z.record(z.string(), z.unknown()).nullable().optional(),
     payload: z.unknown(),
 });
 function seriesAuthor(entry) {
@@ -81,7 +82,12 @@ export function parseBooksLibraryPayload(raw) {
         const seriesId = seriesIdFromEntry(entry);
         if (!seriesId)
             continue;
-        out.push({ seriesId, author: seriesAuthor(entry) });
+        // Keep the full series entry (unknown/nested fields included) for listing.raw_json.
+        out.push({
+            seriesId,
+            author: seriesAuthor(entry),
+            seriesRaw: { ...entry },
+        });
     }
     return out;
 }
@@ -97,15 +103,20 @@ export function booksLibraryHasNext(raw) {
     const total = pager.total_count ?? 0;
     return page * perPage < total;
 }
-function volumeEvidence(volume, seriesId, author) {
-    return {
+function volumeEvidence(volume, seriesId, author, seriesRaw) {
+    const evidence = {
         ...volume,
         seriesId,
         author,
     };
+    // Preserve untouched series-level source entry alongside volume evidence.
+    if (seriesRaw) {
+        evidence.series = { ...seriesRaw };
+    }
+    return evidence;
 }
 /** Parse one contents page; purchased volumes only; second-precision ISO8601 dates. */
-export function parseBooksContentsPayload(raw, seriesId, author = null) {
+export function parseBooksContentsPayload(raw, seriesId, author = null, seriesRaw = null) {
     const parsed = ContentsPageSchema.safeParse(raw);
     if (!parsed.success) {
         throw new Error("fanza_books contents payload failed schema validation");
@@ -125,12 +136,12 @@ export function parseBooksContentsPayload(raw, seriesId, author = null) {
             imageUrl: null,
             purchasedAt: purchasedDate.trim(),
             purchasedAtPrecision: "second",
-            rawJson: JSON.stringify({ sale: volumeEvidence(volume, sid, maker) }),
+            rawJson: JSON.stringify({ sale: volumeEvidence(volume, sid, maker, seriesRaw) }),
         });
     }
     return out;
 }
-/** Normalize extension POST body `{ seriesId, author?, payload }`. */
+/** Normalize extension POST body `{ seriesId, author?, seriesRaw?, payload }`. */
 export function parseBooksImportBody(raw) {
     const parsed = ImportBodySchema.safeParse(raw);
     if (!parsed.success) {
@@ -139,12 +150,13 @@ export function parseBooksImportBody(raw) {
     return {
         seriesId: parsed.data.seriesId.trim(),
         author: parsed.data.author ?? null,
+        seriesRaw: parsed.data.seriesRaw ?? null,
         payload: parsed.data.payload,
     };
 }
 export function parseBooksImportPayload(raw) {
     const body = parseBooksImportBody(raw);
-    return parseBooksContentsPayload(body.payload, body.seriesId, body.author);
+    return parseBooksContentsPayload(body.payload, body.seriesId, body.author ?? null, body.seriesRaw ?? null);
 }
 export function booksContentsHasNext(raw) {
     const parsed = ContentsPageSchema.safeParse(raw);

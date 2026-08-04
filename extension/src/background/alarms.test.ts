@@ -146,6 +146,23 @@ describe("alarms full sync", () => {
     assert.equal(skipped, 0);
   });
 
+  it("handleDailySyncAlarm does not surface unhandled rejection when sync rejects", async () => {
+    let unhandled = 0;
+    const onUnhandled = () => {
+      unhandled++;
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {
+        throw new Error("synthetic_sync_rejection");
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      assert.equal(unhandled, 0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
   it("background index statically imports registerAlarms and never uses dynamic import()", () => {
     const src = readFileSync(join(__dirname, "index.ts"), "utf8");
     assert.doesNotMatch(src, /\bimport\s*\(\s*["'`]/);

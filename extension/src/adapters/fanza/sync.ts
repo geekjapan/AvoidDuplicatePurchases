@@ -1,7 +1,4 @@
-import {
-  doujinLibraryUrl,
-  doujinPageHasNext,
-} from "@adp/shared/adapters/fanza_doujin";
+import { doujinLibraryUrl } from "@adp/shared/adapters/fanza_doujin";
 import {
   booksLibraryUrl,
   booksContentsUrl,
@@ -9,7 +6,6 @@ import {
 import {
   VIDEO_GRAPHQL_URL,
   videoPurchasedGraphqlBody,
-  videoPageHasNext,
 } from "@adp/shared/adapters/fanza_video";
 import { dlsoftLibraryUrl } from "@adp/shared/adapters/fanza_dlsoft";
 import {
@@ -57,7 +53,8 @@ export async function runFanzaDoujinSync(): Promise<SourceSyncOutcome> {
     updated += imported.result.updated;
     fetched += 1;
 
-    if (!doujinPageHasNext(res.data)) break;
+    // Pagination metadata is validated on the server import boundary.
+    if (imported.result.hasNext !== true) break;
     page += 1;
   }
 
@@ -71,7 +68,11 @@ export async function runFanzaDoujinSync(): Promise<SourceSyncOutcome> {
 
 export async function runFanzaBooksSync(): Promise<SourceSyncOutcome> {
   let libPage = 1;
-  const seriesQueue: Array<{ seriesId: string; author: string | null }> = [];
+  const seriesQueue: Array<{
+    seriesId: string;
+    author: string | null;
+    seriesRaw?: Record<string, unknown> | null;
+  }> = [];
   let inserted = 0;
   let updated = 0;
   let fetched = 0;
@@ -109,6 +110,7 @@ export async function runFanzaBooksSync(): Promise<SourceSyncOutcome> {
       const imported = await importFanzaOnServer("fanza_books", {
         seriesId: series.seriesId,
         author: series.author,
+        seriesRaw: series.seriesRaw ?? null,
         payload: contentsRes.data,
       });
       if (!imported.ok) {
@@ -156,7 +158,8 @@ export async function runFanzaVideoSync(): Promise<SourceSyncOutcome> {
     updated += imported.result.updated;
     fetched += 1;
 
-    if (!videoPageHasNext(res.data)) break;
+    // Pagination metadata is validated on the server import boundary.
+    if (imported.result.hasNext !== true) break;
     offset += limit;
   }
 
@@ -200,9 +203,23 @@ export async function runFanzaDlsoftSync(): Promise<SourceSyncOutcome> {
         fetched,
       };
     }
-    totalFetchedItems += imported.result.itemCount;
 
-    if (imported.result.itemCount === 0 || totalFetchedItems >= imported.result.totalCount) break;
+    // Empty page while source still advertises remaining items is a source error —
+    // do not mark successful sync-state.
+    if (imported.result.itemCount === 0) {
+      if (imported.result.totalCount > totalFetchedItems) {
+        return {
+          ok: false,
+          error: "empty_page_positive_total",
+          counts: { inserted, updated },
+          fetched,
+        };
+      }
+      break;
+    }
+
+    totalFetchedItems += imported.result.itemCount;
+    if (totalFetchedItems >= imported.result.totalCount) break;
     page += 1;
   }
 

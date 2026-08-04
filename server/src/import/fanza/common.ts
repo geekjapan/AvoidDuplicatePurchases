@@ -38,18 +38,45 @@ export interface SyncStateWithOutcome {
   latestOutcome: PersistedSyncOutcome | null;
 }
 
-function ensureSyncOutcomeTable(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sync_outcome (
-      source TEXT PRIMARY KEY,
-      ok INTEGER NOT NULL,
-      inserted INTEGER NOT NULL,
-      updated INTEGER NOT NULL,
-      error TEXT,
-      fetched INTEGER,
-      recorded_at TEXT NOT NULL
-    )
-  `);
+/**
+ * Reserved sync_state.source key for latest outcomes.
+ * Reuses the migration-backed sync_state table — no runtime DDL.
+ */
+function outcomeSourceKey(source: string): string {
+  return `__sync_outcome__:${source}`;
+}
+
+function parseOutcomeCursor(
+  cursor: string | null,
+  recordedAt: string,
+): PersistedSyncOutcome | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(cursor) as {
+      ok?: unknown;
+      counts?: { inserted?: unknown; updated?: unknown };
+      error?: unknown;
+      fetched?: unknown;
+      recordedAt?: unknown;
+    };
+    if (typeof parsed.ok !== "boolean") return null;
+    const inserted =
+      typeof parsed.counts?.inserted === "number" ? parsed.counts.inserted : 0;
+    const updated =
+      typeof parsed.counts?.updated === "number" ? parsed.counts.updated : 0;
+    return {
+      ok: parsed.ok,
+      counts: { inserted, updated },
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      fetched: typeof parsed.fetched === "number" ? parsed.fetched : null,
+      recordedAt:
+        typeof parsed.recordedAt === "string" && parsed.recordedAt
+          ? parsed.recordedAt
+          : recordedAt,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function persistSyncOutcome(
@@ -58,55 +85,97 @@ export function persistSyncOutcome(
   outcome: SyncOutcomeInput,
   now = new Date().toISOString(),
 ): void {
-  ensureSyncOutcomeTable(db);
+  const payload: PersistedSyncOutcome = {
+    ok: outcome.ok,
+    counts: {
+      inserted: outcome.counts?.inserted ?? 0,
+      updated: outcome.counts?.updated ?? 0,
+    },
+    error: outcome.error ?? null,
+    fetched: outcome.fetched ?? null,
+    recordedAt: now,
+  };
+  // Persist into existing sync_state rows (migration-backed). No CREATE TABLE.
   db.prepare(
-    `INSERT INTO sync_outcome
-       (source, ok, inserted, updated, error, fetched, recorded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO sync_state (source, cursor, last_synced_at) VALUES (?, ?, ?)
      ON CONFLICT(source) DO UPDATE SET
-       ok = excluded.ok,
-       inserted = excluded.inserted,
-       updated = excluded.updated,
-       error = excluded.error,
-       fetched = excluded.fetched,
-       recorded_at = excluded.recorded_at`,
-  ).run(
-    source,
-    outcome.ok ? 1 : 0,
-    outcome.counts?.inserted ?? 0,
-    outcome.counts?.updated ?? 0,
-    outcome.error ?? null,
-    outcome.fetched ?? null,
-    now,
-  );
+       cursor = excluded.cursor,
+       last_synced_at = excluded.last_synced_at`,
+  ).run(outcomeSourceKey(source), JSON.stringify(payload), now);
 }
 
 export function getLatestSyncOutcome(
   db: DatabaseSync,
   source: string,
 ): PersistedSyncOutcome | null {
-  ensureSyncOutcomeTable(db);
+  // Read-only SELECT against migration-backed schema. Never mutates schema.
   const row = db
-    .prepare(
-      `SELECT ok, inserted, updated, error, fetched, recorded_at
-       FROM sync_outcome WHERE source = ?`,
-    )
-    .get(source) as {
-    ok: number;
-    inserted: number;
-    updated: number;
-    error: string | null;
-    fetched: number | null;
-    recorded_at: string;
-  } | undefined;
+    .prepare("SELECT cursor, last_synced_at FROM sync_state WHERE source = ?")
+    .get(outcomeSourceKey(source)) as
+    | { cursor: string | null; last_synced_at: string }
+    | undefined;
   if (!row) return null;
-  return {
-    ok: row.ok === 1,
-    counts: { inserted: row.inserted, updated: row.updated },
-    error: row.error,
-    fetched: row.fetched,
-    recordedAt: row.recorded_at,
-  };
+  return parseOutcomeCursor(row.cursor, row.last_synced_at);
+}
+
+function preferNonNull<T>(next: T | null, prev: T | null): T | null {
+  return next !== null && next !== undefined ? next : prev;
+}
+
+/**
+ * Deep object merge: keep prior nested keys that a partial later import omits,
+ * while letting new keys win on conflict. Arrays and scalars are replaced.
+ */
+function deepMergeEvidence(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...prev, ...next };
+  for (const key of Object.keys(prev)) {
+    const p = prev[key];
+    const n = next[key];
+    if (
+      p &&
+      typeof p === "object" &&
+      !Array.isArray(p) &&
+      n &&
+      typeof n === "object" &&
+      !Array.isArray(n)
+    ) {
+      merged[key] = deepMergeEvidence(
+        p as Record<string, unknown>,
+        n as Record<string, unknown>,
+      );
+    }
+  }
+  return merged;
+}
+
+/**
+ * Lossless raw evidence merge: keep prior top-level and nested object keys that
+ * a partial later import omits, while letting new keys win on conflict.
+ */
+export function mergeRawJsonEvidence(prevRaw: string, nextRaw: string): string {
+  try {
+    const prev = JSON.parse(prevRaw) as unknown;
+    const next = JSON.parse(nextRaw) as unknown;
+    if (
+      !prev ||
+      typeof prev !== "object" ||
+      Array.isArray(prev) ||
+      !next ||
+      typeof next !== "object" ||
+      Array.isArray(next)
+    ) {
+      return nextRaw;
+    }
+    return JSON.stringify(
+      deepMergeEvidence(prev as Record<string, unknown>, next as Record<string, unknown>),
+    );
+  } catch {
+    // Unparseable prior evidence: keep it rather than destroying with partial next.
+    return prevRaw || nextRaw;
+  }
 }
 
 export function upsertFanzaListing(
@@ -117,10 +186,27 @@ export function upsertFanzaListing(
 ): "inserted" | "updated" {
   const cid = listing.cid.trim();
   const existing = db
-    .prepare("SELECT id FROM listing WHERE source = ? AND cid = ?")
-    .get(source, cid) as { id: number } | undefined;
+    .prepare(
+      `SELECT id, maker_name, series_id, image_url, purchased_at, raw_json
+       FROM listing WHERE source = ? AND cid = ?`,
+    )
+    .get(source, cid) as
+    | {
+        id: number;
+        maker_name: string | null;
+        series_id: string | null;
+        image_url: string | null;
+        purchased_at: string | null;
+        raw_json: string;
+      }
+    | undefined;
 
   if (existing) {
+    const maker = preferNonNull(listing.maker, existing.maker_name);
+    const seriesId = preferNonNull(listing.seriesId, existing.series_id);
+    const imageUrl = preferNonNull(listing.imageUrl, existing.image_url);
+    const purchasedAt = preferNonNull(listing.purchasedAt, existing.purchased_at);
+    const rawJson = mergeRawJsonEvidence(existing.raw_json, listing.rawJson);
     db.prepare(
       `UPDATE listing SET
         title = ?, maker_name = ?, series_id = ?, image_url = ?,
@@ -128,12 +214,12 @@ export function upsertFanzaListing(
        WHERE id = ?`,
     ).run(
       listing.title,
-      listing.maker,
-      listing.seriesId,
-      listing.imageUrl,
-      listing.purchasedAt,
+      maker,
+      seriesId,
+      imageUrl,
+      purchasedAt,
       listing.purchasedAtPrecision,
-      listing.rawJson,
+      rawJson,
       now,
       existing.id,
     );
