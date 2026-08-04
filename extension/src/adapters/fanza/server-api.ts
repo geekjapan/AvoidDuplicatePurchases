@@ -35,6 +35,12 @@ export const FANZA_SOURCES: readonly FanzaImportSource[] = [
 
 export const ALL_SYNC_SOURCES = ["dlsite", ...FANZA_SOURCES] as const;
 
+/**
+ * Reserved sync-outcome key for the full-sync global result (not a marketplace source).
+ * Reuses the migration-backed `/api/sync-outcome/:source` + `sync_state` mechanism.
+ */
+export const FULL_SYNC_OUTCOME_SOURCE = "full_sync";
+
 export interface FanzaImportResult extends ImportCounts {
   series?: Array<{
     seriesId: string;
@@ -85,7 +91,7 @@ export async function markFanzaSyncedOnServer(
 }
 
 export async function persistSyncOutcomeOnServer(
-  source: SyncSource,
+  source: SyncSource | typeof FULL_SYNC_OUTCOME_SOURCE,
   outcome: {
     ok: boolean;
     counts?: ImportCounts;
@@ -101,9 +107,26 @@ export async function persistSyncOutcomeOnServer(
   return res.ok && res.data.ok === true;
 }
 
+/** Persist the full-sync global outcome (source-independent errors such as rematch_failed). */
+export async function persistFullSyncOutcomeOnServer(outcome: {
+  ok: boolean;
+  error?: string;
+}): Promise<boolean> {
+  return persistSyncOutcomeOnServer(FULL_SYNC_OUTCOME_SOURCE, {
+    ok: outcome.ok,
+    error: outcome.error,
+  });
+}
+
 export async function getSourceSyncState(source: string): Promise<SyncStateWithOutcome | null> {
   const res = await serverFetch<SyncStateWithOutcome>(`/api/sync-state/${source}`);
   return res.ok ? res.data : null;
+}
+
+/** Latest full-sync global outcome, or null when unavailable. */
+export async function getFullSyncOutcome(): Promise<PersistedSyncOutcome | null> {
+  const state = await getSourceSyncState(FULL_SYNC_OUTCOME_SOURCE);
+  return state?.latestOutcome ?? null;
 }
 
 export async function getAllSyncStates(): Promise<Record<string, SyncStateWithOutcome | null>> {

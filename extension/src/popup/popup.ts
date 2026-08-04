@@ -33,7 +33,12 @@ if (syncBtn) {
       if (!resultEl) return;
       const outcome = reply?.outcome;
       if (outcome?.sources) {
-        await renderSyncStatus(resultEl, outcome.sources as FullSyncOutcome["sources"]);
+        // Always render per-source rows and surface full-sync global error together.
+        await renderSyncStatus(
+          resultEl,
+          outcome.sources as FullSyncOutcome["sources"],
+          outcome.error ?? null,
+        );
       } else if (outcome?.error) {
         resultEl.textContent = `エラー: ${outcome.error}`;
         await refreshSyncStatus(resultEl);

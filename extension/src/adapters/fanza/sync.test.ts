@@ -239,8 +239,16 @@ describe("fanza four-source sync", () => {
 
   it("renders persisted per-source outcomes on popup startup", async () => {
     const previousFetch = globalThis.fetch;
-    globalThis.fetch = async () =>
-      json({
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/api/sync-state/full_sync")) {
+        return json({
+          cursor: null,
+          lastSyncedAt: null,
+          latestOutcome: null,
+        });
+      }
+      return json({
         cursor: null,
         lastSyncedAt: null,
         latestOutcome: {
@@ -251,22 +259,134 @@ describe("fanza four-source sync", () => {
           recordedAt: "2026-01-01T00:00:00.000Z",
         },
       });
+    };
     const container = { textContent: "" } as HTMLElement;
     try {
       await renderSyncStatus(container);
       assert.match(container.textContent, /FANZA 同人: エラー synthetic_failure/);
       assert.match(container.textContent, /新規 2 \/ 更新 1/);
+      assert.doesNotMatch(container.textContent, /全体:/);
     } finally {
       globalThis.fetch = previousFetch;
     }
   });
 
-  it("passes failed full-sync source outcomes to popup rendering", () => {
+  it("immediate manual sync renders per-source rows plus full-sync global error", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z", latestOutcome: null });
+    const container = { textContent: "" } as HTMLElement;
+    try {
+      await renderSyncStatus(
+        container,
+        {
+          dlsite: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+          fanza_doujin: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_books: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_video: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_dlsoft: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+        },
+        "rematch_failed",
+      );
+      assert.match(container.textContent, /DLsite:/);
+      assert.match(container.textContent, /FANZA 同人:/);
+      assert.match(container.textContent, /全体: エラー rematch_failed/);
+      // Global rematch failure must not be labeled as a marketplace source.
+      assert.doesNotMatch(container.textContent, /DLsite: エラー rematch_failed/);
+      assert.doesNotMatch(container.textContent, /FANZA 同人: エラー rematch_failed/);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("popup reopen renders the latest persisted global failure", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/api/sync-state/full_sync")) {
+        return json({
+          cursor: null,
+          lastSyncedAt: "2026-02-01T00:00:00.000Z",
+          latestOutcome: {
+            ok: false,
+            counts: { inserted: 0, updated: 0 },
+            error: "rematch_failed",
+            fetched: null,
+            recordedAt: "2026-02-01T00:00:00.000Z",
+          },
+        });
+      }
+      return json({
+        cursor: null,
+        lastSyncedAt: "2026-01-01T00:00:00.000Z",
+        latestOutcome: {
+          ok: true,
+          counts: { inserted: 1, updated: 0 },
+          error: null,
+          fetched: 1,
+          recordedAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+    };
+    const container = { textContent: "" } as HTMLElement;
+    try {
+      await renderSyncStatus(container);
+      assert.match(container.textContent, /DLsite:/);
+      assert.match(container.textContent, /全体: エラー rematch_failed/);
+      assert.doesNotMatch(container.textContent, /FANZA 同人: エラー rematch_failed/);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("successful later full sync clears stale global error in the immediate view", async () => {
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      // Stale persisted global failure must not appear when success is explicit.
+      if (url.includes("/api/sync-state/full_sync")) {
+        return json({
+          cursor: null,
+          lastSyncedAt: "2026-02-01T00:00:00.000Z",
+          latestOutcome: {
+            ok: false,
+            counts: { inserted: 0, updated: 0 },
+            error: "rematch_failed",
+            fetched: null,
+            recordedAt: "2026-02-01T00:00:00.000Z",
+          },
+        });
+      }
+      return json({ cursor: null, lastSyncedAt: "2026-03-01T00:00:00.000Z", latestOutcome: null });
+    };
+    const container = { textContent: "" } as HTMLElement;
+    try {
+      await renderSyncStatus(
+        container,
+        {
+          dlsite: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_doujin: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_books: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_video: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+          fanza_dlsoft: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
+        },
+        null,
+      );
+      assert.match(container.textContent, /DLsite:/);
+      assert.doesNotMatch(container.textContent, /全体:/);
+      assert.doesNotMatch(container.textContent, /rematch_failed/);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("passes failed full-sync source outcomes and global error to popup rendering", () => {
     const popupSource = readFileSync(
       new URL("../../popup/popup.ts", import.meta.url),
       "utf8",
     );
     assert.match(popupSource, /if \(outcome\?\.sources\) \{/);
+    assert.match(popupSource, /outcome\.error \?\? null/);
     assert.doesNotMatch(popupSource, /outcome\?\.ok && outcome\.sources/);
   });
 

@@ -9,6 +9,7 @@ import {
   RematchRequestSchema,
   RematchResponseSchema,
   SourcePathSchema,
+  SourceSchema,
 } from "@adp/shared";
 import type { DatabaseSync } from "node:sqlite";
 import { isAllowedOrigin } from "./config.js";
@@ -23,6 +24,17 @@ import { runRematch } from "./services/lookup.js";
 import { dispatchRouteMounts } from "./route-mounts.js";
 import { getLatestSyncOutcome, persistSyncOutcome } from "./import/fanza/common.js";
 import "./import/fanza/index.js";
+
+/**
+ * Reserved outcome source for full-sync global results (not a marketplace source).
+ * Stored via the existing migration-backed sync_state outcome mechanism.
+ */
+const FULL_SYNC_OUTCOME_SOURCE = "full_sync";
+
+/** Per-source outcomes plus the reserved full-sync global key. */
+const OutcomeSourcePathSchema = z.object({
+  source: z.union([SourceSchema, z.literal(FULL_SYNC_OUTCOME_SOURCE)]),
+});
 
 export interface ApiContext {
   db: DatabaseSync;
@@ -219,7 +231,7 @@ export async function handleApi(
 
   const outcomeMatch = url.pathname.match(/^\/api\/sync-outcome\/([^/]+)$/);
   if (method === "POST" && outcomeMatch) {
-    const source = parseZod(SourcePathSchema, { source: outcomeMatch[1] });
+    const source = parseZod(OutcomeSourcePathSchema, { source: outcomeMatch[1] });
     if (!source) {
       validationError(res);
       return true;
@@ -239,6 +251,21 @@ export async function handleApi(
     }
     persistSyncOutcome(ctx.db, source.source, parsed);
     json(res, 200, { ok: true });
+    return true;
+  }
+
+  // Global full-sync outcome readout (popup reopen). Not a marketplace source.
+  if (method === "GET" && url.pathname === `/api/sync-state/${FULL_SYNC_OUTCOME_SOURCE}`) {
+    const latestOutcome = getLatestSyncOutcome(ctx.db, FULL_SYNC_OUTCOME_SOURCE);
+    json(
+      res,
+      200,
+      SyncStateResponseSchema.passthrough().parse({
+        cursor: null,
+        lastSyncedAt: latestOutcome?.recordedAt ?? null,
+        latestOutcome,
+      }),
+    );
     return true;
   }
 

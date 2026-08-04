@@ -1,5 +1,6 @@
 import {
   getAllSyncStates,
+  getFullSyncOutcome,
   listSyncSources,
   type SyncStateWithOutcome,
 } from "../adapters/fanza/server-api.js";
@@ -40,20 +41,47 @@ function formatOutcomeLine(
   return `${label}: 失敗（${last}）`;
 }
 
-/** Populate per-source sync status rows in the popup. */
+function formatGlobalErrorLine(error: string): string {
+  // Distinct from per-source rows so rematch/global failures are not mislabeled.
+  return `全体: エラー ${error}`;
+}
+
+/**
+ * Populate per-source sync status rows in the popup.
+ * @param globalError
+ *   - `string`: show this full-sync global error immediately
+ *   - `null`: no global error (e.g. successful manual sync)
+ *   - omitted/`undefined`: load the latest persisted global outcome (popup reopen)
+ */
 export async function renderSyncStatus(
   container: HTMLElement,
   outcomes?: FullSyncOutcome["sources"],
+  globalError?: string | null,
 ): Promise<void> {
   const states = await getAllSyncStates();
   const lines: string[] = [];
   for (const source of listSyncSources()) {
     lines.push(formatOutcomeLine(source, states[source] ?? null, outcomes?.[source]));
   }
+
+  let resolvedGlobal: string | null = null;
+  if (globalError === undefined) {
+    const full = await getFullSyncOutcome();
+    if (full && !full.ok && full.error) {
+      resolvedGlobal = full.error;
+    }
+  } else {
+    resolvedGlobal = globalError;
+  }
+
+  if (resolvedGlobal) {
+    lines.push(formatGlobalErrorLine(resolvedGlobal));
+  }
+
   container.textContent = lines.join("\n");
 }
 
-/** Refresh status without sync outcomes (last-synced only). */
+/** Refresh status without live sync outcomes (last-synced + persisted global). */
 export async function refreshSyncStatus(container: HTMLElement): Promise<void> {
   await renderSyncStatus(container);
 }

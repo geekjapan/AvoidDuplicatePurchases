@@ -8,9 +8,14 @@ import {
   handleDailySyncAlarm,
   runFullSync,
   registerAlarms,
+  anyImportsMayHavePersisted,
+  combineFullSyncError,
 } from "../alarms.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const okSource = { ok: true as const, counts: { inserted: 1, updated: 0 }, fetched: 1 };
+const failedSource = (error: string) => ({ ok: false as const, error });
 
 describe("alarms full sync", () => {
   it("runFullSync runs DLsite, four FANZA sources, then rematch once", async () => {
@@ -40,10 +45,11 @@ describe("alarms full sync", () => {
     assert.equal(Object.keys(outcome.sources).length, 5);
   });
 
-  it("runFullSync retains every source outcome on failure without rematch", async () => {
-    let rematched = false;
+  it("runFullSync rematches once when one source fails after another succeeds", async () => {
+    let rematchCalls = 0;
+    const persisted: Array<{ ok: boolean; error?: string }> = [];
     const outcome = await runFullSync({
-      runDlsite: async () => ({ ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 }),
+      runDlsite: async () => ({ ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 }),
       runFanza: async () => ({
         fanza_doujin: { ok: false, error: "http_403" },
         fanza_books: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 },
@@ -51,13 +57,18 @@ describe("alarms full sync", () => {
         fanza_dlsoft: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 },
       }),
       rematch: async () => {
-        rematched = true;
+        rematchCalls++;
         return true;
       },
+      persistOutcomes: async (full) => {
+        persisted.push({ ok: full.ok, error: full.error });
+      },
     });
+    assert.equal(rematchCalls, 1);
     assert.equal(outcome.ok, false);
     assert.equal(outcome.error, "http_403");
-    assert.equal(rematched, false);
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0]?.error, "http_403");
     assert.deepEqual(Object.keys(outcome.sources), [
       "dlsite",
       "fanza_doujin",
@@ -67,7 +78,8 @@ describe("alarms full sync", () => {
     ]);
   });
 
-  it("runFullSync still records FANZA outcomes when DLsite fails", async () => {
+  it("runFullSync still records FANZA outcomes and rematches when DLsite fails", async () => {
+    let rematched = false;
     const outcome = await runFullSync({
       runDlsite: async () => ({ ok: false, error: "dlsite_failed" }),
       runFanza: async () => ({
@@ -76,16 +88,92 @@ describe("alarms full sync", () => {
         fanza_video: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
         fanza_dlsoft: { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
       }),
-      rematch: async () => true,
+      rematch: async () => {
+        rematched = true;
+        return true;
+      },
     });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.error, "dlsite_failed");
+    assert.equal(rematched, true);
     assert.equal(Object.keys(outcome.sources).length, 5);
+  });
+
+  it("skips rematch when no imports may have persisted (all-source catastrophic)", async () => {
+    let rematched = false;
+    const outcome = await runFullSync({
+      runDlsite: async () => ({ ok: false, error: "dlsite_failed" }),
+      runFanza: async () => ({
+        fanza_doujin: failedSource("http_403"),
+        fanza_books: failedSource("network"),
+        fanza_video: failedSource("http_500"),
+        fanza_dlsoft: failedSource("network"),
+      }),
+      rematch: async () => {
+        rematched = true;
+        return true;
+      },
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error, "dlsite_failed");
+    assert.equal(rematched, false);
+  });
+
+  it("combines source error with rematch failure deterministically", async () => {
+    const outcome = await runFullSync({
+      runDlsite: async () => okSource,
+      runFanza: async () => ({
+        fanza_doujin: failedSource("http_403"),
+        fanza_books: okSource,
+        fanza_video: okSource,
+        fanza_dlsoft: okSource,
+      }),
+      rematch: async () => false,
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error, "http_403+rematch_failed");
+  });
+
+  it("reports rematch_failed alone when sources succeed", async () => {
+    const outcome = await runFullSync({
+      runDlsite: async () => okSource,
+      runFanza: async () => ({
+        fanza_doujin: okSource,
+        fanza_books: okSource,
+        fanza_video: okSource,
+        fanza_dlsoft: okSource,
+      }),
+      rematch: async () => false,
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error, "rematch_failed");
+  });
+
+  it("anyImportsMayHavePersisted treats partial counts and success as importable", () => {
+    assert.equal(
+      anyImportsMayHavePersisted({
+        dlsite: { ok: false, error: "x", counts: { inserted: 2, updated: 0 } },
+      }),
+      true,
+    );
+    assert.equal(anyImportsMayHavePersisted({ dlsite: okSource }), true);
+    assert.equal(
+      anyImportsMayHavePersisted({ dlsite: { ok: false, error: "x" } }),
+      false,
+    );
+  });
+
+  it("combineFullSyncError keeps source error primary and is deterministic", () => {
+    assert.equal(combineFullSyncError("http_403", true), "http_403+rematch_failed");
+    assert.equal(combineFullSyncError("http_403", false), "http_403");
+    assert.equal(combineFullSyncError(undefined, true), "rematch_failed");
+    assert.equal(combineFullSyncError(undefined, false), undefined);
   });
 
   it("shares one in-flight store sequence between manual and alarm entrypoints", async () => {
     let dlsiteRuns = 0;
     let fanzaRuns = 0;
+    let rematchRuns = 0;
     let releaseFanza!: () => void;
     let fanzaStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -110,7 +198,10 @@ describe("alarms full sync", () => {
           fanza_dlsoft: { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 1 },
         };
       },
-      rematch: async () => true,
+      rematch: async () => {
+        rematchRuns++;
+        return true;
+      },
       persistOutcomes: async () => undefined,
     };
 
@@ -126,6 +217,7 @@ describe("alarms full sync", () => {
     await alarmFinished;
     assert.equal(dlsiteRuns, 1);
     assert.equal(fanzaRuns, 1);
+    assert.equal(rematchRuns, 1);
   });
 
   it("handleDailySyncAlarm invokes full sync for daily alarm name", async () => {

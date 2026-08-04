@@ -333,6 +333,58 @@ describe("fanza import API", () => {
     });
   });
 
+  it("persists and reads full-sync global outcome without runtime DDL", async () => {
+    const before = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name = 'sync_outcome'`,
+      )
+      .get() as { name: string } | undefined;
+    assert.equal(before, undefined);
+
+    const saved = await request(port, "POST", "/api/sync-outcome/full_sync", {
+      ok: false,
+      error: "rematch_failed",
+    });
+    assert.equal(saved.status, 200);
+
+    const state = await request(port, "GET", "/api/sync-state/full_sync");
+    assert.equal(state.status, 200);
+    const latest = (state.json as { latestOutcome: { ok: boolean; error: string | null } })
+      .latestOutcome;
+    assert.equal(latest.ok, false);
+    assert.equal(latest.error, "rematch_failed");
+
+    const replaced = await request(port, "POST", "/api/sync-outcome/full_sync", {
+      ok: true,
+    });
+    assert.equal(replaced.status, 200);
+    const cleared = await request(port, "GET", "/api/sync-state/full_sync");
+    assert.equal(cleared.status, 200);
+    assert.equal(
+      (cleared.json as { latestOutcome: { ok: boolean; error: string | null } }).latestOutcome.ok,
+      true,
+    );
+    assert.equal(
+      (cleared.json as { latestOutcome: { error: string | null } }).latestOutcome.error,
+      null,
+    );
+
+    const after = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name = 'sync_outcome'`,
+      )
+      .get() as { name: string } | undefined;
+    assert.equal(after, undefined);
+
+    const stored = db
+      .prepare("SELECT source, cursor FROM sync_state WHERE source = ?")
+      .get("__sync_outcome__:full_sync") as { source: string; cursor: string } | undefined;
+    assert.ok(stored);
+    assert.match(stored.cursor, /"ok":true/);
+  });
+
   it("returns validated Doujin and Video pagination metadata from import", async () => {
     const doujin = await request(port, "POST", "/api/import/fanza_doujin", {
       error_code: 0,
