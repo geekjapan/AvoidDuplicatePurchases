@@ -7,14 +7,17 @@ import {
   parseJpDateKey,
   parseDoujinMylibrariesPayload,
   doujinLibraryUrl,
+  doujinPageInfo,
   DOUJIN_LIMIT_MAX,
 } from "../adapters/fanza_doujin/index.ts";
 import {
   parseBooksImportPayload,
   parseBooksLibraryPayload,
   booksLibraryUrl,
+  booksLibraryPageInfo,
+  booksContentsPageInfo,
 } from "../adapters/fanza_books/index.ts";
-import { parseVideoGraphqlPayload } from "../adapters/fanza_video/index.ts";
+import { parseVideoGraphqlPayload, videoPageInfo } from "../adapters/fanza_video/index.ts";
 import { parseDlsoftLibraryPayload } from "../adapters/fanza_dlsoft/index.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -73,6 +76,26 @@ describe("fanza_doujin adapter", () => {
         error_code: 0,
         data: { items: { "2026年01月01日": [{ contentId: "   ", title: "synthetic" }] } },
       }),
+    );
+  });
+
+  it("exposes validated page itemCount/totalCount/hasNext", () => {
+    assert.deepEqual(
+      doujinPageInfo({
+        error_code: 0,
+        data: {
+          items: {
+            "2026年01月01日": [{ contentId: "d_page", title: "synthetic" }],
+          },
+          total: 3,
+          hasNext: true,
+        },
+      }),
+      { itemCount: 1, totalCount: 3, hasNext: true },
+    );
+    assert.deepEqual(
+      doujinPageInfo({ error_code: 0, data: { items: {}, total: 0, hasNext: false } }),
+      { itemCount: 0, totalCount: 0, hasNext: false },
     );
   });
 });
@@ -151,6 +174,23 @@ describe("fanza_books adapter", () => {
     );
   });
 
+  it("exposes validated library and contents pagination metadata", () => {
+    assert.deepEqual(
+      booksLibraryPageInfo({
+        series_books: [{ series_id: "synthetic-series" }],
+        pager: { page: 1, per_page: 1, total_count: 2 },
+      }),
+      { itemCount: 1, totalCount: 2, hasNext: true },
+    );
+    assert.deepEqual(
+      booksContentsPageInfo({
+        volume_books: [],
+        pager: { page: 1, per_page: 100, total_count: 0 },
+      }),
+      { itemCount: 0, totalCount: 0, hasNext: false },
+    );
+  });
+
   it("preserves untouched series-level raw fields alongside volume evidence", () => {
     const library = parseBooksLibraryPayload({
       series_books: [{
@@ -202,6 +242,7 @@ describe("fanza_video adapter", () => {
     assert.equal(listings[0]!.purchasedAtPrecision, "unknown");
     const evidence = JSON.parse(listings[0]!.rawJson);
     assert.equal(evidence.sale.latestViewingRightsAcquiredAt, "2025-09-23T00:00:00Z");
+    assert.deepEqual(videoPageInfo(raw), { itemCount: 1, totalCount: 1, hasNext: false });
   });
 
   it("preserves unknown top-level and nested source evidence", () => {

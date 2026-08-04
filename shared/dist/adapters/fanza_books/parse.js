@@ -103,6 +103,20 @@ export function booksLibraryHasNext(raw) {
     const total = pager.total_count ?? 0;
     return page * perPage < total;
 }
+/** Validated library-page pagination metadata for the server import boundary. */
+export function booksLibraryPageInfo(raw) {
+    const parsed = LibraryPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_books library payload failed schema validation");
+    }
+    const itemCount = parsed.data.series_books.length;
+    const totalCount = parsed.data.pager?.total_count ?? itemCount;
+    return {
+        itemCount,
+        totalCount,
+        hasNext: booksLibraryHasNext(raw),
+    };
+}
 function volumeEvidence(volume, seriesId, author, seriesRaw) {
     const evidence = {
         ...volume,
@@ -169,5 +183,19 @@ export function booksContentsHasNext(raw) {
     const perPage = pager.per_page ?? 100;
     const total = pager.total_count ?? 0;
     return page * perPage < total;
+}
+/** Validated contents-page pagination metadata for the server import boundary. */
+export function booksContentsPageInfo(raw) {
+    const parsed = ContentsPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_books contents payload failed schema validation");
+    }
+    const itemCount = parsed.data.volume_books.length;
+    const totalCount = parsed.data.pager?.total_count ?? itemCount;
+    return {
+        itemCount,
+        totalCount,
+        hasNext: booksContentsHasNext(raw),
+    };
 }
 //# sourceMappingURL=parse.js.map

@@ -67,4 +67,19 @@ export function videoPageHasNext(raw) {
         return false;
     return parsed.data.data.user.ppvLibrary.contentViewingRightsSummaryList.pageInfo.hasNext === true;
 }
+/** Validated pagination metadata for the server import boundary. */
+export function videoPageInfo(raw) {
+    const parsed = VideoPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_video payload failed schema validation");
+    }
+    const list = parsed.data.data.user.ppvLibrary.contentViewingRightsSummaryList;
+    const itemCount = list.items.length;
+    const hasNext = list.pageInfo.hasNext === true;
+    return {
+        itemCount,
+        totalCount: list.pageInfo.totalCount ?? itemCount,
+        hasNext,
+    };
+}
 //# sourceMappingURL=parse.js.map

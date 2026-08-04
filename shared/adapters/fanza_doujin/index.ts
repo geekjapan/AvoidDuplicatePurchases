@@ -4,4 +4,5 @@ export {
   parseJpDateKey,
   parseDoujinMylibrariesPayload,
   doujinPageHasNext,
+  doujinPageInfo,
 } from "./parse.js";

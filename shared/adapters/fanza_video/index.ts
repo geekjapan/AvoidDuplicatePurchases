@@ -4,4 +4,4 @@ export {
   VIDEO_PURCHASED_QUERY,
   videoPurchasedGraphqlBody,
 } from "./urls.js";
-export { parseVideoGraphqlPayload, videoPageHasNext } from "./parse.js";
+export { parseVideoGraphqlPayload, videoPageHasNext, videoPageInfo } from "./parse.js";

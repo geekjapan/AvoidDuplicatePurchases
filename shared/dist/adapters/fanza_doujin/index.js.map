@@ -1,1 +1,1 @@
-{"version":3,"file":"index.js","sourceRoot":"","sources":["../../../adapters/fanza_doujin/index.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,gBAAgB,EAAE,gBAAgB,EAAE,MAAM,WAAW,CAAC;AAC/D,OAAO,EACL,cAAc,EACd,6BAA6B,EAC7B,iBAAiB,GAClB,MAAM,YAAY,CAAC"}
+{"version":3,"file":"index.js","sourceRoot":"","sources":["../../../adapters/fanza_doujin/index.ts"],"names":[],"mappings":"AACA,OAAO,EAAE,gBAAgB,EAAE,gBAAgB,EAAE,MAAM,WAAW,CAAC;AAC/D,OAAO,EACL,cAAc,EACd,6BAA6B,EAC7B,iBAAiB,EACjB,cAAc,GACf,MAAM,YAAY,CAAC"}

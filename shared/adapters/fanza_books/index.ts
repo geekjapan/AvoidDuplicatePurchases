@@ -12,8 +12,10 @@ export {
 export {
   parseBooksLibraryPayload,
   booksLibraryHasNext,
+  booksLibraryPageInfo,
   parseBooksContentsPayload,
   parseBooksImportBody,
   parseBooksImportPayload,
   booksContentsHasNext,
+  booksContentsPageInfo,
 } from "./parse.js";

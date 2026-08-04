@@ -4,4 +4,10 @@ export declare function parseJpDateKey(key: string): string | null;
 /** Parse one mylibraries page payload into listing stubs (day-precision purchased_at). */
 export declare function parseDoujinMylibrariesPayload(raw: unknown): FanzaDoujinParsedListing[];
 export declare function doujinPageHasNext(raw: unknown): boolean;
+/** Validated pagination metadata for the server import boundary. */
+export declare function doujinPageInfo(raw: unknown): {
+    itemCount: number;
+    totalCount: number;
+    hasNext: boolean;
+};
 //# sourceMappingURL=parse.d.ts.map

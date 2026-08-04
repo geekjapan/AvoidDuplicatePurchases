@@ -1,6 +1,6 @@
 import {
-  booksContentsHasNext,
-  booksLibraryHasNext,
+  booksContentsPageInfo,
+  booksLibraryPageInfo,
   parseBooksImportBody,
   parseBooksImportPayload,
   parseBooksLibraryPayload,
@@ -11,6 +11,8 @@ import { importListingBatch, type ImportCounts } from "./common.js";
 
 export interface FanzaBooksImportResult extends ImportCounts {
   series?: FanzaBooksSeriesRef[];
+  itemCount: number;
+  totalCount: number;
   hasNext: boolean;
 }
 
@@ -23,13 +25,13 @@ export function importFanzaBooksPayload(
       inserted: 0,
       updated: 0,
       series: parseBooksLibraryPayload(raw),
-      hasNext: booksLibraryHasNext(raw),
+      ...booksLibraryPageInfo(raw),
     };
   }
   const body = parseBooksImportBody(raw);
   const listings = parseBooksImportPayload(raw);
   return {
     ...importListingBatch(db, "fanza_books", listings),
-    hasNext: booksContentsHasNext(body.payload),
+    ...booksContentsPageInfo(body.payload),
   };
 }

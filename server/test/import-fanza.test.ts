@@ -148,6 +148,8 @@ describe("fanza import API", () => {
         },
       }],
       hasNext: true,
+      itemCount: 1,
+      totalCount: 2,
     });
   });
 
@@ -392,11 +394,14 @@ describe("fanza import API", () => {
         items: {
           "2026年03月01日": [{ contentId: "synthetic-doujin-page", title: "synthetic" }],
         },
+        total: 4,
         hasNext: true,
       },
     });
     assert.equal(doujin.status, 200);
     assert.equal((doujin.json as { hasNext: boolean }).hasNext, true);
+    assert.equal((doujin.json as { itemCount: number }).itemCount, 1);
+    assert.equal((doujin.json as { totalCount: number }).totalCount, 4);
 
     const video = await request(port, "POST", "/api/import/fanza_video", {
       data: {
@@ -412,6 +417,8 @@ describe("fanza import API", () => {
     });
     assert.equal(video.status, 200);
     assert.equal((video.json as { hasNext: boolean }).hasNext, false);
+    assert.equal((video.json as { itemCount: number }).itemCount, 1);
+    assert.equal((video.json as { totalCount: number }).totalCount, 1);
   });
 
   it("GET sync-state does not create schema objects for outcomes", async () => {

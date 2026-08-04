@@ -81,4 +81,21 @@ export function doujinPageHasNext(raw) {
         return false;
     return parsed.data.data.hasNext === true;
 }
+/** Validated pagination metadata for the server import boundary. */
+export function doujinPageInfo(raw) {
+    const parsed = DoujinPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_doujin payload failed schema validation");
+    }
+    let itemCount = 0;
+    for (const items of Object.values(parsed.data.data.items)) {
+        itemCount += items.length;
+    }
+    const hasNext = parsed.data.data.hasNext === true;
+    return {
+        itemCount,
+        totalCount: parsed.data.data.total ?? itemCount,
+        hasNext,
+    };
+}
 //# sourceMappingURL=parse.js.map
