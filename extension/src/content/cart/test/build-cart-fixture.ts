@@ -22,12 +22,12 @@ export function buildCartFixtureDocument(html: string, pageUrl: string): MockDoc
   }
 
   for (const match of html.matchAll(
-    /<li class="cart_list_item" data-workno="([^"]+)">([\s\S]*?)<\/li>/g,
+    /<li class="([^"]*\bcart_list_item\b[^"]*)" data-workno="([^"]+)">([\s\S]*?)<\/li>/g,
   )) {
     const li = doc.createElement("li");
-    li.className = "cart_list_item";
-    li.setAttribute("data-workno", match[1]!);
-    const block = match[2]!;
+    li.className = match[1]!;
+    li.setAttribute("data-workno", match[2]!);
+    const block = match[3]!;
     const title = block.match(/class="work_name"[^>]*>([^<]+)</)?.[1]?.trim();
     const maker = block.match(/class="maker_name"[^>]*>([^<]+)</)?.[1]?.trim();
     if (title) appendTextChild(li, "span", "work_name", title);

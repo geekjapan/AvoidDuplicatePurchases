@@ -5,6 +5,7 @@ import {
   type CartSource,
 } from "@adp/shared";
 
+import { encodeDlsiteWorknoForUrl } from "../content/cart/dlsite-workno.js";
 import { readCartContext } from "./context.js";
 import { executeCartRequests } from "./executor.js";
 import { isCartPage } from "./page-guard.js";
@@ -58,20 +59,26 @@ export function createCartDeleter(opts: CreateCartDeleterOptions): CartDeleter {
       if (!context) {
         return { ok: [], failed: [...cids] };
       }
-      const requests = buildDeleteRequests(opts.source, cids, context);
       const ok: string[] = [];
       const failed: string[] = [];
 
       if (opts.source === "dlsite") {
-        for (let i = 0; i < requests.length; i++) {
-          const cid = cids[i]!;
-          const success = await executeCartRequests([requests[i]!], fetchFn);
+        for (const cid of cids) {
+          // Validate + encode before authenticated delete URL (fetch 0 if invalid).
+          const safe = encodeDlsiteWorknoForUrl(cid);
+          if (!safe) {
+            failed.push(cid);
+            continue;
+          }
+          const requests = buildDeleteRequests(opts.source, [safe], context);
+          const success = await executeCartRequests(requests, fetchFn);
           if (success) ok.push(cid);
           else failed.push(cid);
         }
         return { ok, failed };
       }
 
+      const requests = buildDeleteRequests(opts.source, cids, context);
       const success = await executeCartRequests(requests, fetchFn);
       return success ? { ok: [...cids], failed: [] } : { ok: [], failed: [...cids] };
     },
@@ -79,13 +86,18 @@ export function createCartDeleter(opts: CreateCartDeleterOptions): CartDeleter {
       if (cids.length === 0) return;
       const context = readLiveMutationState(opts.source, opts.doc);
       if (!context) return;
-      const requests = buildRestoreRequests(opts.source, cids, context);
+
       if (opts.source === "dlsite") {
-        for (const req of requests) {
-          await executeCartRequests([req], fetchFn);
+        for (const cid of cids) {
+          const safe = encodeDlsiteWorknoForUrl(cid);
+          if (!safe) continue;
+          const requests = buildRestoreRequests(opts.source, [safe], context);
+          await executeCartRequests(requests, fetchFn);
         }
         return;
       }
+
+      const requests = buildRestoreRequests(opts.source, cids, context);
       await executeCartRequests(requests, fetchFn);
     },
   };

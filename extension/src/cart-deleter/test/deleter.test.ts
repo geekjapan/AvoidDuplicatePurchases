@@ -101,11 +101,44 @@ describe("cart deleter", () => {
       doc,
       fetchFn,
     });
-    const result = await deleter.remove(["RJ1", "RJ2"]);
-    assert.deepEqual(result, { ok: ["RJ1", "RJ2"], failed: [] });
+    const result = await deleter.remove(["RJ123456", "RJ999999"]);
+    assert.deepEqual(result, { ok: ["RJ123456", "RJ999999"], failed: [] });
     assert.equal(urls.length, 2);
-    assert.match(urls[0]!, /mode\/nothanks\/product_id\/RJ1/);
-    assert.match(urls[1]!, /mode\/nothanks\/product_id\/RJ2/);
+    assert.match(urls[0]!, /mode\/nothanks\/product_id\/RJ123456/);
+    assert.match(urls[1]!, /mode\/nothanks\/product_id\/RJ999999/);
+  });
+
+  it("absorbs fetch reject in executeCartRequests and returns false (no throw)", async () => {
+    const { executeCartRequests } = await import("../executor.js");
+    const ok = await executeCartRequests(
+      [
+        {
+          url: "https://www.dlsite.com/maniax/cart/ajax/=/mode/nothanks/product_id/RJ123456",
+          method: "GET",
+          headers: {},
+        },
+      ],
+      async () => {
+        throw new Error("network reject");
+      },
+    );
+    assert.equal(ok, false);
+  });
+
+  it("rejects invalid DLsite workno before delete URL (fetch 0)", async () => {
+    const { fetchFn, urls } = recordingFetch([{ ok: true }]);
+    const doc = liveDoc({ href: "https://www.dlsite.com/maniax/cart" });
+    const deleter = createCartDeleter({
+      source: "dlsite",
+      doc,
+      fetchFn,
+    });
+    const result = await deleter.remove(["../../api/sensitive", "RJ123456"]);
+    assert.deepEqual(result.failed, ["../../api/sensitive"]);
+    assert.deepEqual(result.ok, ["RJ123456"]);
+    assert.equal(urls.length, 1);
+    assert.match(urls[0]!, /product_id\/RJ123456$/);
+    assert.ok(!urls[0]!.includes(".."));
   });
 
   it("re-reads Doujin _token from live document for delete/restore", async () => {

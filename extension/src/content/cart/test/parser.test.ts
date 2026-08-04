@@ -19,37 +19,89 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
 
 describe("cart row parsers", () => {
-  it("parses DLsite cart rows from DOM", () => {
+  it("parses DLsite cart rows from DOM and dedupes layout-cloned workno", () => {
     const html = readFileSync(join(fixtures, "dlsite-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(html, "https://www.dlsite.com/maniax/cart");
+    // Fixture has 3 li.cart_list_item nodes but RJ123456 is duplicated (layout clone).
+    const allItems = Array.from(
+      (doc as unknown as Document).querySelectorAll("li"),
+    ).filter((el) => el.className.split(/\s+/).includes("cart_list_item"));
+    assert.equal(allItems.length, 3, "fixture must include layout-duplicate row");
     const rows = parseDlsiteCartRows(doc as unknown as Document);
-    assert.equal(rows.length, 2);
+    assert.equal(rows.length, 2, "dedupe same normalized workno to one row");
     assert.equal(rows[0]!.cid, "RJ123456");
     assert.equal(rows[0]!.title, "サンプル同人作品");
     assert.equal(rows[0]!.maker, "サークル名");
+    assert.equal(rows[1]!.cid, "RJ999999");
+    assert.notEqual(rows[0]!.host, doc.body);
   });
 
-  it("parses FANZA Doujin basket API payload with redacted synthetic ids", () => {
+  it("rejects invalid DLsite worknos (path/meta) before row creation", () => {
+    const html = `<!doctype html><html><body>
+      <ul class="cart_list">
+        <li class="cart_list_item" data-workno="../../api/sensitive">
+          <span class="work_name">evil</span>
+        </li>
+        <li class="cart_list_item" data-workno="NOT-A-WORKNO">
+          <span class="work_name">bad</span>
+        </li>
+        <li class="cart_list_item" data-workno="RJ123456">
+          <span class="work_name">ok</span>
+        </li>
+      </ul>
+    </body></html>`;
+    const doc = buildCartFixtureDocument(html, "https://www.dlsite.com/maniax/cart");
+    const rows = parseDlsiteCartRows(doc as unknown as Document);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.cid, "RJ123456");
+  });
+
+  it("parses canonical FANZA Doujin basket payload (documented shape, synthetic/redacted)", () => {
     const html = readFileSync(join(fixtures, "fanza-doujin-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(
       html,
       "https://www.dmm.co.jp/dc/doujin/-/basket/",
     );
+    // Mirrors prototype/fanza/README.md GET /dc/doujin/api/baskets/ shape.
     const rows = parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+      error_code: "0",
+      error_message: [],
       data: [
         {
           content_id: "d_900001",
+          product_id: "d_900001",
           title: "サンプル同人作品",
           maker_name: "サークル名",
+          image_src: "https://example.invalid/redacted.jpg",
+          price: 10,
+          fixed_price: 990,
+          basket_price: 9,
+          genre: "CG",
+          section: "mens",
+          campaign_info: {},
+          coupon_info: {},
         },
-        { content_id: "d_100002", title: "未購入作品", maker_name: "別サークル" },
+        {
+          content_id: "d_100002",
+          product_id: "d_100002",
+          title: "未購入作品",
+          maker_name: "別サークル",
+          image_src: "https://example.invalid/redacted2.jpg",
+          price: 100,
+          fixed_price: 100,
+          basket_price: 100,
+          genre: "ボイス",
+          section: "mens",
+        },
       ],
     });
     assert.equal(rows.length, 2);
     assert.equal(rows[0]!.cid, "d_900001");
     assert.equal(rows[0]!.title, "サンプル同人作品");
+    assert.equal(rows[0]!.maker, "サークル名");
     assert.notEqual(rows[0]!.host, doc.body);
     assert.equal(rows[0]!.host.getAttribute("data-content-id"), "d_900001");
+    assert.equal(rows[1]!.host.getAttribute("data-content-id"), "d_100002");
   });
 
   it("parses FANZA Books basket product ids with DOM titles", () => {
@@ -71,18 +123,38 @@ describe("cart row parsers", () => {
       html,
       "https://www.dmm.co.jp/dc/doujin/-/basket/",
     );
+    // Unknown item key
     assert.deepEqual(
       parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: "0",
+        error_message: [],
         data: [{ content_id: "d_900001", title: "x", extra: true }],
       }),
       [],
     );
+    // Unknown top-level key
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: "0",
+        data: [{ content_id: "d_900001", title: "x" }],
+        unexpected_top: 1,
+      }),
+      [],
+    );
+    // Wrong types
     assert.deepEqual(
       parseDoujinCartRowsFromPayload(doc as unknown as Document, {
         data: "not-array",
       }),
       [],
     );
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        data: [{ content_id: "d_900001", price: "10" }],
+      }),
+      [],
+    );
+    // Blank cid
     assert.deepEqual(
       parseDoujinCartRowsFromPayload(doc as unknown as Document, {
         data: [{ content_id: "   ", title: "blank" }],

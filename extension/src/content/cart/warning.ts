@@ -36,7 +36,13 @@ export function renderCartWarning(
   button.onclick = (event) => {
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    onDelete();
+    // Final catch at UI event boundary — never leak unhandled rejection.
+    try {
+      const result = onDelete();
+      void Promise.resolve(result).catch(() => {});
+    } catch {
+      // sync throw from onDelete
+    }
   };
   wrap.appendChild(button);
   return wrap;
@@ -51,19 +57,33 @@ export function mountCartWarning(
 ): void {
   if (row.host.querySelector(`[${MOUNT_ATTR}="${row.cid}"]`)) return;
   const warning = renderCartWarning(doc, row, hit, () => {
-    void handleDelete(doc, row.cid, deleter, onDeleted);
+    void handleDelete(doc, row.cid, deleter, onDeleted).catch(() => {});
   });
   row.host.insertAdjacentElement("afterbegin", warning);
 }
 
+/**
+ * Delete click handler. On reject / non-ok: no success toast, no incorrect DOM
+ * mutation; warning + delete control stay mounted and retryable.
+ */
 async function handleDelete(
   doc: Document,
   cid: string,
   deleter: CartDeleter,
   onDeleted?: (cid: string) => void,
 ): Promise<void> {
-  const result = await deleter.remove([cid]);
-  if (!result.ok.includes(cid)) return;
-  onDeleted?.(cid);
-  showUndoToast(doc, () => deleter.restore([cid]));
+  try {
+    const result = await deleter.remove([cid]);
+    if (!result.ok.includes(cid)) return;
+    onDeleted?.(cid);
+    showUndoToast(doc, async () => {
+      try {
+        await deleter.restore([cid]);
+      } catch {
+        // Undo boundary: absorb restore failures (no unhandled rejection).
+      }
+    });
+  } catch {
+    // UI event boundary: absorb remove failures; keep warning retryable.
+  }
 }

@@ -41,7 +41,12 @@ export function showUndoToast(doc: Document, onUndo: () => void | Promise<void>)
   undo.onclick = () => {
     clearTimeout(timer);
     detachNode(toast);
-    void onUndo();
+    // Final catch at UI event boundary — never leak unhandled rejection from restore.
+    try {
+      void Promise.resolve(onUndo()).catch(() => {});
+    } catch {
+      // sync throw from onUndo
+    }
   };
   toast.appendChild(undo);
 

@@ -5,12 +5,21 @@
     <title>DLsite cart fixture</title>
   </head>
   <body>
+    <!--
+      Prototype-documented cart layout: same workno can appear twice (layout clone).
+      Parser must dedupe to one actionable row host (lookup/warning/delete ×1).
+    -->
     <ul class="cart_list">
-      <li class="cart_list_item" data-workno="RJ123456">
+      <li class="cart_list_item _cart_items" data-workno="RJ123456">
         <span class="work_name">サンプル同人作品</span>
         <span class="maker_name">サークル名</span>
       </li>
-      <li class="cart_list_item" data-workno="RJ999999">
+      <!-- layout-duplicate of RJ123456 (same normalized workno) -->
+      <li class="cart_list_item _cart_items" data-workno="RJ123456">
+        <span class="work_name">サンプル同人作品</span>
+        <span class="maker_name">サークル名</span>
+      </li>
+      <li class="cart_list_item _cart_items" data-workno="RJ999999">
         <span class="work_name">未購入作品</span>
         <span class="maker_name">別サークル</span>
       </li>
