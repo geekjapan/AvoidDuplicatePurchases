@@ -33,18 +33,43 @@ async function apiFetch<T>(
   return json as T;
 }
 
+const LISTINGS_PAGE_SIZE = 500;
+
+/**
+ * Fetch the complete listing set via the shared limit/offset contract.
+ * Default server page is 500; SPA must not stop at the first page.
+ */
 export async function fetchListings(params: {
   q?: string;
   source?: string;
   maker?: string;
-}) {
-  const search = new URLSearchParams();
-  if (params.q) search.set("q", params.q);
-  if (params.source) search.set("source", params.source);
-  if (params.maker) search.set("maker", params.maker);
-  const qs = search.toString();
-  return apiFetch(`/api/listings${qs ? `?${qs}` : ""}`, {
-    parse: (v) => ListingsResponseSchema.parse(v),
+}): Promise<ListingsResponse> {
+  const all: Listing[] = [];
+  let offset = 0;
+  let total: number | undefined;
+
+  for (;;) {
+    const search = new URLSearchParams();
+    if (params.q) search.set("q", params.q);
+    if (params.source) search.set("source", params.source);
+    if (params.maker) search.set("maker", params.maker);
+    search.set("limit", String(LISTINGS_PAGE_SIZE));
+    search.set("offset", String(offset));
+    const qs = search.toString();
+    const page = await apiFetch(`/api/listings?${qs}`, {
+      parse: (v) => ListingsResponseSchema.parse(v),
+    });
+    all.push(...page.listings);
+    if (typeof page.total === "number") total = page.total;
+    if (page.listings.length === 0) break;
+    offset += page.listings.length;
+    if (page.listings.length < LISTINGS_PAGE_SIZE) break;
+    if (total !== undefined && offset >= total) break;
+  }
+
+  return ListingsResponseSchema.parse({
+    listings: all,
+    total: total ?? all.length,
   });
 }
 
@@ -62,19 +87,32 @@ export async function decideCandidate(id: number, same: boolean) {
   });
 }
 
+export type WorkAssignOptions =
+  | { workId: number; lock?: boolean }
+  | { allocateNew: true; lock?: boolean };
+
+/**
+ * Assign an existing work (merge) or allocate a fresh work server-side (split).
+ * Client never invents work ids.
+ */
 export async function assignWork(
   source: string,
   cid: string,
-  workId: number,
-  lock = true,
+  options: WorkAssignOptions,
 ) {
-  return apiFetch(`/api/listings/${encodeURIComponent(source)}/${encodeURIComponent(cid)}/work`, {
-    method: "POST",
-    body: { workId, lock },
-    parse: (v) => WorkAssignmentResponseSchema.parse(v),
-  });
-}
-
-export function maxWorkId(listings: Listing[]): number {
-  return listings.reduce((max, l) => Math.max(max, l.workId), 0);
+  const body =
+    "allocateNew" in options && options.allocateNew
+      ? { allocateNew: true as const, lock: options.lock ?? true }
+      : {
+          workId: (options as { workId: number }).workId,
+          lock: options.lock ?? true,
+        };
+  return apiFetch(
+    `/api/listings/${encodeURIComponent(source)}/${encodeURIComponent(cid)}/work`,
+    {
+      method: "POST",
+      body,
+      parse: (v) => WorkAssignmentResponseSchema.parse(v),
+    },
+  );
 }

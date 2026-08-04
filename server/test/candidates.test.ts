@@ -3,6 +3,8 @@ import { createServer, type Server } from "node:http";
 import { after, before, describe, it } from "node:test";
 import { openDatabase } from "../src/db.js";
 import { handleApi } from "../src/http.js";
+import { handleStatic } from "../src/static.js";
+import { isAllowedOrigin } from "../src/config.js";
 import { recomputeMatchKeys, runRematch } from "../src/services/lookup.js";
 import "../src/routes/listings.js";
 import "../src/routes/candidates.js";
@@ -44,39 +46,60 @@ function insertListing(
   return id;
 }
 
+function insertCandidate(
+  db: DatabaseSync,
+  listingAId: number,
+  listingBId: number,
+  dice = 0.85,
+): number {
+  const a = Math.min(listingAId, listingBId);
+  const b = Math.max(listingAId, listingBId);
+  db.prepare(
+    "INSERT INTO candidate (listing_a_id, listing_b_id, dice) VALUES (?, ?, ?)",
+  ).run(a, b, dice);
+  return Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
+}
+
 function request(
   port: number,
   method: string,
   path: string,
   body?: unknown,
-): Promise<{ status: number; json: unknown }> {
+  origin?: string,
+): Promise<{ status: number; json: unknown; text: string }> {
   return new Promise((resolve, reject) => {
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
     import("node:http").then(({ request: httpRequest }) => {
+      const headers: Record<string, string | number> = {
+        Origin: origin ?? `http://127.0.0.1:${port}`,
+      };
+      if (payload !== undefined) {
+        headers["Content-Type"] = "application/json";
+        headers["Content-Length"] = Buffer.byteLength(payload);
+      }
       const r = httpRequest(
         {
           hostname: "127.0.0.1",
           port,
           path,
           method,
-          headers: {
-            Origin: `http://127.0.0.1:${port}`,
-            ...(payload !== undefined
-              ? {
-                  "Content-Type": "application/json",
-                  "Content-Length": Buffer.byteLength(payload),
-                }
-              : {}),
-          },
+          headers,
         },
         (res) => {
           const chunks: Buffer[] = [];
           res.on("data", (c) => chunks.push(c));
           res.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf8");
+            let json: unknown = null;
+            try {
+              json = text.length ? JSON.parse(text) : null;
+            } catch {
+              json = null;
+            }
             resolve({
               status: res.statusCode ?? 0,
-              json: text.length ? JSON.parse(text) : null,
+              json,
+              text,
             });
           });
         },
@@ -88,11 +111,33 @@ function request(
   });
 }
 
-function startTestServer(db: DatabaseSync): Promise<{ server: Server; port: number }> {
+function startTestServer(
+  db: DatabaseSync,
+  opts: { staticFiles?: boolean; extensionOrigins?: Set<string> } = {},
+): Promise<{ server: Server; port: number }> {
   return new Promise((resolve, reject) => {
     let listenPort = 0;
+    const extensionOrigins = opts.extensionOrigins ?? new Set<string>();
     const server = createServer(async (req, res) => {
-      await handleApi(req, res, { db, port: listenPort, extensionOrigins: new Set() });
+      if (!isAllowedOrigin(req.headers.origin, listenPort, extensionOrigins)) {
+        const payload = JSON.stringify({ error: "forbidden" });
+        res.writeHead(403, {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        });
+        res.end(payload);
+        return;
+      }
+      const url = new URL(req.url ?? "/", `http://127.0.0.1:${listenPort}`);
+      const apiHandled = await handleApi(req, res, {
+        db,
+        port: listenPort,
+        extensionOrigins,
+      });
+      if (apiHandled) return;
+      if (opts.staticFiles && handleStatic(req, res, url)) return;
+      res.writeHead(404);
+      res.end();
     });
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
@@ -196,6 +241,163 @@ describe("candidates API", () => {
   });
 });
 
+describe("candidates 3-listing / 2-candidate suppress", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  after(() => {
+    server?.close();
+    db?.close();
+  });
+
+  async function setupTriangle(mode: "approve" | "reject"): Promise<{
+    candidateAB: number;
+    candidateAC: number;
+    idA: number;
+    idB: number;
+    idC: number;
+  }> {
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: `RJ_TRI_${mode}_A`,
+      title: `Triangle Core ${mode}`,
+      maker: "Triangle Maker",
+    });
+    const idB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: `d_tri_${mode}_b`,
+      title: `Triangle Side B ${mode}`,
+      maker: "Triangle Maker",
+    });
+    const idC = insertListing(db, {
+      source: "fanza_books",
+      cid: `b_tri_${mode}_c`,
+      title: `Triangle Side C ${mode}`,
+      maker: "Triangle Maker",
+    });
+    // Direct edges A-B and A-C (both reference listing A).
+    const candidateAB = insertCandidate(db, idA, idB, 0.91);
+    const candidateAC = insertCandidate(db, idA, idC, 0.88);
+    ({ server, port } = await startTestServer(db));
+    return { candidateAB, candidateAC, idA, idB, idC };
+  }
+
+  it("approve removes every candidate involving either processed listing", async () => {
+    const { candidateAB, candidateAC, idA, idB } = await setupTriangle("approve");
+
+    const before = await request(port, "GET", "/api/candidates");
+    const beforeIds = (before.json as { candidates: Array<{ id: number }> }).candidates.map(
+      (c) => c.id,
+    );
+    assert.ok(beforeIds.includes(candidateAB));
+    assert.ok(beforeIds.includes(candidateAC));
+
+    const decide = await request(port, "POST", `/api/candidates/${candidateAB}`, {
+      same: true,
+    });
+    assert.equal(decide.status, 200);
+
+    const after = await request(port, "GET", "/api/candidates");
+    const afterIds = (after.json as { candidates: Array<{ id: number }> }).candidates.map(
+      (c) => c.id,
+    );
+    assert.ok(!afterIds.includes(candidateAB), "processed candidate gone");
+    assert.ok(
+      !afterIds.includes(candidateAC),
+      "sibling candidate sharing listing A must also be suppressed",
+    );
+
+    const listings = await request(port, "GET", "/api/listings");
+    const rows = (listings.json as {
+      listings: Array<{ id: number; workId: number; workIdLocked?: boolean }>;
+    }).listings;
+    const a = rows.find((r) => r.id === idA)!;
+    const b = rows.find((r) => r.id === idB)!;
+    assert.equal(a.workId, b.workId, "approve merges onto one work");
+    assert.equal(a.workIdLocked, true);
+    assert.equal(b.workIdLocked, true);
+
+    // Direct DB check: no residual candidate rows for processed listings.
+    const residual = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM candidate
+         WHERE listing_a_id IN (?, ?) OR listing_b_id IN (?, ?)`,
+      )
+      .get(idA, idB, idA, idB) as { n: number };
+    assert.equal(residual.n, 0);
+  });
+
+  it("reject keeps works separate and suppresses sibling candidates", async () => {
+    server?.close();
+    db?.close();
+    const { candidateAB, candidateAC, idA, idB } = await setupTriangle("reject");
+
+    // Force shared work so reject must allocate a new work for B.
+    const sharedWork = (db.prepare("SELECT work_id FROM listing WHERE id = ?").get(idA) as {
+      work_id: number;
+    }).work_id;
+    db.prepare("UPDATE listing SET work_id = ? WHERE id = ?").run(sharedWork, idB);
+
+    const decide = await request(port, "POST", `/api/candidates/${candidateAB}`, {
+      same: false,
+    });
+    assert.equal(decide.status, 200);
+
+    const after = await request(port, "GET", "/api/candidates");
+    const afterIds = (after.json as { candidates: Array<{ id: number }> }).candidates.map(
+      (c) => c.id,
+    );
+    assert.ok(!afterIds.includes(candidateAB));
+    assert.ok(!afterIds.includes(candidateAC));
+
+    const listings = await request(port, "GET", "/api/listings");
+    const rows = (listings.json as {
+      listings: Array<{ id: number; workId: number; workIdLocked?: boolean }>;
+    }).listings;
+    const a = rows.find((r) => r.id === idA)!;
+    const b = rows.find((r) => r.id === idB)!;
+    assert.notEqual(a.workId, b.workId, "reject keeps listings on separate works");
+    assert.equal(a.workIdLocked, true);
+    assert.equal(b.workIdLocked, true);
+
+    const residual = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM candidate
+         WHERE listing_a_id IN (?, ?) OR listing_b_id IN (?, ?)`,
+      )
+      .get(idA, idB, idA, idB) as { n: number };
+    assert.equal(residual.n, 0);
+  });
+
+  it("GET omits candidates whose either listing is already locked", async () => {
+    server?.close();
+    db?.close();
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_LOCKED_A",
+      title: "Locked Gate A",
+      maker: "Lock Maker",
+      workIdLocked: 1,
+    });
+    const idB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_locked_b",
+      title: "Locked Gate B",
+      maker: "Lock Maker",
+    });
+    insertCandidate(db, idA, idB, 0.95);
+    ({ server, port } = await startTestServer(db));
+
+    const res = await request(port, "GET", "/api/candidates");
+    assert.equal(res.status, 200);
+    const candidates = (res.json as { candidates: unknown[] }).candidates;
+    assert.equal(candidates.length, 0);
+  });
+});
+
 describe("listings API", () => {
   let server: Server;
   let port: number;
@@ -254,6 +456,62 @@ describe("listings API", () => {
   });
 });
 
+describe("listings pagination 501+ boundary", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  before(async () => {
+    db = openDatabase(":memory:").sqlite;
+    for (let i = 0; i < 501; i++) {
+      insertListing(db, {
+        source: "dlsite",
+        cid: `RJ_PAGE_${String(i).padStart(4, "0")}`,
+        title: `Pagination Item ${i}`,
+        maker: "Page Maker",
+      });
+    }
+    ({ server, port } = await startTestServer(db));
+  });
+
+  after(() => {
+    server.close();
+    db.close();
+  });
+
+  it("returns total 501 and stable pages without silent truncation", async () => {
+    const first = await request(port, "GET", "/api/listings?limit=500&offset=0");
+    assert.equal(first.status, 200);
+    const page1 = first.json as {
+      listings: Array<{ cid: string; workId: number }>;
+      total: number;
+    };
+    assert.equal(page1.total, 501);
+    assert.equal(page1.listings.length, 500);
+
+    const second = await request(port, "GET", "/api/listings?limit=500&offset=500");
+    const page2 = second.json as {
+      listings: Array<{ cid: string }>;
+      total: number;
+    };
+    assert.equal(page2.total, 501);
+    assert.equal(page2.listings.length, 1);
+
+    const seen = new Set(page1.listings.map((l) => l.cid));
+    for (const row of page2.listings) {
+      assert.ok(!seen.has(row.cid), "pages must not overlap");
+      seen.add(row.cid);
+    }
+    assert.equal(seen.size, 501);
+
+    // Default limit alone would truncate; total must still report full count.
+    const defaults = await request(port, "GET", "/api/listings");
+    const body = defaults.json as { listings: unknown[]; total: number };
+    assert.equal(body.total, 501);
+    assert.equal(body.listings.length, 500);
+  });
+});
+
 describe("work assignment API", () => {
   let server: Server;
   let port: number;
@@ -281,12 +539,11 @@ describe("work assignment API", () => {
     db.close();
   });
 
-  it("manual merge and split lock work_id", async () => {
+  it("manual merge and server-side split lock work_id", async () => {
     const before = await request(port, "GET", "/api/listings");
     const rows = (before.json as {
       listings: Array<{ source: string; cid: string; workId: number; workIdLocked?: boolean }>;
     }).listings;
-    const maxWork = Math.max(...rows.map((r) => r.workId));
     const target = Math.min(...rows.map((r) => r.workId));
 
     const mergeA = await request(
@@ -315,9 +572,12 @@ describe("work assignment API", () => {
       port,
       "POST",
       `/api/listings/fanza_doujin/d_600001/work`,
-      { workId: maxWork + 1, lock: true },
+      { allocateNew: true, lock: true },
     );
     assert.equal(split.status, 200);
+    const splitBody = split.json as { workId: number; locked: boolean };
+    assert.equal(splitBody.locked, true);
+    assert.ok(splitBody.workId > target);
 
     const afterSplit = await request(port, "GET", "/api/listings");
     const afterRows = (afterSplit.json as {
@@ -327,6 +587,164 @@ describe("work assignment API", () => {
     const otherRow = afterRows.find((r) => r.cid === "RJ600001");
     assert.ok(splitRow && otherRow);
     assert.notEqual(splitRow.workId, otherRow.workId);
+    assert.equal(splitRow.workId, splitBody.workId);
     assert.equal(splitRow.workIdLocked, true);
+  });
+});
+
+describe("work split hidden/filter collision", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  before(async () => {
+    db = openDatabase(":memory:").sqlite;
+    // Visible pair first so their auto work ids stay low.
+    insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_VIS_A",
+      title: "Visible Split A",
+      maker: "Visible Maker",
+    });
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_vis_b",
+      title: "Visible Split B",
+      maker: "Visible Maker",
+    });
+    // Hidden high work id outside the Visible Maker filter.
+    db.prepare("INSERT INTO work (id) VALUES (500)").run();
+    insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_HIDDEN_500",
+      title: "Hidden High Work",
+      maker: "Hidden Maker",
+      workId: 500,
+    });
+    ({ server, port } = await startTestServer(db));
+  });
+
+  after(() => {
+    server.close();
+    db.close();
+  });
+
+  it("allocateNew avoids max-visible+1 collision with hidden work 500", async () => {
+    const filtered = await request(port, "GET", "/api/listings?maker=Visible%20Maker");
+    const visible = (filtered.json as {
+      listings: Array<{ cid: string; workId: number }>;
+    }).listings;
+    assert.equal(visible.length, 2);
+    const maxVisible = Math.max(...visible.map((r) => r.workId));
+    assert.ok(maxVisible < 500, "filtered max must be below hidden work");
+
+    // Old client would invent maxVisible+1 which may be free, but under
+    // larger datasets collides; simulate the dangerous case by occupying it.
+    const collidingId = maxVisible + 1;
+    db.prepare("INSERT INTO work (id) VALUES (?)").run(collidingId);
+    insertListing(db, {
+      source: "fanza_books",
+      cid: "b_occupied",
+      title: "Occupies MaxVisible Plus One",
+      maker: "Other Maker",
+      workId: collidingId,
+    });
+
+    const split = await request(
+      port,
+      "POST",
+      `/api/listings/fanza_doujin/d_vis_b/work`,
+      { allocateNew: true, lock: true },
+    );
+    assert.equal(split.status, 200);
+    const body = split.json as { workId: number; locked: boolean };
+    assert.equal(body.locked, true);
+    assert.notEqual(body.workId, collidingId, "must not reuse occupied maxVisible+1");
+    assert.notEqual(body.workId, 500, "must not reuse hidden work 500");
+
+    const after = await request(port, "GET", "/api/listings?q=Visible%20Split%20B");
+    const row = (after.json as {
+      listings: Array<{ cid: string; workId: number; workIdLocked?: boolean }>;
+    }).listings.find((r) => r.cid === "d_vis_b");
+    assert.ok(row);
+    assert.equal(row.workId, body.workId);
+    assert.equal(row.workIdLocked, true);
+
+    // Occupied listing must remain on its work.
+    const occupied = await request(port, "GET", "/api/listings?q=Occupies");
+    const occ = (occupied.json as {
+      listings: Array<{ cid: string; workId: number }>;
+    }).listings.find((r) => r.cid === "b_occupied");
+    assert.equal(occ?.workId, collidingId);
+  });
+});
+
+describe("static SPA origin gate", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  before(async () => {
+    db = openDatabase(":memory:").sqlite;
+    ({ server, port } = await startTestServer(db, {
+      staticFiles: true,
+      extensionOrigins: new Set(["chrome-extension://allowed-admin"]),
+    }));
+  });
+
+  after(() => {
+    server.close();
+    db.close();
+  });
+
+  it("rejects malicious Origin on static GET before SPA handling", async () => {
+    const evil = await request(
+      port,
+      "GET",
+      "/",
+      undefined,
+      "https://evil.example.com",
+    );
+    assert.equal(evil.status, 403);
+    assert.match(evil.text, /forbidden/);
+    assert.doesNotMatch(evil.text, /ADP 管理|main\.js/);
+  });
+
+  it("allows same-origin and no-Origin static GET", async () => {
+    const same = await request(port, "GET", "/", undefined, `http://127.0.0.1:${port}`);
+    // dist may or may not be built in unit context; 200 or 503 both mean gate passed.
+    assert.ok(same.status === 200 || same.status === 503, `status=${same.status}`);
+
+    const noOrigin = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+      import("node:http").then(({ request: httpRequest }) => {
+        const r = httpRequest(
+          { hostname: "127.0.0.1", port, path: "/", method: "GET" },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (c) => chunks.push(c));
+            res.on("end", () =>
+              resolve({
+                status: res.statusCode ?? 0,
+                text: Buffer.concat(chunks).toString("utf8"),
+              }),
+            );
+          },
+        );
+        r.on("error", reject);
+        r.end();
+      });
+    });
+    assert.ok(noOrigin.status === 200 || noOrigin.status === 503);
+  });
+
+  it("allows configured extension origin on static GET", async () => {
+    const res = await request(
+      port,
+      "GET",
+      "/",
+      undefined,
+      "chrome-extension://allowed-admin",
+    );
+    assert.ok(res.status === 200 || res.status === 503);
   });
 });

@@ -14670,14 +14670,32 @@ async function apiFetch(path, options = {}) {
   if (options.parse) return options.parse(json2);
   return json2;
 }
+var LISTINGS_PAGE_SIZE = 500;
 async function fetchListings(params) {
-  const search = new URLSearchParams();
-  if (params.q) search.set("q", params.q);
-  if (params.source) search.set("source", params.source);
-  if (params.maker) search.set("maker", params.maker);
-  const qs = search.toString();
-  return apiFetch(`/api/listings${qs ? `?${qs}` : ""}`, {
-    parse: (v) => ListingsResponseSchema.parse(v)
+  const all = [];
+  let offset = 0;
+  let total;
+  for (; ; ) {
+    const search = new URLSearchParams();
+    if (params.q) search.set("q", params.q);
+    if (params.source) search.set("source", params.source);
+    if (params.maker) search.set("maker", params.maker);
+    search.set("limit", String(LISTINGS_PAGE_SIZE));
+    search.set("offset", String(offset));
+    const qs = search.toString();
+    const page = await apiFetch(`/api/listings?${qs}`, {
+      parse: (v) => ListingsResponseSchema.parse(v)
+    });
+    all.push(...page.listings);
+    if (typeof page.total === "number") total = page.total;
+    if (page.listings.length === 0) break;
+    offset += page.listings.length;
+    if (page.listings.length < LISTINGS_PAGE_SIZE) break;
+    if (total !== void 0 && offset >= total) break;
+  }
+  return ListingsResponseSchema.parse({
+    listings: all,
+    total: total ?? all.length
   });
 }
 async function fetchCandidates() {
@@ -14692,15 +14710,19 @@ async function decideCandidate(id, same) {
     parse: (v) => v
   });
 }
-async function assignWork(source, cid, workId, lock = true) {
-  return apiFetch(`/api/listings/${encodeURIComponent(source)}/${encodeURIComponent(cid)}/work`, {
-    method: "POST",
-    body: { workId, lock },
-    parse: (v) => WorkAssignmentResponseSchema.parse(v)
-  });
-}
-function maxWorkId(listings) {
-  return listings.reduce((max, l) => Math.max(max, l.workId), 0);
+async function assignWork(source, cid, options) {
+  const body = "allocateNew" in options && options.allocateNew ? { allocateNew: true, lock: options.lock ?? true } : {
+    workId: options.workId,
+    lock: options.lock ?? true
+  };
+  return apiFetch(
+    `/api/listings/${encodeURIComponent(source)}/${encodeURIComponent(cid)}/work`,
+    {
+      method: "POST",
+      body,
+      parse: (v) => WorkAssignmentResponseSchema.parse(v)
+    }
+  );
 }
 
 // src/pages/candidates.ts
@@ -14733,7 +14755,7 @@ async function renderCandidates(root) {
       })
     ])
   );
-  const listHost = el("div");
+  const listHost = el("div", { "data-testid": "candidate-list" });
   root.append(listHost);
   async function load() {
     listHost.replaceChildren(el("p", { className: "muted", textContent: "\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026" }));
@@ -14744,7 +14766,10 @@ async function renderCandidates(root) {
       return;
     }
     for (const candidate of data.candidates) {
-      const card = el("article", { className: "candidate-card" });
+      const card = el("article", {
+        className: "candidate-card",
+        "data-candidate-id": String(candidate.id)
+      });
       card.append(
         el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
         el("div", { className: "candidate-pair" }, [
@@ -14752,8 +14777,16 @@ async function renderCandidates(root) {
           listingBlock(candidate.b)
         ])
       );
-      const approve = el("button", { className: "primary", textContent: "\u25CB \u540C\u4E00" });
-      const reject = el("button", { className: "danger", textContent: "\xD7 \u5225\u7269" });
+      const approve = el("button", {
+        className: "primary",
+        textContent: "\u25CB \u540C\u4E00",
+        "data-testid": `approve-${candidate.id}`
+      });
+      const reject = el("button", {
+        className: "danger",
+        textContent: "\xD7 \u5225\u7269",
+        "data-testid": `reject-${candidate.id}`
+      });
       approve.addEventListener("click", async () => {
         await decideCandidate(candidate.id, true);
         await load();
@@ -14797,16 +14830,28 @@ async function renderLibrary(root) {
     el2("p", { className: "muted", textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u3067\u691C\u7D22\u3057\u3001\u6B63\u898F work \u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059\u3002" })
   ]));
   const filters = el2("div", { className: "filters" });
-  const qInput = el2("input", { type: "search", placeholder: "\u691C\u7D22\uFF08\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\uFF09" });
-  const sourceSelect = el2("select");
+  const qInput = el2("input", {
+    type: "search",
+    placeholder: "\u691C\u7D22\uFF08\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\uFF09",
+    "data-testid": "filter-q"
+  });
+  const sourceSelect = el2("select", { "data-testid": "filter-source" });
   sourceSelect.append(el2("option", { value: "", textContent: "\u5168\u30BD\u30FC\u30B9" }));
   for (const source of SOURCES) {
     sourceSelect.append(el2("option", { value: source, textContent: source }));
   }
-  const makerInput = el2("input", { type: "search", placeholder: "\u30E1\u30FC\u30AB\u30FC\uFF08\u6B63\u898F\u5316\u4E00\u81F4\uFF09" });
-  const searchBtn = el2("button", { className: "primary", textContent: "\u691C\u7D22" });
+  const makerInput = el2("input", {
+    type: "search",
+    placeholder: "\u30E1\u30FC\u30AB\u30FC\uFF08\u6B63\u898F\u5316\u4E00\u81F4\uFF09",
+    "data-testid": "filter-maker"
+  });
+  const searchBtn = el2("button", {
+    className: "primary",
+    textContent: "\u691C\u7D22",
+    "data-testid": "search-btn"
+  });
   filters.append(qInput, sourceSelect, makerInput, searchBtn);
-  const listHost = el2("div");
+  const listHost = el2("div", { "data-testid": "library-list" });
   root.append(filters, listHost);
   const selected = /* @__PURE__ */ new Set();
   async function load() {
@@ -14828,13 +14873,20 @@ async function renderLibrary(root) {
       return;
     }
     const actions = el2("div", { className: "filters" });
-    const mergeBtn = el2("button", { className: "primary", textContent: "\u9078\u629E\u3092\u7D50\u5408" });
+    const mergeBtn = el2("button", {
+      className: "primary",
+      textContent: "\u9078\u629E\u3092\u7D50\u5408",
+      "data-testid": "merge-btn"
+    });
     mergeBtn.addEventListener("click", async () => {
       const picked = listings.filter((l) => selected.has(l.id));
       if (picked.length < 2) return;
       const targetWorkId = Math.min(...picked.map((l) => l.workId));
       for (const listing of picked) {
-        await assignWork(listing.source, listing.cid, targetWorkId, true);
+        await assignWork(listing.source, listing.cid, {
+          workId: targetWorkId,
+          lock: true
+        });
       }
       selected.clear();
       await load();
@@ -14843,25 +14895,38 @@ async function renderLibrary(root) {
     listHost.append(actions);
     const groups = groupByWork(listings);
     for (const [workId, items] of groups) {
-      const group = el2("section", { className: "work-group" });
+      const group = el2("section", {
+        className: "work-group",
+        "data-work-id": String(workId)
+      });
       group.append(
         el2("header", { textContent: `work #${workId}\uFF08${items.length} \u4EF6\uFF09` })
       );
       for (const listing of items) {
-        const checkbox = el2("input", { type: "checkbox" });
+        const checkbox = el2("input", {
+          type: "checkbox",
+          "data-testid": `select-${listing.cid}`
+        });
         checkbox.checked = selected.has(listing.id);
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) selected.add(listing.id);
           else selected.delete(listing.id);
         });
-        const splitBtn = el2("button", { textContent: "\u5206\u96E2" });
+        const splitBtn = el2("button", {
+          textContent: "\u5206\u96E2",
+          "data-testid": `split-${listing.cid}`
+        });
         splitBtn.addEventListener("click", async () => {
-          const newWorkId = maxWorkId(listings) + 1;
-          await assignWork(listing.source, listing.cid, newWorkId, true);
+          await assignWork(listing.source, listing.cid, {
+            allocateNew: true,
+            lock: true
+          });
           await load();
         });
         const row = el2("div", {
-          className: `listing-row${listing.workIdLocked ? " locked" : ""}`
+          className: `listing-row${listing.workIdLocked ? " locked" : ""}`,
+          "data-cid": listing.cid,
+          "data-work-id": String(listing.workId)
         });
         row.append(
           checkbox,
@@ -14935,11 +15000,13 @@ async function navigate() {
 }
 window.addEventListener("popstate", () => navigate());
 nav.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLAnchorElement)) return;
-  if (target.origin !== window.location.origin) return;
+  const raw = event.target;
+  if (!(raw instanceof Node)) return;
+  const anchor = raw instanceof HTMLAnchorElement ? raw : raw.parentElement instanceof HTMLAnchorElement ? raw.parentElement : null;
+  if (!anchor) return;
+  if (anchor.origin !== window.location.origin) return;
   event.preventDefault();
-  window.history.pushState(null, "", target.pathname);
+  window.history.pushState(null, "", anchor.pathname);
   navigate();
 });
 navigate();

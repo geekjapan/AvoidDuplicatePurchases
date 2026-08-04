@@ -36,7 +36,7 @@ export async function renderCandidates(root: HTMLElement): Promise<void> {
     ]),
   );
 
-  const listHost = el("div");
+  const listHost = el("div", { "data-testid": "candidate-list" });
   root.append(listHost);
 
   async function load(): Promise<void> {
@@ -49,7 +49,10 @@ export async function renderCandidates(root: HTMLElement): Promise<void> {
     }
 
     for (const candidate of data.candidates) {
-      const card = el("article", { className: "candidate-card" });
+      const card = el("article", {
+        className: "candidate-card",
+        "data-candidate-id": String(candidate.id),
+      });
       card.append(
         el("div", { className: "muted", textContent: `dice ${candidate.dice.toFixed(3)}` }),
         el("div", { className: "candidate-pair" }, [
@@ -57,8 +60,16 @@ export async function renderCandidates(root: HTMLElement): Promise<void> {
           listingBlock(candidate.b),
         ]),
       );
-      const approve = el("button", { className: "primary", textContent: "○ 同一" });
-      const reject = el("button", { className: "danger", textContent: "× 別物" });
+      const approve = el("button", {
+        className: "primary",
+        textContent: "○ 同一",
+        "data-testid": `approve-${candidate.id}`,
+      });
+      const reject = el("button", {
+        className: "danger",
+        textContent: "× 別物",
+        "data-testid": `reject-${candidate.id}`,
+      });
       approve.addEventListener("click", async () => {
         await decideCandidate(candidate.id, true);
         await load();

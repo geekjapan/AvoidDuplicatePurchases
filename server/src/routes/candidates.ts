@@ -81,6 +81,34 @@ function lockListing(db: ApiContext["db"], listingId: number, workId: number): v
   ).run(workId, listingId);
 }
 
+/** Remove every candidate that references either processed listing. */
+function deleteCandidatesForListings(
+  db: ApiContext["db"],
+  listingAId: number,
+  listingBId: number,
+): void {
+  db.prepare(
+    `DELETE FROM candidate
+     WHERE listing_a_id IN (?, ?)
+        OR listing_b_id IN (?, ?)`,
+  ).run(listingAId, listingBId, listingAId, listingBId);
+}
+
+function runInTransaction(db: ApiContext["db"], fn: () => void): void {
+  db.exec("BEGIN");
+  try {
+    fn();
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // ignore rollback failure after a failed transaction
+    }
+    throw error;
+  }
+}
+
 async function handleCandidatesRoute(
   req: IncomingMessage,
   res: ServerResponse,
@@ -99,6 +127,7 @@ async function handleCandidatesRoute(
     }
 
     const limit = query.limit ?? 50;
+    // Only unlocked listings may appear; locked ones are already decided.
     const rows = ctx.db
       .prepare(
         `SELECT c.id, c.dice,
@@ -107,6 +136,7 @@ async function handleCandidatesRoute(
          FROM candidate c
          JOIN listing la ON la.id = c.listing_a_id
          JOIN listing lb ON lb.id = c.listing_b_id
+         WHERE la.work_id_locked = 0 AND lb.work_id_locked = 0
          ORDER BY c.dice DESC, c.id
          LIMIT ?`,
       )
@@ -191,21 +221,28 @@ async function handleCandidatesRoute(
       return true;
     }
 
-    if (decision.same) {
-      const targetWorkId = Math.min(listingA.work_id, listingB.work_id);
-      ensureWorkExists(ctx.db, targetWorkId);
-      lockListing(ctx.db, listingA.id, targetWorkId);
-      lockListing(ctx.db, listingB.id, targetWorkId);
-    } else {
-      if (listingA.work_id === listingB.work_id) {
+    runInTransaction(ctx.db, () => {
+      if (decision.same) {
+        // Approve: merge onto the smaller work_id and lock both sides.
+        const targetWorkId = Math.min(listingA.work_id, listingB.work_id);
+        ensureWorkExists(ctx.db, targetWorkId);
+        lockListing(ctx.db, listingA.id, targetWorkId);
+        lockListing(ctx.db, listingB.id, targetWorkId);
+      } else if (listingA.work_id === listingB.work_id) {
+        // Reject while still sharing a work: keep A, allocate a fresh work for B.
         const newWorkId = createWork(ctx.db);
+        lockListing(ctx.db, listingA.id, listingA.work_id);
         lockListing(ctx.db, listingB.id, newWorkId);
+      } else {
+        // Reject already-separate pair: lock each on its own work.
+        lockListing(ctx.db, listingA.id, listingA.work_id);
+        lockListing(ctx.db, listingB.id, listingB.work_id);
       }
-      lockListing(ctx.db, listingA.id, listingA.work_id);
-      lockListing(ctx.db, listingB.id, listingB.work_id);
-    }
 
-    ctx.db.prepare("DELETE FROM candidate WHERE id = ?").run(candidate.id);
+      // Suppress every candidate involving either processed listing.
+      deleteCandidatesForListings(ctx.db, listingA.id, listingB.id);
+    });
+
     json(res, 200, EmptyResponseSchema.parse({}));
     return true;
   }

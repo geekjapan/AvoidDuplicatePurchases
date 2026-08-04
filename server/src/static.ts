@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { loadConfig } from "./config.js";
+import { isAllowedOrigin, loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
 import "./routes/listings.js";
@@ -26,6 +26,15 @@ const MIME: Record<string, string> = {
 
 function contentType(path: string): string {
   return MIME[extname(path).toLowerCase()] ?? "application/octet-stream";
+}
+
+function forbidden(res: import("node:http").ServerResponse): void {
+  const payload = JSON.stringify({ error: "forbidden" });
+  res.writeHead(403, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
 }
 
 /** Serve built admin SPA assets; SPA paths fall back to index.html. */
@@ -80,6 +89,13 @@ export function startServer(): { close: () => void } {
 
   const server = createServer(async (req, res) => {
     try {
+      // Shared Origin gate for API and static SPA (spec §7).
+      // No Origin header remains allowed (curl / same-machine tools).
+      if (!isAllowedOrigin(req.headers.origin, config.port, config.extensionOrigins)) {
+        forbidden(res);
+        return;
+      }
+
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${config.port}`);
       const apiHandled = await handleApi(req, res, {
         db,

@@ -2,7 +2,6 @@ import { SOURCES } from "@adp/shared";
 import {
   assignWork,
   fetchListings,
-  maxWorkId,
   type Listing,
 } from "../api.js";
 
@@ -40,17 +39,29 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
   ]));
 
   const filters = el("div", { className: "filters" });
-  const qInput = el("input", { type: "search", placeholder: "検索（タイトル・メーカー・ソース）" });
-  const sourceSelect = el("select");
+  const qInput = el("input", {
+    type: "search",
+    placeholder: "検索（タイトル・メーカー・ソース）",
+    "data-testid": "filter-q",
+  });
+  const sourceSelect = el("select", { "data-testid": "filter-source" });
   sourceSelect.append(el("option", { value: "", textContent: "全ソース" }));
   for (const source of SOURCES) {
     sourceSelect.append(el("option", { value: source, textContent: source }));
   }
-  const makerInput = el("input", { type: "search", placeholder: "メーカー（正規化一致）" });
-  const searchBtn = el("button", { className: "primary", textContent: "検索" });
+  const makerInput = el("input", {
+    type: "search",
+    placeholder: "メーカー（正規化一致）",
+    "data-testid": "filter-maker",
+  });
+  const searchBtn = el("button", {
+    className: "primary",
+    textContent: "検索",
+    "data-testid": "search-btn",
+  });
   filters.append(qInput, sourceSelect, makerInput, searchBtn);
 
-  const listHost = el("div");
+  const listHost = el("div", { "data-testid": "library-list" });
   root.append(filters, listHost);
 
   const selected = new Set<number>();
@@ -75,14 +86,22 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
       return;
     }
 
-  const actions = el("div", { className: "filters" });
-    const mergeBtn = el("button", { className: "primary", textContent: "選択を結合" });
+    const actions = el("div", { className: "filters" });
+    const mergeBtn = el("button", {
+      className: "primary",
+      textContent: "選択を結合",
+      "data-testid": "merge-btn",
+    });
     mergeBtn.addEventListener("click", async () => {
       const picked = listings.filter((l) => selected.has(l.id));
       if (picked.length < 2) return;
+      // Explicit merge onto the lowest existing work among the selection.
       const targetWorkId = Math.min(...picked.map((l) => l.workId));
       for (const listing of picked) {
-        await assignWork(listing.source, listing.cid, targetWorkId, true);
+        await assignWork(listing.source, listing.cid, {
+          workId: targetWorkId,
+          lock: true,
+        });
       }
       selected.clear();
       await load();
@@ -92,25 +111,39 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
 
     const groups = groupByWork(listings);
     for (const [workId, items] of groups) {
-      const group = el("section", { className: "work-group" });
+      const group = el("section", {
+        className: "work-group",
+        "data-work-id": String(workId),
+      });
       group.append(
         el("header", { textContent: `work #${workId}（${items.length} 件）` }),
       );
       for (const listing of items) {
-        const checkbox = el("input", { type: "checkbox" });
+        const checkbox = el("input", {
+          type: "checkbox",
+          "data-testid": `select-${listing.cid}`,
+        });
         checkbox.checked = selected.has(listing.id);
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) selected.add(listing.id);
           else selected.delete(listing.id);
         });
-        const splitBtn = el("button", { textContent: "分離" });
+        const splitBtn = el("button", {
+          textContent: "分離",
+          "data-testid": `split-${listing.cid}`,
+        });
         splitBtn.addEventListener("click", async () => {
-          const newWorkId = maxWorkId(listings) + 1;
-          await assignWork(listing.source, listing.cid, newWorkId, true);
+          // Server allocates a fresh work id transactionally; client never invents one.
+          await assignWork(listing.source, listing.cid, {
+            allocateNew: true,
+            lock: true,
+          });
           await load();
         });
         const row = el("div", {
           className: `listing-row${listing.workIdLocked ? " locked" : ""}`,
+          "data-cid": listing.cid,
+          "data-work-id": String(listing.workId),
         });
         row.append(
           checkbox,

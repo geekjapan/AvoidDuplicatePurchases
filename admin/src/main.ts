@@ -40,11 +40,18 @@ async function navigate(): Promise<void> {
 
 window.addEventListener("popstate", () => navigate());
 nav.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLAnchorElement)) return;
-  if (target.origin !== window.location.origin) return;
+  const raw = event.target;
+  if (!(raw instanceof Node)) return;
+  const anchor =
+    raw instanceof HTMLAnchorElement
+      ? raw
+      : raw.parentElement instanceof HTMLAnchorElement
+        ? raw.parentElement
+        : null;
+  if (!anchor) return;
+  if (anchor.origin !== window.location.origin) return;
   event.preventDefault();
-  window.history.pushState(null, "", target.pathname);
+  window.history.pushState(null, "", anchor.pathname);
   navigate();
 });
 

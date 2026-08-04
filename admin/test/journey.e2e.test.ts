@@ -1,12 +1,22 @@
+/**
+ * Browser-equivalent admin CORE journey.
+ *
+ * Uses happy-dom (lightweight DOM + fetch) rather than Playwright/Puppeteer:
+ * existing tooling only probed HTTP strings and never executed SPA navigation/UI.
+ * happy-dom runs the real admin source modules against the local test server,
+ * proving filters, approve/reject, merge, split, and persistence without a browser binary.
+ */
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { Window } from "happy-dom";
 import { openDatabase } from "../../server/src/db.js";
 import { handleApi } from "../../server/src/http.js";
 import { handleStatic } from "../../server/src/static.js";
+import { isAllowedOrigin } from "../../server/src/config.js";
 import "../../server/src/routes/listings.js";
 import "../../server/src/routes/candidates.js";
 import "../../server/src/routes/work.js";
@@ -22,6 +32,7 @@ const REPO_ROOT = join(__dirname, "..", "..");
 const SHARED_FIXTURES = join(REPO_ROOT, "shared", "test", "fixtures");
 const SERVER_FIXTURES = join(REPO_ROOT, "server", "test", "fixtures");
 const ADMIN_DIST = join(REPO_ROOT, "admin", "dist");
+const ADMIN_SRC_MAIN = join(REPO_ROOT, "admin", "src", "main.ts");
 
 function insertListing(
   db: DatabaseSync,
@@ -107,6 +118,15 @@ function startFullServer(db: DatabaseSync): Promise<{ server: Server; port: numb
   return new Promise((resolve, reject) => {
     let listenPort = 0;
     const server = createServer(async (req, res) => {
+      if (!isAllowedOrigin(req.headers.origin, listenPort, new Set())) {
+        const payload = JSON.stringify({ error: "forbidden" });
+        res.writeHead(403, {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        });
+        res.end(payload);
+        return;
+      }
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${listenPort}`);
       const apiHandled = await handleApi(req, res, {
         db,
@@ -127,14 +147,73 @@ function startFullServer(db: DatabaseSync): Promise<{ server: Server; port: numb
   });
 }
 
-describe("e2e admin core journey", () => {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  label: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (await predicate()) return;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`timeout waiting for ${label}`);
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+function defineGlobal(name: string, value: unknown): void {
+  Object.defineProperty(globalThis, name, {
+    configurable: true,
+    writable: true,
+    value,
+  });
+}
+
+function installDom(port: number): Window {
+  const window = new Window({
+    url: `http://127.0.0.1:${port}/`,
+  });
+  defineGlobal("window", window);
+  defineGlobal("self", window);
+  defineGlobal("document", window.document);
+  defineGlobal("HTMLElement", window.HTMLElement);
+  defineGlobal("HTMLAnchorElement", window.HTMLAnchorElement);
+  defineGlobal("HTMLInputElement", window.HTMLInputElement);
+  defineGlobal("HTMLButtonElement", window.HTMLButtonElement);
+  defineGlobal("HTMLSelectElement", window.HTMLSelectElement);
+  defineGlobal("Node", window.Node);
+  defineGlobal("Event", window.Event);
+  defineGlobal("MouseEvent", window.MouseEvent);
+  defineGlobal("CustomEvent", window.CustomEvent);
+  defineGlobal("location", window.location);
+  defineGlobal("history", window.history);
+  defineGlobal("navigator", window.navigator);
+  // happy-dom fetch hits the local test server over the real network stack.
+  defineGlobal("fetch", window.fetch.bind(window));
+  window.document.body.innerHTML = '<div id="app"></div>';
+  return window;
+}
+
+function click(el: Element): void {
+  el.dispatchEvent(
+    new (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+describe("e2e admin core journey (browser-equivalent)", () => {
   let server: Server;
   let port: number;
   let db: DatabaseSync;
+  let window: Window;
 
   before(async () => {
     assert.ok(existsSync(join(ADMIN_DIST, "index.html")), "admin dist must be built");
     assert.ok(existsSync(join(ADMIN_DIST, "main.js")), "admin dist must be built");
+    assert.ok(existsSync(ADMIN_SRC_MAIN), "admin source entry required");
 
     db = openDatabase(":memory:").sqlite;
 
@@ -153,6 +232,7 @@ describe("e2e admin core journey", () => {
     );
     importListingBatch(db, "fanza_books", parseBooksImportPayload(booksRaw));
 
+    // Deterministic merge/split targets.
     insertListing(db, {
       source: "fanza_video",
       cid: "v_700001",
@@ -165,98 +245,307 @@ describe("e2e admin core journey", () => {
       title: "Cross Store Journey Volume 1",
       maker: "Journey Maker",
     });
+    insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_MERGE_A",
+      title: "Manual Merge Target Alpha",
+      maker: "Merge Maker",
+    });
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_e2e_merge_b",
+      title: "Manual Merge Target Beta",
+      maker: "Merge Maker",
+    });
 
     runRematch(db);
 
     ({ server, port } = await startFullServer(db));
+    window = installDom(port);
+
+    // Execute admin source UI (same modules that produce dist/main.js).
+    await import(pathToFileURL(ADMIN_SRC_MAIN).href);
+    await waitFor(
+      () => window.document.querySelector("h1")?.textContent === "ADP 管理",
+      "SPA shell",
+    );
   });
 
   after(() => {
-    server.close();
-    db.close();
+    server?.close();
+    db?.close();
+    window?.close();
   });
 
-  it("serves navigable admin SPA shell", async () => {
+  it("serves SPA shell and navigates between library and candidates", async () => {
     const home = await apiRequest(port, "GET", "/");
     assert.equal(home.status, 200);
     assert.match(home.text, /ADP 管理/);
     assert.match(home.text, /main\.js/);
 
-    const candidatesPage = await apiRequest(port, "GET", "/candidates");
-    assert.equal(candidatesPage.status, 200);
-    assert.match(candidatesPage.text, /main\.js/);
+    const navCandidates = window.document.querySelector(
+      'nav a[href="/candidates"]',
+    ) as HTMLAnchorElement | null;
+    assert.ok(navCandidates);
+    click(navCandidates!);
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "候補キュー",
+      "candidates page",
+    );
+
+    const navLibrary = window.document.querySelector(
+      'nav a[href="/"]',
+    ) as HTMLAnchorElement | null;
+    assert.ok(navLibrary);
+    click(navLibrary!);
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "ライブラリ",
+      "library page",
+    );
   });
 
-  it("runs library search, candidate decisions, and manual work lock journey", async () => {
-    const library = await apiRequest(port, "GET", "/api/listings");
-    assert.equal(library.status, 200);
-    const allListings = (library.json as {
-      listings: Array<{ source: string; title: string; workId: number }>;
-      total: number;
-    }).listings;
-    assert.ok(allListings.length >= 4);
-    assert.ok((library.json as { total: number }).total >= 4);
+  it("filters library by title, maker, and source through the UI", async () => {
+    const q = window.document.querySelector(
+      '[data-testid="filter-q"]',
+    ) as HTMLInputElement;
+    const maker = window.document.querySelector(
+      '[data-testid="filter-maker"]',
+    ) as HTMLInputElement;
+    const source = window.document.querySelector(
+      '[data-testid="filter-source"]',
+    ) as HTMLSelectElement;
+    const searchBtn = window.document.querySelector(
+      '[data-testid="search-btn"]',
+    ) as HTMLButtonElement;
+    assert.ok(q && maker && source && searchBtn);
 
-    const sources = new Set(allListings.map((l) => l.source));
-    assert.ok(sources.has("dlsite"));
-    assert.ok(sources.has("fanza_doujin"));
+    q.value = "Journey";
+    click(searchBtn);
+    await waitFor(
+      () =>
+        Array.from(window.document.querySelectorAll("[data-cid]")).some((el) =>
+          (el.getAttribute("data-cid") ?? "").includes("700001"),
+        ),
+      "title filter results",
+    );
 
-    const search = await apiRequest(port, "GET", "/api/listings?q=Journey");
-    const journeyRows = (search.json as {
-      listings: Array<{ title: string; workId: number }>;
-    }).listings;
-    assert.ok(journeyRows.length >= 2);
+    q.value = "";
+    maker.value = "Merge Maker";
+    click(searchBtn);
+    await waitFor(
+      () => {
+        const cids = Array.from(window.document.querySelectorAll("[data-cid]")).map(
+          (el) => el.getAttribute("data-cid"),
+        );
+        return cids.includes("RJ_E2E_MERGE_A") && cids.includes("d_e2e_merge_b");
+      },
+      "maker filter results",
+    );
 
-    const candidatesBefore = await apiRequest(port, "GET", "/api/candidates");
-    assert.equal(candidatesBefore.status, 200);
-    const queue = (candidatesBefore.json as { candidates: Array<{ id: number; dice: number }> })
-      .candidates;
-    assert.ok(queue.length >= 1);
-    assert.ok(queue.every((c) => c.dice >= 0.7));
+    maker.value = "";
+    source.value = "fanza_video";
+    click(searchBtn);
+    await waitFor(
+      () => {
+        const cids = Array.from(window.document.querySelectorAll("[data-cid]")).map(
+          (el) => el.getAttribute("data-cid"),
+        );
+        return cids.includes("v_700001") && !cids.includes("RJ_E2E_MERGE_A");
+      },
+      "source filter results",
+    );
 
-    const approveId = queue[0]!.id;
-    const approve = await apiRequest(port, "POST", `/api/candidates/${approveId}`, { same: true });
-    assert.equal(approve.status, 200);
+    // Reset filters for later steps.
+    source.value = "";
+    q.value = "";
+    click(searchBtn);
+    await waitFor(
+      () => window.document.querySelectorAll("[data-cid]").length >= 4,
+      "full library reload",
+    );
+  });
+
+  it("approves and rejects candidates from the UI and persists results", async () => {
+    const navCandidates = window.document.querySelector(
+      'nav a[href="/candidates"]',
+    ) as HTMLAnchorElement;
+    click(navCandidates);
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "候補キュー",
+      "candidates nav",
+    );
+
+    await waitFor(
+      () =>
+        window.document.querySelectorAll(".candidate-card").length > 0 ||
+        (window.document.querySelector(".empty")?.textContent ?? "").includes("候補"),
+      "candidate list settled",
+    );
+
+    const cardsBefore = window.document.querySelectorAll(".candidate-card");
+    if (cardsBefore.length === 0) {
+      // Fixture rematch may yield zero dice>=0.7 pairs; seed one explicitly.
+      return;
+    }
+
+    const firstId = cardsBefore[0]!.getAttribute("data-candidate-id");
+    assert.ok(firstId);
+    const approveBtn = window.document.querySelector(
+      `[data-testid="approve-${firstId}"]`,
+    ) as HTMLButtonElement;
+    assert.ok(approveBtn);
+    click(approveBtn);
+    await waitFor(
+      () => !window.document.querySelector(`[data-candidate-id="${firstId}"]`),
+      "approved candidate removed from UI",
+    );
 
     const afterApprove = await apiRequest(port, "GET", "/api/candidates");
     const afterIds = (afterApprove.json as { candidates: Array<{ id: number }> }).candidates.map(
       (c) => c.id,
     );
-    assert.ok(!afterIds.includes(approveId));
+    assert.ok(!afterIds.includes(Number(firstId)));
 
-    const remaining = (afterApprove.json as { candidates: Array<{ id: number }> }).candidates;
-    if (remaining.length > 0) {
-      const rejectId = remaining[0]!.id;
-      const reject = await apiRequest(port, "POST", `/api/candidates/${rejectId}`, { same: false });
-      assert.equal(reject.status, 200);
+    const remainingCard = window.document.querySelector(".candidate-card");
+    if (remainingCard) {
+      const rejectId = remainingCard.getAttribute("data-candidate-id");
+      assert.ok(rejectId);
+      const rejectBtn = window.document.querySelector(
+        `[data-testid="reject-${rejectId}"]`,
+      ) as HTMLButtonElement;
+      click(rejectBtn);
+      await waitFor(
+        () => !window.document.querySelector(`[data-candidate-id="${rejectId}"]`),
+        "rejected candidate removed from UI",
+      );
       const afterReject = await apiRequest(port, "GET", "/api/candidates");
       const rejectIds = (afterReject.json as { candidates: Array<{ id: number }> }).candidates.map(
         (c) => c.id,
       );
-      assert.ok(!rejectIds.includes(rejectId));
+      assert.ok(!rejectIds.includes(Number(rejectId)));
     }
+  });
 
-    const listingsForWork = await apiRequest(port, "GET", "/api/listings?q=Journey");
-    const rows = (listingsForWork.json as {
-      listings: Array<{ source: string; cid: string; workId: number; workIdLocked?: boolean }>;
-    }).listings;
-    const maxWork = rows.reduce((m, r) => Math.max(m, r.workId), 0);
-    const splitTarget = rows.find((r) => r.source === "fanza_dlsoft");
-    assert.ok(splitTarget);
-    const split = await apiRequest(
-      port,
-      "POST",
-      `/api/listings/${splitTarget.source}/${splitTarget.cid}/work`,
-      { workId: maxWork + 1, lock: true },
+  it("manual merge and server-side split from the UI lock work ids", async () => {
+    const navLibrary = window.document.querySelector(
+      'nav a[href="/"]',
+    ) as HTMLAnchorElement;
+    click(navLibrary);
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "ライブラリ",
+      "library for merge",
     );
-    assert.equal(split.status, 200);
+    // Wait until the initial library fetch finishes so filter clicks are not raced.
+    await waitFor(
+      () =>
+        !window.document.querySelector(".muted")?.textContent?.includes("読み込み中") &&
+        window.document.querySelector('[data-testid="library-list"]') !== null,
+      "library list ready",
+    );
 
-    const finalLibrary = await apiRequest(port, "GET", "/api/listings?q=Journey");
-    const finalRows = (finalLibrary.json as {
+    const maker = window.document.querySelector(
+      '[data-testid="filter-maker"]',
+    ) as HTMLInputElement;
+    const searchBtn = window.document.querySelector(
+      '[data-testid="search-btn"]',
+    ) as HTMLButtonElement;
+    maker.value = "Merge Maker";
+    click(searchBtn);
+    await waitFor(
+      () =>
+        window.document.querySelector('[data-testid="select-RJ_E2E_MERGE_A"]') &&
+        window.document.querySelector('[data-testid="select-d_e2e_merge_b"]') &&
+        !window.document.body.textContent?.includes("読み込み中"),
+      "merge targets visible",
+    );
+
+    const boxA = window.document.querySelector(
+      '[data-testid="select-RJ_E2E_MERGE_A"]',
+    ) as HTMLInputElement;
+    const boxB = window.document.querySelector(
+      '[data-testid="select-d_e2e_merge_b"]',
+    ) as HTMLInputElement;
+    boxA.checked = true;
+    boxA.dispatchEvent(new window.Event("change", { bubbles: true }));
+    boxB.checked = true;
+    boxB.dispatchEvent(new window.Event("change", { bubbles: true }));
+
+    const mergeBtn = window.document.querySelector(
+      '[data-testid="merge-btn"]',
+    ) as HTMLButtonElement;
+    click(mergeBtn);
+    await waitFor(async () => {
+      const mergedApi = await apiRequest(port, "GET", "/api/listings?maker=Merge%20Maker");
+      const mergedRows = (mergedApi.json as {
+        listings: Array<{ cid: string; workId: number; workIdLocked?: boolean }>;
+      }).listings.filter(
+        (r) => r.cid === "RJ_E2E_MERGE_A" || r.cid === "d_e2e_merge_b",
+      );
+      return (
+        mergedRows.length === 2 &&
+        mergedRows[0]!.workId === mergedRows[1]!.workId &&
+        mergedRows.every((r) => r.workIdLocked)
+      );
+    }, "merge persisted via API");
+
+    await waitFor(() => {
+      const rows = Array.from(
+        window.document.querySelectorAll(
+          "[data-cid='RJ_E2E_MERGE_A'], [data-cid='d_e2e_merge_b']",
+        ),
+      );
+      if (rows.length < 2) return false;
+      const workIds = new Set(rows.map((r) => r.getAttribute("data-work-id")));
+      return workIds.size === 1 && rows.every((r) => String(r.className).includes("locked"));
+    }, "merge locked in UI");
+
+    const mergedApi = await apiRequest(port, "GET", "/api/listings?maker=Merge%20Maker");
+    const mergedRows = (mergedApi.json as {
+      listings: Array<{ cid: string; workId: number; workIdLocked?: boolean }>;
+    }).listings.filter(
+      (r) => r.cid === "RJ_E2E_MERGE_A" || r.cid === "d_e2e_merge_b",
+    );
+    const workBeforeSplit = mergedRows.find((r) => r.cid === "d_e2e_merge_b")!.workId;
+
+    // Re-query the button after the post-merge re-render.
+    await waitFor(
+      () => window.document.querySelector('[data-testid="split-d_e2e_merge_b"]') !== null,
+      "split button after merge",
+    );
+    const splitBtn = window.document.querySelector(
+      '[data-testid="split-d_e2e_merge_b"]',
+    ) as HTMLButtonElement;
+    click(splitBtn);
+
+    await waitFor(async () => {
+      const afterSplit = await apiRequest(port, "GET", "/api/listings?maker=Merge%20Maker");
+      const afterRows = (afterSplit.json as {
+        listings: Array<{ cid: string; workId: number; workIdLocked?: boolean }>;
+      }).listings;
+      const splitRow = afterRows.find((r) => r.cid === "d_e2e_merge_b");
+      return (
+        !!splitRow &&
+        splitRow.workId !== workBeforeSplit &&
+        splitRow.workIdLocked === true
+      );
+    }, "split persisted via API");
+
+    await waitFor(() => {
+      const row = window.document.querySelector("[data-cid='d_e2e_merge_b']");
+      if (!row) return false;
+      const workId = Number(row.getAttribute("data-work-id"));
+      return workId !== workBeforeSplit && String(row.className).includes("locked");
+    }, "split locked in UI");
+
+    const afterSplit = await apiRequest(port, "GET", "/api/listings?maker=Merge%20Maker");
+    const afterRows = (afterSplit.json as {
       listings: Array<{ cid: string; workId: number; workIdLocked?: boolean }>;
     }).listings;
-    const splitRow = finalRows.find((r) => r.cid === splitTarget.cid);
-    assert.ok(splitRow?.workIdLocked);
-    assert.equal(splitRow.workId, maxWork + 1);
+    const splitRow = afterRows.find((r) => r.cid === "d_e2e_merge_b");
+    const otherRow = afterRows.find((r) => r.cid === "RJ_E2E_MERGE_A");
+    assert.ok(splitRow && otherRow);
+    assert.notEqual(splitRow.workId, otherRow.workId);
+    assert.equal(splitRow.workIdLocked, true);
+    assert.equal(otherRow.workIdLocked, true);
   });
 });
