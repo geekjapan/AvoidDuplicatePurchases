@@ -8,6 +8,8 @@ import {
   commitDlsiteCursor,
   PRODUCT_FETCH_CONCURRENCY,
 } from "../src/services/import.js";
+import { importListingBatch } from "../src/import/fanza/common.js";
+import { runRematch } from "../src/services/lookup.js";
 import type { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -253,5 +255,49 @@ describe("import bounded enrichment", () => {
       .prepare("SELECT cursor FROM sync_state WHERE source = 'dlsite'")
       .get() as { cursor: string };
     assert.equal(state.cursor, "2024-12-01T00:00:00.000Z");
+  });
+
+  it("persists a representative FANZA page without per-row match-key work", () => {
+    const page = Array.from({ length: 320 }, (_, index) => ({
+      cid: `fanza-scale-${index}`,
+      title: `Synthetic scale title ${index}`,
+      maker: `Synthetic scale maker ${index}`,
+      seriesId: null,
+      imageUrl: null,
+      purchasedAt: "2026-01-01",
+      purchasedAtPrecision: "day" as const,
+      rawJson: JSON.stringify({ sale: { index } }),
+    }));
+
+    const counts = importListingBatch(db, "fanza_doujin", page);
+    assert.deepEqual(counts, { inserted: page.length, updated: 0 });
+
+    const persisted = db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM listing WHERE source = 'fanza_doujin' AND cid LIKE 'fanza-scale-%'",
+      )
+      .get() as { count: number };
+    assert.equal(persisted.count, page.length);
+
+    const beforeRematch = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM match_key
+         WHERE listing_id IN (
+           SELECT id FROM listing WHERE source = 'fanza_doujin' AND cid LIKE 'fanza-scale-%'
+         )`,
+      )
+      .get() as { count: number };
+    assert.equal(beforeRematch.count, 0);
+
+    runRematch(db);
+    const afterRematch = db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM match_key
+         WHERE listing_id IN (
+           SELECT id FROM listing WHERE source = 'fanza_doujin' AND cid LIKE 'fanza-scale-%'
+         )`,
+      )
+      .get() as { count: number };
+    assert.equal(afterRematch.count, page.length * 2);
   });
 });

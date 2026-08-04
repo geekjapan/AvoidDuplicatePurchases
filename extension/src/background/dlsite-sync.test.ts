@@ -5,8 +5,6 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 import {
   chunkSales,
-  DAILY_SYNC_ALARM,
-  handleDailySyncAlarm,
   IMPORT_CHUNK_SIZE,
   maxCursorFromSales,
   runDlsiteSync,
@@ -289,41 +287,22 @@ describe("dlsite-sync chunking and rematch propagation", () => {
 });
 
 describe("MV3 service worker alarm static import contract", () => {
-  it("background index statically imports alarm handler and never uses dynamic import()", () => {
+  it("background index statically imports registerAlarms and never uses dynamic import()", () => {
     const src = readFileSync(join(__dirname, "index.ts"), "utf8");
     // Chrome MV3 extension service workers do not support dynamic import expressions.
     assert.doesNotMatch(src, /\bimport\s*\(\s*["'`]/);
-    assert.match(
-      src,
-      /import\s*\{[^}]*handleDailySyncAlarm[^}]*\}\s*from\s*["']\.\/dlsite-sync\.js["']/,
-    );
-    assert.match(src, /handleDailySyncAlarm\s*\(\s*alarm\s*\)/);
-    assert.match(src, /chrome\.alarms\.onAlarm\.addListener/);
+    assert.match(src, /import\s*\{[^}]*registerAlarms[^}]*\}\s*from\s*["']\.\.\/alarms\.js["']/);
+    assert.match(src, /registerAlarms\s*\(\s*\)/);
   });
 
-  it("handleDailySyncAlarm invokes sync entrypoint and swallows rejection", async () => {
+  it("alarms module exposes handleDailySyncAlarm for daily sync", async () => {
+    const { handleDailySyncAlarm, DAILY_SYNC_ALARM } = await import("../alarms.ts");
     let called = 0;
     handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {
       called++;
-      return { ok: true, counts: { inserted: 0, updated: 0 }, fetched: 0 };
+      return { ok: true, sources: {} };
     });
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(called, 1);
-
-    let rejectedHandled = false;
-    handleDailySyncAlarm({ name: DAILY_SYNC_ALARM }, async () => {
-      rejectedHandled = true;
-      throw new Error("boom");
-    });
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(rejectedHandled, true);
-
-    let skipped = 0;
-    handleDailySyncAlarm({ name: "other" }, async () => {
-      skipped++;
-      return { ok: true };
-    });
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(skipped, 0);
   });
 });

@@ -1,0 +1,29 @@
+{
+  "error_code": 0,
+  "data": {
+    "total": 3,
+    "hasNext": false,
+    "items": {
+      "2026年07月24日": [
+        {
+          "contentId": "d_100001",
+          "productId": "d_100001",
+          "title": "作品A",
+          "makerName": "メーカーX",
+          "genre": "ボイス",
+          "imageSrc": "https://example.invalid/img1.jpg"
+        }
+      ],
+      "壊れた日付": [
+        {
+          "contentId": "d_000001",
+          "productId": "d_000001",
+          "title": "作品C",
+          "makerName": "メーカーY",
+          "genre": "CG",
+          "imageSrc": ""
+        }
+      ]
+    }
+  }
+}

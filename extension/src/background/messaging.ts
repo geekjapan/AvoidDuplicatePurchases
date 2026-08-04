@@ -1,5 +1,5 @@
 import { lookupOnServer, type ServerLookupItem } from "./server-client.js";
-import { runDlsiteSync, type SyncOutcome } from "./dlsite-sync.js";
+import { runFullSync, type FullSyncOutcome } from "../alarms.js";
 import { checkServerHealth } from "./server-client.js";
 import { isAdminMessage, MSG_LOOKUP, MSG_SYNC, MSG_SERVER_STATUS } from "../messages.js";
 
@@ -34,7 +34,7 @@ export interface SyncMessage {
 
 export interface SyncReply {
   ok: boolean;
-  outcome?: SyncOutcome;
+  outcome?: FullSyncOutcome;
 }
 
 export interface ServerStatusReply {
@@ -66,12 +66,12 @@ export function registerMessaging(): void {
       return true;
     }
     if (message?.type === MSG_SYNC) {
-      runDlsiteSync()
+      runFullSync()
         .then((outcome) => sendResponse({ ok: outcome.ok, outcome }))
         .catch((err: unknown) =>
           sendResponse({
             ok: false,
-            outcome: { ok: false, error: String(err) },
+            outcome: { ok: false, sources: {}, error: String(err) },
           }),
         );
       return true;

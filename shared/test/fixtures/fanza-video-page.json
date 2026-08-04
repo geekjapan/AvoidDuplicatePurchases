@@ -1,0 +1,24 @@
+{
+  "data": {
+    "user": {
+      "ppvLibrary": {
+        "contentViewingRightsSummaryList": {
+          "pageInfo": { "hasNext": false, "totalCount": 1 },
+          "items": [
+            {
+              "id": "abcd00123",
+              "content": {
+                "id": "abcd00123",
+                "title": "動画A",
+                "floor": "AV",
+                "contentType": "TWO_DIMENSION",
+                "isDiscontinued": false
+              },
+              "contentItem": { "latestViewingRightsAcquiredAt": "2025-09-23T00:00:00Z" }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
