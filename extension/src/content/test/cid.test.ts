@@ -94,4 +94,102 @@ describe("content cid extraction", () => {
     const map = extractListingCidsFromAnchors("dlsite", anchors);
     assert.deepEqual([...map.keys()].sort(), ["RJ111111", "RJ222222"]);
   });
+
+  it("rejects external host product-shaped paths", () => {
+    assert.equal(
+      extractCidFromUrl(
+        "dlsite",
+        "https://evil.example/maniax/work/=/product_id/RJ123456.html",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_doujin",
+        "https://evil.example/dc/doujin/-/detail/=/cid=d_900001/",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_books",
+        "https://evil.example/product/100001/b100xxxxx01001/",
+      ),
+      null,
+    );
+  });
+
+  it("rejects lookalike hosts that only suffix-match the store domain", () => {
+    assert.equal(
+      extractCidFromUrl(
+        "dlsite",
+        "https://www.dlsite.com.evil.example/maniax/work/=/product_id/RJ123456.html",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_doujin",
+        "https://www.dmm.co.jp.evil.example/dc/doujin/-/detail/=/cid=d_900001/",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_books",
+        "https://book.dmm.co.jp.evil.example/product/100001/b100xxxxx01001/",
+      ),
+      null,
+    );
+  });
+
+  it("rejects wrong path shapes on canonical hosts", () => {
+    assert.equal(
+      extractCidFromUrl("dlsite", "https://www.dlsite.com/maniax/cart"),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_doujin",
+        "https://www.dmm.co.jp/dc/doujin/-/basket/",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl("fanza_books", "https://book.dmm.co.jp/list/"),
+      null,
+    );
+    // Cross-store host/path mismatch must not yield a cid for the wrong source.
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_doujin",
+        "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      ),
+      null,
+    );
+  });
+
+  it("rejects non-HTTPS URLs even with canonical hosts and paths", () => {
+    assert.equal(
+      extractCidFromUrl(
+        "dlsite",
+        "http://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_doujin",
+        "http://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_900001/",
+      ),
+      null,
+    );
+    assert.equal(
+      extractCidFromUrl(
+        "fanza_books",
+        "http://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+      ),
+      null,
+    );
+  });
 });

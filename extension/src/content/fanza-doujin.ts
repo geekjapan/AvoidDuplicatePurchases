@@ -1,21 +1,21 @@
+import { classifyDisplayPage } from "./page-kind.js";
 import { runListingPage } from "./listing-page.js";
 import { runProductPage } from "./product-page.js";
 
-function isProductPage(pathname: string): boolean {
-  return /\/dc\/doujin\/-\/detail\//i.test(pathname);
-}
-
-function boot(): void {
-  const { pathname } = window.location;
-  if (isProductPage(pathname)) {
+export function boot(pathname: string = window.location.pathname): void {
+  const kind = classifyDisplayPage("fanza_doujin", pathname);
+  if (kind === "product") {
     void runProductPage("fanza_doujin");
     return;
   }
-  void runListingPage("fanza_doujin");
+  if (kind === "listing") {
+    void runListingPage("fanza_doujin");
+  }
+  // basket / library / history / unrecognized: no T-DISPLAY intervention
 }
 
 if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", boot, { once: true });
+  document.addEventListener("DOMContentLoaded", () => boot(), { once: true });
 } else {
   boot();
 }

@@ -8,6 +8,12 @@ export class MockElement {
   href = "";
   children: MockElement[] = [];
   parent: MockElement | null = null;
+  ownerDocument: MockDocument | null = null;
+  /**
+   * Optional stylesheet-computed position override for overlay tests.
+   * When unset, getComputedStyle falls back to inline style then static.
+   */
+  computedPosition: string | undefined;
   readonly style = { position: "" };
   private attributes = new Map<string, string>();
 
@@ -45,6 +51,7 @@ export class MockElement {
 
   appendChild(child: MockElement): MockElement {
     child.parent = this;
+    if (this.ownerDocument) child.ownerDocument = this.ownerDocument;
     this.children.push(child);
     return child;
   }
@@ -52,6 +59,7 @@ export class MockElement {
   insertAdjacentElement(_position: string, element: MockElement): MockElement {
     this.children.unshift(element);
     element.parent = this;
+    if (this.ownerDocument) element.ownerDocument = this.ownerDocument;
     return element;
   }
 
@@ -117,7 +125,9 @@ export class MockElement {
   }
 
   closest(selector: string): MockElement | null {
-    let node: MockElement | null = this;
+    // Check self first to avoid `this` aliasing (no-this-alias).
+    if (this.matchesSelector(selector)) return this;
+    let node: MockElement | null = this.parent;
     while (node) {
       if (node.matchesSelector(selector)) return node;
       node = node.parent;
@@ -130,13 +140,22 @@ export class MockDocument {
   readonly head = new MockElement("head");
   readonly body = new MockElement("body");
   readonly location = { href: "" };
+  readonly defaultView = {
+    getComputedStyle: (el: MockElement): { position: string } => ({
+      position: el.computedPosition ?? (el.style.position || "static"),
+    }),
+  };
 
   constructor() {
+    this.head.ownerDocument = this;
+    this.body.ownerDocument = this;
     this.body.parent = null;
   }
 
   createElement(tag: string): MockElement {
-    return new MockElement(tag);
+    const el = new MockElement(tag);
+    el.ownerDocument = this;
+    return el;
   }
 
   createTextNode(text: string): MockElement {

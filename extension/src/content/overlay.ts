@@ -2,10 +2,30 @@ import { ensureDisplayStyles } from "./styles.js";
 
 const BADGE_CLASS = "adp-listing-badge";
 const VOID_HOST_TAGS = new Set(["IMG", "INPUT", "BR", "HR", "META", "LINK", "SOURCE", "AREA"]);
+const POSITIONED = new Set(["relative", "absolute", "fixed", "sticky"]);
+
+/**
+ * Effective CSS position: prefer computed style so stylesheet absolute/fixed/sticky
+ * hosts are not overwritten with relative. Falls back to inline, then static.
+ */
+export function readEffectivePosition(host: HTMLElement): string {
+  const view = host.ownerDocument?.defaultView;
+  if (view && typeof view.getComputedStyle === "function") {
+    try {
+      const computed = view.getComputedStyle(host).position;
+      if (computed) return computed;
+    } catch {
+      // Some test shims may throw; fall through to inline.
+    }
+  }
+  const inline = host.style.position?.trim();
+  return inline || "static";
+}
 
 /**
  * Prefer a non-void positioned host (thumbnail container or the anchor itself).
  * Never mount under img — void elements cannot display children.
+ * Only force position:relative when the effective (computed) position is static.
  */
 export function overlayAnchorForThumbnail(anchor: HTMLAnchorElement): HTMLElement {
   const container = anchor.closest(
@@ -15,7 +35,7 @@ export function overlayAnchorForThumbnail(anchor: HTMLAnchorElement): HTMLElemen
   if (VOID_HOST_TAGS.has(host.tagName)) {
     return anchor;
   }
-  if (!host.style.position || host.style.position === "static") {
+  if (!POSITIONED.has(readEffectivePosition(host))) {
     host.style.position = "relative";
   }
   return host;
