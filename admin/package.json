@@ -1,0 +1,20 @@
+{
+  "name": "@adp/admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/main.js --legal-comments=none && cp index.html dist/index.html && cp src/styles.css dist/styles.css",
+    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "test:e2e": "node --import tsx --test 'test/**/*.e2e.test.ts'"
+  },
+  "dependencies": {
+    "@adp/shared": "0.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "happy-dom": "^20.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
