@@ -9,6 +9,7 @@ import { handleApi } from "../src/http.js";
 import { runRematch } from "../src/services/lookup.js";
 import type { DatabaseSync } from "node:sqlite";
 import { parseManualProductUrl } from "../src/routes/manual.js";
+import { createProductionProductFetcher } from "../src/static.js";
 import "../src/routes/manual.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -122,6 +123,60 @@ describe("manual listing URL contract", () => {
     );
     assert.equal(parseManualProductUrl("https://example.com/no-cid"), null);
   });
+
+  it("rejects spoof hosts, http, userinfo, query/path injection, and malformed segments", () => {
+    const rejected = [
+      // evil host with product-shaped query/path (href substring spoof)
+      "https://evil.example/?q=https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "https://evil.example/path/product_id/RJ123456",
+      "https://evil.example/maniax/work/=/product_id/RJ123456.html",
+      "https://evil.example/dc/doujin/-/detail/=/cid=d_900001/",
+      "https://evil.example/product/100001/b100xxxxx01001/",
+      // hostname suffix lookalikes
+      "https://www.dlsite.com.evil.example/maniax/work/=/product_id/RJ123456.html",
+      "https://www.dmm.co.jp.evil.example/dc/doujin/-/detail/=/cid=d_900001/",
+      "https://book.dmm.co.jp.evil.example/product/100001/b100xxxxx01001/",
+      "https://video.dmm.co.jp.evil.example/av/content/?id=abc123",
+      "https://dlsoft.dmm.co.jp.evil.example/detail/game001/",
+      // http (not https)
+      "http://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "http://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_900001/",
+      "http://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+      "http://video.dmm.co.jp/av/content/?id=abc123",
+      "http://dlsoft.dmm.co.jp/detail/game001/",
+      // userinfo
+      "https://user:pass@www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "https://user@book.dmm.co.jp/product/12345/b100xx001/",
+      // disallowed query on non-video stores / extra video query
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html?evil=1",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123456/?x=1",
+      "https://book.dmm.co.jp/product/12345/b100xx001/?x=1",
+      "https://dlsoft.dmm.co.jp/detail/game001/?x=1",
+      "https://video.dmm.co.jp/av/content/?id=abc123&other=1",
+      // extra path suffix
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html/extra",
+      "https://dlsoft.dmm.co.jp/detail/game001/extra",
+      "https://book.dmm.co.jp/product/12345/b100xx001/extra",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123456/extra",
+      "https://video.dmm.co.jp/av/content/extra/?id=abc123",
+      // malformed percent / encoded delimiters in cid segments
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ%2F123.html",
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ%ZZ1234.html",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123%2Fevil/",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123%GGevil/",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123%2",
+      "https://book.dmm.co.jp/product/12345/b100%2Fxx001/",
+      "https://dlsoft.dmm.co.jp/detail/game%2F001/",
+      "https://video.dmm.co.jp/av/content/?id=abc%2F123",
+      "https://video.dmm.co.jp/av/content/?id=abc%2",
+      // invalid source-specific cid shape
+      "https://www.dlsite.com/maniax/work/=/product_id/XX123456.html",
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ12345.html",
+    ];
+    for (const url of rejected) {
+      assert.equal(parseManualProductUrl(url), null, `expected reject: ${url}`);
+    }
+  });
 });
 
 describe("manual listing API", () => {
@@ -164,6 +219,147 @@ describe("manual listing API", () => {
       url: "https://www.dlsite.com/maniax/work/=/product_id/.html",
     });
     assert.equal(bad.status, 400);
+  });
+
+  it("rejects spoof product URLs at the API boundary", async () => {
+    const spoofs = [
+      "https://evil.example/?q=https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "https://www.dlsite.com.evil.example/maniax/work/=/product_id/RJ123456.html",
+      "http://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "https://user:pass@www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+    ];
+    for (const url of spoofs) {
+      const res = await request(port, "POST", "/api/listings/manual", { url });
+      assert.equal(res.status, 400, `expected 400 for ${url}`);
+    }
+  });
+});
+
+describe("production productFetcher wiring (stubbed, no live network)", () => {
+  it("enriches title/maker/image/raw evidence via production fetcher factory", async () => {
+    const productJson = JSON.parse(
+      readFileSync(join(FIXTURES, "dlsite-product-rj000001.json"), "utf8"),
+    ) as Array<Record<string, unknown>>;
+    const workno = "RJ000001";
+    let fetchCalls = 0;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      fetchCalls += 1;
+      const href = String(input);
+      assert.match(href, /product\.json/);
+      assert.match(href, new RegExp(`workno=${workno}`));
+      assert.match(href, /^https:\/\/www\.dlsite\.com\//);
+      return new Response(JSON.stringify(productJson), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const productFetcher = createProductionProductFetcher(fetchImpl);
+    const db = openDatabase(":memory:").sqlite;
+    const { server, port } = await startTestServer(db, productFetcher);
+    try {
+      const res = await request(port, "POST", "/api/listings/manual", {
+        url: `https://www.dlsite.com/maniax/work/=/product_id/${workno}.html`,
+      });
+      assert.equal(res.status, 201);
+      assert.equal(fetchCalls, 1);
+      const listing = (
+        res.json as {
+          listing: {
+            cid: string;
+            title: string;
+            maker: string | null;
+            imageUrl: string | null;
+          };
+        }
+      ).listing;
+      assert.equal(listing.cid, workno);
+      assert.equal(listing.title, "テスト作品A");
+      assert.equal(listing.maker, "サークルA");
+      assert.equal(
+        listing.imageUrl,
+        "https://img.dlsite.com/modpub/images2/work/doujin/example.jpg",
+      );
+
+      const row = db
+        .prepare("SELECT title, maker_name, image_url, raw_json FROM listing WHERE cid = ?")
+        .get(workno) as {
+        title: string;
+        maker_name: string | null;
+        image_url: string | null;
+        raw_json: string;
+      };
+      assert.equal(row.title, "テスト作品A");
+      assert.equal(row.maker_name, "サークルA");
+      assert.equal(
+        row.image_url,
+        "https://img.dlsite.com/modpub/images2/work/doujin/example.jpg",
+      );
+      const raw = JSON.parse(row.raw_json) as {
+        manual: boolean;
+        product: Record<string, unknown>;
+      };
+      assert.equal(raw.manual, true);
+      assert.equal(raw.product.workno, workno);
+      assert.equal(raw.product.work_name, "テスト作品A");
+      assert.equal(raw.product.maker_name, "サークルA");
+    } finally {
+      server.close();
+      db.close();
+    }
+  });
+
+  it("falls back without breaking registration on network/non-2xx/invalid JSON", async () => {
+    const cases: Array<{
+      name: string;
+      fetchImpl: typeof fetch;
+    }> = [
+      {
+        name: "network error",
+        fetchImpl: (async () => {
+          throw new Error("network down");
+        }) as typeof fetch,
+      },
+      {
+        name: "non-2xx",
+        fetchImpl: (async () =>
+          new Response("nope", { status: 503 })) as typeof fetch,
+      },
+      {
+        name: "invalid JSON",
+        fetchImpl: (async () =>
+          new Response("{not-json", {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })) as typeof fetch,
+      },
+    ];
+
+    for (const [index, c] of cases.entries()) {
+      const workno = `RJ00010${index}`;
+      const productFetcher = createProductionProductFetcher(c.fetchImpl);
+      const db = openDatabase(":memory:").sqlite;
+      const { server, port } = await startTestServer(db, productFetcher);
+      try {
+        const res = await request(port, "POST", "/api/listings/manual", {
+          url: `https://www.dlsite.com/maniax/work/=/product_id/${workno}.html`,
+        });
+        assert.equal(res.status, 201, c.name);
+        const listing = (res.json as { listing: { cid: string; title: string } })
+          .listing;
+        assert.equal(listing.cid, workno, c.name);
+        assert.equal(listing.title, workno, c.name);
+        const row = db
+          .prepare("SELECT raw_json FROM listing WHERE cid = ?")
+          .get(workno) as { raw_json: string };
+        const raw = JSON.parse(row.raw_json) as { manual: boolean; cid: string };
+        assert.equal(raw.manual, true, c.name);
+        assert.equal(raw.cid, workno, c.name);
+      } finally {
+        server.close();
+        db.close();
+      }
+    }
   });
 });
 

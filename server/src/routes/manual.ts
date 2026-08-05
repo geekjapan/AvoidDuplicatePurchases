@@ -24,48 +24,130 @@ export interface ParsedProductUrl {
   videoFloor?: string;
 }
 
-/** Canonical product URL → (source, cid) contract for supported stores. */
-export function parseManualProductUrl(input: string): ParsedProductUrl | null {
+/** Incomplete / non-hex percent sequences are not accepted product evidence. */
+function hasInvalidPercentEncoding(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] !== "%") continue;
+    if (i + 2 >= value.length) return true;
+    if (!/^[0-9A-Fa-f]{2}$/.test(value.slice(i + 1, i + 3))) return true;
+    i += 2;
+  }
+  return false;
+}
+
+/**
+ * Decode a single path/query identity segment.
+ * Rejects malformed percent encodings and encoded path/query delimiters.
+ */
+function decodeIdentitySegment(raw: string): string | null {
+  if (!raw || hasInvalidPercentEncoding(raw)) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  // Encoded delimiters / whitespace must never become part of a cid.
+  if (!decoded || decoded !== decoded.trim()) return null;
+  if (/[/?#&=\s%]/.test(decoded)) return null;
+  return decoded;
+}
+
+function onlyAllowedQueryKeys(url: URL, allowed: ReadonlySet<string>): boolean {
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key)) return false;
+  }
+  return true;
+}
+
+/**
+ * Parse only absolute https product URLs with no userinfo and default port.
+ * Host/path identity is never taken from href substring matches.
+ */
+function parseCanonicalHttpsUrl(input: string): URL | null {
   let url: URL;
   try {
     url = new URL(input);
   } catch {
     return null;
   }
-  const href = url.href;
+  if (url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  // Non-default ports are not part of verified store product URLs.
+  if (url.port !== "") return null;
+  if (hasInvalidPercentEncoding(url.pathname) || hasInvalidPercentEncoding(url.search)) {
+    return null;
+  }
+  return url;
+}
 
-  const dlsite = /product_id\/([BRV][JE]\d{6,8})/i.exec(href);
-  if (dlsite && isValidDlsiteWorkno(dlsite[1]!)) {
-    return { source: "dlsite", cid: dlsite[1]!.toUpperCase() };
+/**
+ * Canonical product URL → (source, cid) for supported stores.
+ * Contracts align with shared adapter product URL builders + content cid host gates:
+ * exact hostname, anchored pathname, allowlisted query only, source-specific cid rules.
+ */
+export function parseManualProductUrl(input: string): ParsedProductUrl | null {
+  const url = parseCanonicalHttpsUrl(input);
+  if (!url) return null;
+
+  // DLsite: https://www.dlsite.com/<floor>/work/=/product_id/<WORKNO>.html
+  if (url.hostname === "www.dlsite.com") {
+    if (!onlyAllowedQueryKeys(url, new Set())) return null;
+    const match =
+      /^\/[A-Za-z0-9-]+\/work\/=\/product_id\/([BRV][JE]\d{6,8})\.html$/i.exec(
+        url.pathname,
+      );
+    if (!match) return null;
+    const workno = match[1]!.toUpperCase();
+    if (!isValidDlsiteWorkno(workno)) return null;
+    return { source: "dlsite", cid: workno };
   }
 
-  const books = /book\.dmm\.co\.jp\/product\/(\d+)\/([a-z0-9]+)/i.exec(href);
-  if (books) {
+  // FANZA Books: https://book.dmm.co.jp/product/<series_id>/<content_id>/
+  if (url.hostname === "book.dmm.co.jp") {
+    if (!onlyAllowedQueryKeys(url, new Set())) return null;
+    const match = /^\/product\/(\d+)\/([^/]+)\/?$/i.exec(url.pathname);
+    if (!match) return null;
+    const seriesId = match[1]!;
+    const cid = decodeIdentitySegment(match[2]!);
+    if (!cid) return null;
+    return { source: "fanza_books", cid, seriesId };
+  }
+
+  // FANZA Video: https://video.dmm.co.jp/<av|amateur>/content/?id=<content_id>
+  if (url.hostname === "video.dmm.co.jp") {
+    if (!onlyAllowedQueryKeys(url, new Set(["id"]))) return null;
+    const floorMatch = /^\/(av|amateur)\/content\/?$/i.exec(url.pathname);
+    if (!floorMatch) return null;
+    const rawId = url.searchParams.get("id");
+    if (rawId === null) return null;
+    const cid = decodeIdentitySegment(rawId);
+    if (!cid) return null;
     return {
-      source: "fanza_books",
-      cid: books[2]!,
-      seriesId: books[1]!,
+      source: "fanza_video",
+      cid,
+      videoFloor: floorMatch[1]!.toLowerCase(),
     };
   }
 
-  if (/video\.dmm\.co\.jp/i.test(href)) {
-    const id = url.searchParams.get("id")?.trim();
-    if (id) {
-      const floor = /video\.dmm\.co\.jp\/(av|amateur)\//i.exec(href)?.[1]?.toLowerCase();
-      return { source: "fanza_video", cid: id, videoFloor: floor };
-    }
+  // FANZA PC games: https://dlsoft.dmm.co.jp/detail/<contentId>/
+  if (url.hostname === "dlsoft.dmm.co.jp") {
+    if (!onlyAllowedQueryKeys(url, new Set())) return null;
+    const match = /^\/detail\/([^/]+)\/?$/i.exec(url.pathname);
+    if (!match) return null;
+    const cid = decodeIdentitySegment(match[1]!);
+    if (!cid) return null;
+    return { source: "fanza_dlsoft", cid };
   }
 
-  const dlsoft = /dlsoft\.dmm\.co\.jp\/detail\/([^/?#]+)/i.exec(href);
-  if (dlsoft) {
-    return { source: "fanza_dlsoft", cid: decodeURIComponent(dlsoft[1]!) };
-  }
-
-  const doujin =
-    /\/detail\/=\/cid=([^/]+)/i.exec(href) ??
-    (/doujin/i.test(href) ? /[?&]cid=([^&/]+)/i.exec(href) : null);
-  if (doujin) {
-    return { source: "fanza_doujin", cid: decodeURIComponent(doujin[1]!) };
+  // FANZA Doujin: https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=<cid>/
+  if (url.hostname === "www.dmm.co.jp") {
+    if (!onlyAllowedQueryKeys(url, new Set())) return null;
+    const match = /^\/dc\/doujin\/-\/detail\/=\/cid=([^/]+)\/?$/i.exec(url.pathname);
+    if (!match) return null;
+    const cid = decodeIdentitySegment(match[1]!);
+    if (!cid) return null;
+    return { source: "fanza_doujin", cid };
   }
 
   return null;

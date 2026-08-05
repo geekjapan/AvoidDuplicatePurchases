@@ -3,9 +3,11 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
+import { dlsiteProductJsonUrl } from "@adp/shared/adapters/dlsite";
 import { isAllowedOrigin, loadConfig } from "./config.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
+import type { ProductFetcher } from "./services/import.js";
 import "./routes/listings.js";
 import "./routes/candidates.js";
 import "./routes/work.js";
@@ -82,12 +84,34 @@ export function handleStatic(
   return true;
 }
 
+/**
+ * Production DLsite product.json fetcher for manual/import metadata enrichment.
+ * Reuses the shared public product.json URL contract. Network / non-2xx / invalid
+ * JSON never throw — callers fall back to cid-only registration.
+ */
+export function createProductionProductFetcher(
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+): ProductFetcher {
+  return async (workno: string) => {
+    try {
+      const res = await fetchImpl(dlsiteProductJsonUrl(workno), {
+        headers: { "User-Agent": "Mozilla/5.0 (ADP)" },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** Start API + admin SPA server (T-ADMIN-CORE entry). */
 export function startServer(): { close: () => void } {
   const config = loadConfig();
   mkdirSync(dirname(config.dbPath), { recursive: true });
   const appDb = openDatabase(config.dbPath);
   const db = appDb.sqlite;
+  const productFetcher = createProductionProductFetcher();
 
   const server = createServer(async (req, res) => {
     try {
@@ -103,6 +127,7 @@ export function startServer(): { close: () => void } {
         db,
         port: config.port,
         extensionOrigins: config.extensionOrigins,
+        productFetcher,
       });
       if (apiHandled) return;
 
