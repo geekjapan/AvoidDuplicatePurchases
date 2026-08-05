@@ -47,11 +47,32 @@ function notFound(res: ServerResponse): void {
   json(res, 404, { error: "not_found" });
 }
 
+function conflict(res: ServerResponse): void {
+  json(res, 409, { error: "conflict" });
+}
+
 interface ListingSide {
   source: Source;
   cid: string;
   title: string;
   maker_name: string | null;
+}
+
+interface ListingWorkRow {
+  id: number;
+  work_id: number;
+  work_id_locked: number;
+}
+
+/** Deterministic abort of a candidate decision with an HTTP status. */
+class DecisionAbort extends Error {
+  readonly status: 404 | 409;
+
+  constructor(status: 404 | 409) {
+    super(`decision_abort_${status}`);
+    this.name = "DecisionAbort";
+    this.status = status;
+  }
 }
 
 function listingSide(row: ListingSide) {
@@ -198,6 +219,8 @@ async function handleCandidatesRoute(
       return true;
     }
 
+    // Existence check only (cheap 404). Authoritative work/lock state is
+    // re-read inside the transaction so a concurrent lock cannot be missed.
     const candidate = ctx.db
       .prepare(
         "SELECT id, listing_a_id, listing_b_id FROM candidate WHERE id = ?",
@@ -210,38 +233,58 @@ async function handleCandidatesRoute(
       return true;
     }
 
-    const listingA = ctx.db
-      .prepare("SELECT id, work_id FROM listing WHERE id = ?")
-      .get(candidate.listing_a_id) as { id: number; work_id: number } | undefined;
-    const listingB = ctx.db
-      .prepare("SELECT id, work_id FROM listing WHERE id = ?")
-      .get(candidate.listing_b_id) as { id: number; work_id: number } | undefined;
-    if (!listingA || !listingB) {
-      notFound(res);
-      return true;
-    }
+    try {
+      runInTransaction(ctx.db, () => {
+        // Re-read both listings including work_id_locked under the transaction.
+        const listingA = ctx.db
+          .prepare(
+            "SELECT id, work_id, work_id_locked FROM listing WHERE id = ?",
+          )
+          .get(candidate.listing_a_id) as ListingWorkRow | undefined;
+        const listingB = ctx.db
+          .prepare(
+            "SELECT id, work_id, work_id_locked FROM listing WHERE id = ?",
+          )
+          .get(candidate.listing_b_id) as ListingWorkRow | undefined;
+        if (!listingA || !listingB) {
+          throw new DecisionAbort(404);
+        }
+        // Stale decision against already-locked grouping: reject without mutation.
+        if (listingA.work_id_locked === 1 || listingB.work_id_locked === 1) {
+          throw new DecisionAbort(409);
+        }
 
-    runInTransaction(ctx.db, () => {
-      if (decision.same) {
-        // Approve: merge onto the smaller work_id and lock both sides.
-        const targetWorkId = Math.min(listingA.work_id, listingB.work_id);
-        ensureWorkExists(ctx.db, targetWorkId);
-        lockListing(ctx.db, listingA.id, targetWorkId);
-        lockListing(ctx.db, listingB.id, targetWorkId);
-      } else if (listingA.work_id === listingB.work_id) {
-        // Reject while still sharing a work: keep A, allocate a fresh work for B.
-        const newWorkId = createWork(ctx.db);
-        lockListing(ctx.db, listingA.id, listingA.work_id);
-        lockListing(ctx.db, listingB.id, newWorkId);
-      } else {
-        // Reject already-separate pair: lock each on its own work.
-        lockListing(ctx.db, listingA.id, listingA.work_id);
-        lockListing(ctx.db, listingB.id, listingB.work_id);
+        if (decision.same) {
+          // Approve: merge onto the smaller work_id and lock both sides.
+          const targetWorkId = Math.min(listingA.work_id, listingB.work_id);
+          ensureWorkExists(ctx.db, targetWorkId);
+          lockListing(ctx.db, listingA.id, targetWorkId);
+          lockListing(ctx.db, listingB.id, targetWorkId);
+        } else if (listingA.work_id === listingB.work_id) {
+          // Reject while still sharing a work: keep A, allocate a fresh work for B.
+          const newWorkId = createWork(ctx.db);
+          lockListing(ctx.db, listingA.id, listingA.work_id);
+          lockListing(ctx.db, listingB.id, newWorkId);
+        } else {
+          // Reject already-separate pair: lock each on its own work.
+          lockListing(ctx.db, listingA.id, listingA.work_id);
+          lockListing(ctx.db, listingB.id, listingB.work_id);
+        }
+
+        // Suppress every candidate involving either processed listing.
+        deleteCandidatesForListings(ctx.db, listingA.id, listingB.id);
+      });
+    } catch (err) {
+      if (err instanceof DecisionAbort) {
+        if (err.status === 409) {
+          conflict(res);
+          return true;
+        }
+        notFound(res);
+        return true;
       }
-
-      // Suppress every candidate involving either processed listing.
-      deleteCandidatesForListings(ctx.db, listingA.id, listingB.id);
-    });
+      throw err;
+    }
 
     json(res, 200, EmptyResponseSchema.parse({}));
     return true;

@@ -99,7 +99,13 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
   root.append(filters, statusRegion, listHost);
 
   const selected = new Set<number>();
+  /** True while a load or mutation is in flight. */
   let pending = false;
+  /**
+   * Monotonic generation for list loads. A completed older request whose
+   * generation no longer matches must not overwrite a newer response.
+   */
+  let loadGeneration = 0;
   let mergeBtn: HTMLButtonElement | null = null;
   const splitButtons = new Set<HTMLButtonElement>();
 
@@ -124,13 +130,25 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
     statusRegion.setAttribute("aria-live", "polite");
   }
 
-  function setActionDisabled(disabled: boolean): void {
+  /** Disable search/filter/mutation controls to prevent overlapping submission. */
+  function setControlsDisabled(disabled: boolean): void {
     searchBtn.disabled = disabled;
+    qInput.disabled = disabled;
+    sourceSelect.disabled = disabled;
+    makerInput.disabled = disabled;
     if (mergeBtn) mergeBtn.disabled = disabled;
     for (const btn of splitButtons) btn.disabled = disabled;
   }
 
+  /**
+   * Every load (initial + search + post-mutation reload) shares the same
+   * pending / disable / error / finally discipline. Stale generations never
+   * apply DOM updates or restore controls out from under a newer load.
+   */
   async function load(): Promise<void> {
+    const generation = ++loadGeneration;
+    pending = true;
+    setControlsDisabled(true);
     listHost.replaceChildren(el("p", { className: "muted", textContent: "読み込み中…" }));
     mergeBtn = null;
     splitButtons.clear();
@@ -143,10 +161,17 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
         source: source || undefined,
         maker: maker || undefined,
       });
+      if (generation !== loadGeneration) return;
       renderListings(data.listings);
     } catch (err) {
+      if (generation !== loadGeneration) return;
       listHost.replaceChildren();
       setStatus(errorMessage(err), "error");
+    } finally {
+      if (generation === loadGeneration) {
+        pending = false;
+        setControlsDisabled(false);
+      }
     }
   }
 
@@ -175,7 +200,7 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
           return;
         }
         pending = true;
-        setActionDisabled(true);
+        setControlsDisabled(true);
         clearStatus();
         try {
           // Explicit merge onto the lowest existing work among the selection.
@@ -188,12 +213,12 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
           }
           selected.clear();
           setStatus("選択した listing を結合しました。", "success");
+          // load() re-applies pending/disable and owns the final restore.
           await load();
         } catch (err) {
           setStatus(errorMessage(err), "error");
-        } finally {
           pending = false;
-          setActionDisabled(false);
+          setControlsDisabled(false);
         }
       })();
     });
@@ -230,7 +255,7 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
           void (async () => {
             if (pending) return;
             pending = true;
-            setActionDisabled(true);
+            setControlsDisabled(true);
             clearStatus();
             try {
               // Server allocates a fresh work id transactionally; client never invents one.
@@ -242,9 +267,8 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
               await load();
             } catch (err) {
               setStatus(errorMessage(err), "error");
-            } finally {
               pending = false;
-              setActionDisabled(false);
+              setControlsDisabled(false);
             }
           })();
         });
@@ -274,18 +298,14 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
   }
 
   searchBtn.addEventListener("click", () => {
-    void (async () => {
-      if (pending) return;
-      pending = true;
-      setActionDisabled(true);
-      clearStatus();
-      try {
-        await load();
-      } finally {
-        pending = false;
-        setActionDisabled(false);
-      }
-    })();
+    // Disabled controls block user double-submit (incl. synthetic events).
+    // If a programmatic caller re-enables and overlaps, loadGeneration drops
+    // the stale response so older completions never overwrite newer ones.
+    if (searchBtn.disabled) return;
+    clearStatus();
+    void load();
   });
+
+  // Initial load uses the same pending/error/finally discipline as every load.
   await load();
 }

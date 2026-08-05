@@ -14935,6 +14935,7 @@ async function renderLibrary(root) {
   root.append(filters, statusRegion, listHost);
   const selected = /* @__PURE__ */ new Set();
   let pending = false;
+  let loadGeneration = 0;
   let mergeBtn = null;
   const splitButtons = /* @__PURE__ */ new Set();
   function setStatus(message, kind = "info") {
@@ -14956,12 +14957,18 @@ async function renderLibrary(root) {
     statusRegion.setAttribute("role", "status");
     statusRegion.setAttribute("aria-live", "polite");
   }
-  function setActionDisabled(disabled) {
+  function setControlsDisabled(disabled) {
     searchBtn.disabled = disabled;
+    qInput.disabled = disabled;
+    sourceSelect.disabled = disabled;
+    makerInput.disabled = disabled;
     if (mergeBtn) mergeBtn.disabled = disabled;
     for (const btn of splitButtons) btn.disabled = disabled;
   }
   async function load() {
+    const generation = ++loadGeneration;
+    pending = true;
+    setControlsDisabled(true);
     listHost.replaceChildren(el2("p", { className: "muted", textContent: "\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026" }));
     mergeBtn = null;
     splitButtons.clear();
@@ -14974,10 +14981,17 @@ async function renderLibrary(root) {
         source: source || void 0,
         maker: maker || void 0
       });
+      if (generation !== loadGeneration) return;
       renderListings(data.listings);
     } catch (err) {
+      if (generation !== loadGeneration) return;
       listHost.replaceChildren();
       setStatus(errorMessage2(err), "error");
+    } finally {
+      if (generation === loadGeneration) {
+        pending = false;
+        setControlsDisabled(false);
+      }
     }
   }
   function renderListings(listings) {
@@ -15004,7 +15018,7 @@ async function renderLibrary(root) {
           return;
         }
         pending = true;
-        setActionDisabled(true);
+        setControlsDisabled(true);
         clearStatus();
         try {
           const targetWorkId = Math.min(...picked.map((l) => l.workId));
@@ -15019,9 +15033,8 @@ async function renderLibrary(root) {
           await load();
         } catch (err) {
           setStatus(errorMessage2(err), "error");
-        } finally {
           pending = false;
-          setActionDisabled(false);
+          setControlsDisabled(false);
         }
       })();
     });
@@ -15057,7 +15070,7 @@ async function renderLibrary(root) {
           void (async () => {
             if (pending) return;
             pending = true;
-            setActionDisabled(true);
+            setControlsDisabled(true);
             clearStatus();
             try {
               await assignWork(listing.source, listing.cid, {
@@ -15068,9 +15081,8 @@ async function renderLibrary(root) {
               await load();
             } catch (err) {
               setStatus(errorMessage2(err), "error");
-            } finally {
               pending = false;
-              setActionDisabled(false);
+              setControlsDisabled(false);
             }
           })();
         });
@@ -15095,18 +15107,9 @@ async function renderLibrary(root) {
     }
   }
   searchBtn.addEventListener("click", () => {
-    void (async () => {
-      if (pending) return;
-      pending = true;
-      setActionDisabled(true);
-      clearStatus();
-      try {
-        await load();
-      } finally {
-        pending = false;
-        setActionDisabled(false);
-      }
-    })();
+    if (searchBtn.disabled) return;
+    clearStatus();
+    void load();
   });
   await load();
 }

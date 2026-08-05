@@ -592,6 +592,163 @@ describe("work assignment API", () => {
   });
 });
 
+describe("stale candidate after manual merge/split lock (ADMIN-LOCK-1)", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  after(() => {
+    server?.close();
+    db?.close();
+  });
+
+  it("rejects stale candidate POST after merge+split; work state unchanged; candidate suppressed", async () => {
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_STALE_A",
+      title: "Stale Candidate Alpha",
+      maker: "Stale Maker",
+    });
+    const idB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_stale_b",
+      title: "Stale Candidate Beta",
+      maker: "Stale Maker",
+    });
+    const candidateId = insertCandidate(db, idA, idB, 0.94);
+    ({ server, port } = await startTestServer(db));
+
+    // Snapshot pre-merge work state for comparison after stale POST.
+    const snap = (id: number) =>
+      db
+        .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+        .get(id) as { work_id: number; work_id_locked: number };
+
+    const beforeMergeA = snap(idA);
+    const beforeMergeB = snap(idB);
+    assert.equal(beforeMergeA.work_id_locked, 0);
+    assert.equal(beforeMergeB.work_id_locked, 0);
+
+    // Obtain candidate id via API (must be visible before manual lock).
+    const listed = await request(port, "GET", "/api/candidates");
+    assert.equal(listed.status, 200);
+    const listedIds = (listed.json as { candidates: Array<{ id: number }> }).candidates.map(
+      (c) => c.id,
+    );
+    assert.ok(listedIds.includes(candidateId));
+
+    // Manual merge both sides onto A's work and lock.
+    const targetWorkId = beforeMergeA.work_id;
+    const mergeA = await request(port, "POST", `/api/listings/dlsite/RJ_STALE_A/work`, {
+      workId: targetWorkId,
+      lock: true,
+    });
+    assert.equal(mergeA.status, 200);
+    const mergeB = await request(port, "POST", `/api/listings/fanza_doujin/d_stale_b/work`, {
+      workId: targetWorkId,
+      lock: true,
+    });
+    assert.equal(mergeB.status, 200);
+
+    // Candidate must already be suppressed by merge.
+    const residualAfterMerge = db
+      .prepare("SELECT COUNT(*) AS n FROM candidate WHERE id = ?")
+      .get(candidateId) as { n: number };
+    assert.equal(residualAfterMerge.n, 0, "manual merge suppresses candidate rows");
+
+    // Split lock B onto a fresh work (still locked).
+    const split = await request(port, "POST", `/api/listings/fanza_doujin/d_stale_b/work`, {
+      allocateNew: true,
+      lock: true,
+    });
+    assert.equal(split.status, 200);
+    const splitBody = split.json as { workId: number; locked: boolean };
+    assert.equal(splitBody.locked, true);
+    assert.notEqual(splitBody.workId, targetWorkId);
+
+    const afterLockA = snap(idA);
+    const afterLockB = snap(idB);
+    assert.equal(afterLockA.work_id, targetWorkId);
+    assert.equal(afterLockA.work_id_locked, 1);
+    assert.equal(afterLockB.work_id, splitBody.workId);
+    assert.equal(afterLockB.work_id_locked, 1);
+
+    // Stale POST against the original candidate id must be rejected.
+    const stale = await request(port, "POST", `/api/candidates/${candidateId}`, {
+      same: true,
+    });
+    assert.ok(
+      stale.status === 404 || stale.status === 409,
+      `stale candidate must be 404 or 409, got ${stale.status}`,
+    );
+
+    // work_id / work_id_locked must be unchanged by the stale decision.
+    const finalA = snap(idA);
+    const finalB = snap(idB);
+    assert.equal(finalA.work_id, afterLockA.work_id);
+    assert.equal(finalA.work_id_locked, afterLockA.work_id_locked);
+    assert.equal(finalB.work_id, afterLockB.work_id);
+    assert.equal(finalB.work_id_locked, afterLockB.work_id_locked);
+
+    // Candidate remains suppressed (no resurrection).
+    const residualFinal = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM candidate
+         WHERE id = ? OR listing_a_id IN (?, ?) OR listing_b_id IN (?, ?)`,
+      )
+      .get(candidateId, idA, idB, idA, idB) as { n: number };
+    assert.equal(residualFinal.n, 0);
+  });
+
+  it("rejects candidate decision with 409 when either listing is locked (no mutation)", async () => {
+    server?.close();
+    db?.close();
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_LOCK409_A",
+      title: "Lock Conflict Alpha",
+      maker: "Lock Conflict Maker",
+    });
+    const idB = insertListing(db, {
+      source: "fanza_books",
+      cid: "b_lock409_b",
+      title: "Lock Conflict Beta",
+      maker: "Lock Conflict Maker",
+    });
+    const candidateId = insertCandidate(db, idA, idB, 0.9);
+    // Lock one side without deleting the candidate (race/orphan residual).
+    db.prepare("UPDATE listing SET work_id_locked = 1 WHERE id = ?").run(idA);
+
+    const beforeA = db
+      .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+      .get(idA) as { work_id: number; work_id_locked: number };
+    const beforeB = db
+      .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+      .get(idB) as { work_id: number; work_id_locked: number };
+
+    ({ server, port } = await startTestServer(db));
+    const res = await request(port, "POST", `/api/candidates/${candidateId}`, { same: true });
+    assert.equal(res.status, 409);
+
+    const afterA = db
+      .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+      .get(idA) as { work_id: number; work_id_locked: number };
+    const afterB = db
+      .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+      .get(idB) as { work_id: number; work_id_locked: number };
+    assert.deepEqual(afterA, beforeA);
+    assert.deepEqual(afterB, beforeB);
+
+    // Candidate row remains (reject does not mutate on conflict).
+    const still = db
+      .prepare("SELECT COUNT(*) AS n FROM candidate WHERE id = ?")
+      .get(candidateId) as { n: number };
+    assert.equal(still.n, 1);
+  });
+});
+
 describe("work split hidden/filter collision", () => {
   let server: Server;
   let port: number;

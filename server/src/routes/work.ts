@@ -55,6 +55,14 @@ function allocateNewWork(db: ApiContext["db"]): number {
   return Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
 }
 
+/** Suppress every candidate that references the affected listing. */
+function deleteCandidatesForListing(db: ApiContext["db"], listingId: number): void {
+  db.prepare(
+    `DELETE FROM candidate
+     WHERE listing_a_id = ? OR listing_b_id = ?`,
+  ).run(listingId, listingId);
+}
+
 /**
  * Trust-boundary body for work assignment.
  * Shared contract still requires workId for explicit merge; split uses allocateNew
@@ -146,6 +154,8 @@ async function handleWorkRoute(
     ctx.db
       .prepare("UPDATE listing SET work_id = ?, work_id_locked = ? WHERE id = ?")
       .run(assigned, locked ? 1 : 0, listing.id);
+    // Manual merge/split must suppress related candidate rows for the affected listing.
+    deleteCandidatesForListing(ctx.db, listing.id);
     return assigned;
   });
 
