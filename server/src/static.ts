@@ -238,8 +238,28 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
     };
   });
 
+  // Declare close before the listen error handler so listen-failure cleanup can
+  // call the same idempotent shutdown without TDZ (unsubscribe → server/db close).
+  let closed = false;
+  const close = (): void => {
+    // Idempotent: concurrent / double close must unsubscribe and close DB once.
+    if (closed) return;
+    closed = true;
+    // Detach auto-export before closing the DB so a late sync cannot call into it.
+    unsubscribeAutoExport?.();
+    try {
+      db.close();
+    } catch {
+      // Already-closed or listen-failed handles must not break shutdown.
+    }
+    server.close();
+  };
+
   if (shouldListen) {
     server.once("error", (err) => {
+      // Listen failure must free the auto-export listener and DB even when the
+      // caller never invokes close() (EADDRINUSE etc.).
+      close();
       rejectReady(err instanceof Error ? err : new Error(String(err)));
     });
     server.listen(runtime.port, host, () => {
@@ -252,21 +272,6 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   } else {
     resolveReady();
   }
-
-  let closed = false;
-  const close = (): void => {
-    // Idempotent: concurrent / double close must unsubscribe and close DB once.
-    if (closed) return;
-    closed = true;
-    // Detach auto-export before closing the DB so a late sync cannot call into it.
-    unsubscribeAutoExport?.();
-    server.close();
-    try {
-      db.close();
-    } catch {
-      // Already-closed or listen-failed handles must not break shutdown.
-    }
-  };
 
   return {
     close,
@@ -282,5 +287,16 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(entry).href) {
-  startServer();
+  // Direct production entry: never leave ready rejection unhandled.
+  const started = startServer();
+  started.ready.catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
+    try {
+      started.close();
+    } catch {
+      // listen-failure path already closed; ignore double-close
+    }
+    process.exitCode = 1;
+  });
 }

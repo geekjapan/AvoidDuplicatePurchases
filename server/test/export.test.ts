@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { DatabaseSync, type DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import { openDatabase } from "../src/db.js";
@@ -19,14 +24,28 @@ import { handleApi } from "../src/http.js";
 import { persistAdminSettings } from "../src/routes/settings.js";
 import "../src/routes/settings.js";
 import "../src/export/route.js";
-import { EXPORT_FILENAME, exportSnapshot } from "../src/export/export.js";
+import {
+  EXPORT_FILENAME,
+  exportSnapshot,
+} from "../src/export/export.js";
 import { installAutoExport } from "../src/export/auto.js";
-import { clearSyncSuccessListeners } from "../src/hooks/sync-success.js";
+import {
+  clearSyncSuccessListeners,
+  dispatchSyncSuccess,
+  subscribeSyncSuccess,
+} from "../src/hooks/sync-success.js";
 import { persistSyncOutcome } from "../src/import/fanza/common.js";
 import { startServer } from "../src/static.js";
 
 const TEST_EXTENSION_ORIGIN = "chrome-extension://test-extension";
 const TEST_EXTENSION_ORIGINS = new Set([TEST_EXTENSION_ORIGIN]);
+const AUTO_EXPORT_SOURCE = "full_sync";
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+
+/** Use realpath'd tmp base so symlink-ancestor checks accept test paths on macOS. */
+function realTmp(): string {
+  return realpathSync(tmpdir());
+}
 
 function request(
   port: number,
@@ -118,6 +137,21 @@ function tempResidue(dest: string): string[] {
   );
 }
 
+function posixModeBits(path: string): number {
+  return lstatSync(path).mode & 0o777;
+}
+
+function fullSyncOk(
+  db: DatabaseSyncType,
+  counts: { inserted: number; updated: number } = { inserted: 1, updated: 0 },
+): void {
+  persistSyncOutcome(db, AUTO_EXPORT_SOURCE, {
+    ok: true,
+    counts,
+    fetched: counts.inserted + counts.updated,
+  });
+}
+
 describe("manual export", () => {
   let server: Server;
   let port: number;
@@ -127,7 +161,7 @@ describe("manual export", () => {
   before(async () => {
     db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    dest = mkdtempSync(join(tmpdir(), "adp-export-manual-"));
+    dest = mkdtempSync(join(realTmp(), "adp-export-manual-"));
     persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
     const started = await startTestServer(db);
     server = started.server;
@@ -158,7 +192,7 @@ describe("manual export", () => {
   });
 
   it("escapes quotes in the destination path via parameterized VACUUM", async () => {
-    const quoted = mkdtempSync(join(tmpdir(), "adp-export-quote-")) + "/o'quote";
+    const quoted = mkdtempSync(join(realTmp(), "adp-export-quote-")) + "/o'quote";
     persistAdminSettings(db, { port: 41321, exportDestination: quoted }, new Date().toISOString());
     const res = await request(port, "POST", "/api/export", { destination: quoted });
     assert.equal(res.status, 200);
@@ -168,7 +202,7 @@ describe("manual export", () => {
   });
 
   it("rejects a destination that does not match the configured one", async () => {
-    const other = mkdtempSync(join(tmpdir(), "adp-export-other-"));
+    const other = mkdtempSync(join(realTmp(), "adp-export-other-"));
     const res = await request(port, "POST", "/api/export", { destination: other });
     assert.equal(res.status, 400);
     assert.deepEqual(res.json, { error: "invalid_request" });
@@ -187,18 +221,21 @@ describe("auto export via sync-success hook", () => {
     clearSyncSuccessListeners();
   });
 
-  it("exports to the configured destination after a successful sync", () => {
+  it("exports to the configured destination after a successful full_sync", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-auto-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-auto-"));
     persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
-    const unsubscribe = installAutoExport(db, 41321);
-
-    persistSyncOutcome(db, "fanza_doujin", {
-      ok: true,
-      counts: { inserted: 1, updated: 0 },
-      fetched: 1,
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: (d, destination) => {
+        calls += 1;
+        return exportSnapshot(d, destination);
+      },
     });
+
+    fullSyncOk(db);
+    assert.equal(calls, 1);
     assert.ok(existsSync(snapshotPath(dest)));
     assert.equal(countListings(snapshotPath(dest)), 2);
 
@@ -206,19 +243,89 @@ describe("auto export via sync-success hook", () => {
     db.close();
   });
 
-  it("does not export after a failed sync", () => {
+  it("does not export after a failed full_sync", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-fail-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-fail-"));
     persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
-    const unsubscribe = installAutoExport(db, 41321);
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: (d, destination) => {
+        calls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
 
-    persistSyncOutcome(db, "fanza_doujin", {
+    persistSyncOutcome(db, AUTO_EXPORT_SOURCE, {
       ok: false,
       error: "synthetic",
       counts: { inserted: 0, updated: 0 },
     });
+    assert.equal(calls, 0);
     assert.ok(!existsSync(snapshotPath(dest)));
+
+    unsubscribe();
+    db.close();
+  });
+
+  it("does not export on partial source success (fanza_doujin)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-partial-"));
+    persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: (d, destination) => {
+        calls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
+
+    persistSyncOutcome(db, "fanza_doujin", {
+      ok: true,
+      counts: { inserted: 1, updated: 0 },
+    });
+    assert.equal(calls, 0);
+    assert.ok(!existsSync(snapshotPath(dest)));
+
+    unsubscribe();
+    db.close();
+  });
+
+  it("exports at most once per successful full_sync recordedAt (duplicate payload)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-dedupe-"));
+    persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: (d, destination) => {
+        calls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
+
+    const recordedAt = "2026-08-06T00:00:00.000Z";
+    persistSyncOutcome(
+      db,
+      AUTO_EXPORT_SOURCE,
+      { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+      recordedAt,
+    );
+    assert.equal(calls, 1);
+
+    // Duplicate module-global dispatch of the same payload must not re-export.
+    dispatchSyncSuccess({
+      source: AUTO_EXPORT_SOURCE,
+      outcome: {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+        error: null,
+        fetched: 1,
+        recordedAt,
+      },
+    });
+    assert.equal(calls, 1);
 
     unsubscribe();
     db.close();
@@ -227,26 +334,147 @@ describe("auto export via sync-success hook", () => {
   it("skips export when no destination is configured", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-nodest-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-nodest-"));
     persistAdminSettings(db, { port: 41321, exportDestination: "" }, new Date().toISOString());
-    const unsubscribe = installAutoExport(db, 41321);
-
-    persistSyncOutcome(db, "fanza_doujin", {
-      ok: true,
-      counts: { inserted: 1, updated: 0 },
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: () => {
+        calls += 1;
+        return { path: snapshotPath(dest) };
+      },
     });
+
+    fullSyncOk(db);
+    assert.equal(calls, 0);
     assert.ok(!existsSync(snapshotPath(dest)));
 
     unsubscribe();
     db.close();
   });
+
+  it("isolates cross-instance events: foreign DB full_sync does not export local dest", () => {
+    const local = openDatabase(":memory:").sqlite;
+    const foreign = openDatabase(":memory:").sqlite;
+    seedListings(local);
+    seedListings(foreign);
+    const destLocal = mkdtempSync(join(realTmp(), "adp-export-iso-local-"));
+    const destForeign = mkdtempSync(join(realTmp(), "adp-export-iso-foreign-"));
+    persistAdminSettings(local, { port: 41321, exportDestination: destLocal }, new Date().toISOString());
+    persistAdminSettings(foreign, { port: 41322, exportDestination: destForeign }, new Date().toISOString());
+
+    let localCalls = 0;
+    let foreignCalls = 0;
+    const unsubLocal = installAutoExport(local, 41321, {
+      exportSnapshot: (d, destination) => {
+        localCalls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
+    const unsubForeign = installAutoExport(foreign, 41322, {
+      exportSnapshot: (d, destination) => {
+        foreignCalls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
+
+    // Only foreign persists — local listener sees the event but must not export.
+    fullSyncOk(foreign, { inserted: 2, updated: 0 });
+    assert.equal(foreignCalls, 1);
+    assert.equal(localCalls, 0);
+    assert.ok(existsSync(snapshotPath(destForeign)));
+    assert.ok(!existsSync(snapshotPath(destLocal)));
+
+    unsubLocal();
+    unsubForeign();
+    local.close();
+    foreign.close();
+  });
+
+  it("does not replay an identical outcome that predates listener installation", () => {
+    const local = openDatabase(":memory:").sqlite;
+    const foreign = openDatabase(":memory:").sqlite;
+    seedListings(local);
+    seedListings(foreign);
+    const destLocal = mkdtempSync(join(realTmp(), "adp-export-stale-local-"));
+    const destForeign = mkdtempSync(join(realTmp(), "adp-export-stale-foreign-"));
+    persistAdminSettings(local, { port: 41321, exportDestination: destLocal }, "2026-01-01T00:00:00Z");
+    persistAdminSettings(foreign, { port: 41322, exportDestination: destForeign }, "2026-01-01T00:00:00Z");
+
+    const oldRecordedAt = "2026-08-06T01:00:00.000Z";
+    for (const db of [local, foreign]) {
+      persistSyncOutcome(
+        db,
+        AUTO_EXPORT_SOURCE,
+        { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+        oldRecordedAt,
+      );
+    }
+
+    let localCalls = 0;
+    let foreignCalls = 0;
+    const unsubLocal = installAutoExport(local, 41321, {
+      exportSnapshot: () => {
+        localCalls += 1;
+        return { path: snapshotPath(destLocal) };
+      },
+    });
+    const unsubForeign = installAutoExport(foreign, 41322, {
+      exportSnapshot: () => {
+        foreignCalls += 1;
+        return { path: snapshotPath(destForeign) };
+      },
+    });
+
+    dispatchSyncSuccess({
+      source: AUTO_EXPORT_SOURCE,
+      outcome: {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+        error: null,
+        fetched: 1,
+        recordedAt: oldRecordedAt,
+      },
+    });
+    assert.equal(localCalls, 0);
+    assert.equal(foreignCalls, 0);
+
+    persistSyncOutcome(
+      foreign,
+      AUTO_EXPORT_SOURCE,
+      { ok: true, counts: { inserted: 2, updated: 0 }, fetched: 2 },
+      "2026-08-06T01:00:01.000Z",
+    );
+    assert.equal(localCalls, 0);
+    assert.equal(foreignCalls, 1);
+
+    unsubLocal();
+    unsubForeign();
+    local.close();
+    foreign.close();
+  });
 });
 
 describe("exportSnapshot service", () => {
+  it("rejects a relative destination before resolving it", () => {
+    const db = openDatabase(":memory:").sqlite;
+    assert.throws(() => exportSnapshot(db, "relative/export"), /must be absolute/);
+    db.close();
+  });
+
+  it("accepts the platform temp path without requiring callers to realpath system aliases", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(tmpdir(), "adp-export-system-alias-"));
+    const result = exportSnapshot(db, dest);
+    assert.equal(result.path, snapshotPath(dest));
+    assert.equal(countListings(result.path), 2);
+    db.close();
+  });
+
   it("writes directly (service seam, quote escaping round-trip)", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-svc-")) + "/a'b";
+    const dest = mkdtempSync(join(realTmp(), "adp-export-svc-")) + "/a'b";
     const result = exportSnapshot(db, dest);
     assert.equal(result.path, join(dest, EXPORT_FILENAME));
     assert.equal(countListings(result.path), 2);
@@ -257,7 +485,7 @@ describe("exportSnapshot service", () => {
   it("cleans temp and preserves existing target when VACUUM fails", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-vacfail-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-vacfail-"));
     const first = exportSnapshot(db, dest);
     const before = readFileSync(first.path);
 
@@ -272,7 +500,7 @@ describe("exportSnapshot service", () => {
   it("cleans temp and preserves existing target when rename fails", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-renamefail-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-renamefail-"));
     const first = exportSnapshot(db, dest);
     const before = readFileSync(first.path);
 
@@ -293,7 +521,7 @@ describe("exportSnapshot service", () => {
   it("cleans residual temp when afterVacuum injects a mid-flight failure", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-midfail-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-midfail-"));
     const first = exportSnapshot(db, dest);
     const before = readFileSync(first.path);
 
@@ -311,10 +539,120 @@ describe("exportSnapshot service", () => {
     db.close();
   });
 
+  it("surfaces cleanup failure via AggregateError (VACUUM ok path residual)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-cleanup-agg-"));
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          renameSync: () => {
+            throw Object.assign(new Error("injected rename failure"), { code: "EACCES" });
+          },
+          rmSync: (path, options) => {
+            if (options?.recursive) {
+              rmSync(path, options);
+              return;
+            }
+            throw Object.assign(new Error("injected cleanup failure"), { code: "EPERM" });
+          },
+        }),
+      (err: unknown) => {
+        assert.ok(err instanceof AggregateError, "expected AggregateError");
+        const messages = err.errors.map((e) => (e instanceof Error ? e.message : String(e)));
+        assert.ok(messages.some((m) => m.includes("injected rename failure")));
+        assert.ok(messages.some((m) => m.includes("injected cleanup failure")));
+        return true;
+      },
+    );
+
+    assert.ok(existsSync(first.path));
+    assert.deepEqual(readFileSync(first.path), before);
+    for (const name of tempResidue(dest)) {
+      rmSync(join(dest, name), { recursive: true, force: true });
+    }
+    db.close();
+  });
+
+  it("surfaces cleanup failure before rename and preserves the existing target", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-cleanup-only-"));
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    db.exec(
+      `INSERT INTO work (id) VALUES (3);
+       INSERT INTO listing (id, source, cid, work_id, title, raw_json, imported_at)
+       VALUES (3, 'dlsite', 'RJ000003', 3, 'gamma', '{}', '2026-01-01T00:00:00.000Z')`,
+    );
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          rmSync: () => {
+            throw Object.assign(new Error("cleanup residual failure"), { code: "EBUSY" });
+          },
+        }),
+      /cleanup residual failure|AggregateError|export failed with cleanup/,
+    );
+
+    assert.deepEqual(readFileSync(snapshotPath(dest)), before);
+    assert.equal(countListings(snapshotPath(dest)), 2);
+    // The error explicitly reports any residual; clean it after asserting target safety.
+    for (const name of tempResidue(dest)) {
+      rmSync(join(dest, name), { recursive: true, force: true });
+    }
+    db.close();
+  });
+
+  it("surfaces cleanup verification errors and preserves the existing target", () => {
+    if (process.platform === "win32") return;
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-cleanup-probe-"));
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    try {
+      assert.throws(
+        () =>
+          exportSnapshot(db, dest, {
+            rmSync: (path, options) => {
+              rmSync(path, options);
+              chmodSync(dest, 0o000);
+            },
+          }),
+        (error: unknown) => {
+          const errors = error instanceof AggregateError ? error.errors : [error];
+          assert.ok(
+            errors.some((item) =>
+              /cleanup verification failed/.test(
+                item instanceof Error ? item.message : String(item),
+              ),
+            ),
+          );
+          return true;
+        },
+      );
+    } finally {
+      chmodSync(dest, 0o700);
+    }
+
+    assert.deepEqual(readFileSync(snapshotPath(dest)), before);
+    for (const name of tempResidue(dest)) {
+      rmSync(join(dest, name), { recursive: true, force: true });
+    }
+    db.close();
+  });
+
   it("refuses a destination directory that is a symlink (no write-outside)", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const root = mkdtempSync(join(tmpdir(), "adp-export-symlink-dest-"));
+    const root = mkdtempSync(join(realTmp(), "adp-export-symlink-dest-"));
     const outside = mkdtempSync(join(root, "outside-"));
     const link = join(root, "link-dest");
     symlinkSync(outside, link);
@@ -327,7 +665,7 @@ describe("exportSnapshot service", () => {
   it("refuses a pre-existing target symlink and does not replace the outside file", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-symlink-tgt-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-symlink-tgt-"));
     const outside = join(dest, "outside-secret.sqlite");
     writeFileSync(outside, "SECRET-OUTSIDE");
     const target = snapshotPath(dest);
@@ -340,10 +678,158 @@ describe("exportSnapshot service", () => {
     db.close();
   });
 
+  it("refuses a symlink parent (ancestor component) and leaves outside sentinel intact", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const root = mkdtempSync(join(realTmp(), "adp-export-symlink-parent-"));
+    const outside = mkdtempSync(join(root, "outside-"));
+    const sentinel = join(outside, "SENTINEL");
+    writeFileSync(sentinel, "UNTOUCHED");
+    const parentLink = join(root, "parent-link");
+    symlinkSync(outside, parentLink);
+    const dest = join(parentLink, "sync-folder");
+
+    assert.throws(() => exportSnapshot(db, dest), /symbolic link/);
+    assert.equal(readFileSync(sentinel, "utf8"), "UNTOUCHED");
+    assert.deepEqual(
+      readdirSync(outside).filter((n) => n !== "SENTINEL"),
+      [],
+    );
+    db.close();
+  });
+
+  it("fails closed when destination is swapped after pin (TOCTOU)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const root = mkdtempSync(join(realTmp(), "adp-export-dest-swap-"));
+    const dest = join(root, "dest");
+    mkdirSync(dest);
+    const outside = mkdtempSync(join(root, "outside-"));
+    const sentinel = join(outside, "SENTINEL");
+    writeFileSync(sentinel, "UNTOUCHED");
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterPin: () => {
+            // Replace destination directory with a symlink to outside.
+            rmSync(dest, { recursive: true, force: true });
+            symlinkSync(outside, dest);
+          },
+        }),
+      /symbolic link|replaced|revalidation/,
+    );
+
+    assert.equal(readFileSync(sentinel, "utf8"), "UNTOUCHED");
+    // Outside must not gain an export snapshot.
+    assert.ok(!existsSync(snapshotPath(outside)));
+    // If original dest path is now a symlink, previous file is gone — that is
+    // the adversarial swap. Sentinel / outside content is the invariant.
+    void before;
+    db.close();
+  });
+
+  it("fails closed when temp file is swapped for a symlink after VACUUM", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const root = mkdtempSync(join(realTmp(), "adp-export-temp-swap-"));
+    const dest = mkdtempSync(join(root, "dest-"));
+    const outside = join(root, "outside-secret.sqlite");
+    writeFileSync(outside, "SECRET");
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterVacuum: (tempFile) => {
+            rmSync(tempFile, { force: true });
+            symlinkSync(outside, tempFile);
+          },
+        }),
+      /symbolic link|replaced|escaped|revalidation/,
+    );
+
+    assert.equal(readFileSync(outside, "utf8"), "SECRET");
+    assert.ok(existsSync(first.path));
+    assert.deepEqual(readFileSync(first.path), before);
+    assert.deepEqual(tempResidue(dest), []);
+    db.close();
+  });
+
+  it("fails closed when temp directory is replaced after creation", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const root = mkdtempSync(join(realTmp(), "adp-export-tempdir-swap-"));
+    const dest = mkdtempSync(join(root, "dest-"));
+    const outside = mkdtempSync(join(root, "outside-"));
+    const sentinel = join(outside, "SENTINEL");
+    writeFileSync(sentinel, "UNTOUCHED");
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterTempDir: (tempDir) => {
+            rmSync(tempDir, { recursive: true, force: true });
+            symlinkSync(outside, tempDir);
+          },
+        }),
+      (error: unknown) => {
+        const errors = error instanceof AggregateError ? error.errors : [error];
+        assert.ok(
+          errors.some((item) =>
+            /symbolic link|replaced|escaped|revalidation/.test(
+              item instanceof Error ? item.message : String(item),
+            ),
+          ),
+        );
+        return true;
+      },
+    );
+
+    assert.equal(readFileSync(sentinel, "utf8"), "UNTOUCHED");
+    assert.deepEqual(tempResidue(dest), []);
+    db.close();
+  });
+
+  it("parallel production exports leave one valid snapshot and no temp residue", async () => {
+    const root = mkdtempSync(join(realTmp(), "adp-export-parallel-"));
+    const dbPath = join(root, "source.sqlite");
+    const dest = join(root, "sync");
+    const db = openDatabase(dbPath);
+    seedListings(db.sqlite);
+    db.close();
+    const worker = join(__dirname, "fixtures", "export-worker.ts");
+
+    const exits = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        new Promise<{ code: number | null; stderr: string }>((resolve) => {
+          const child = spawn(process.execPath, ["--import", "tsx", worker, dbPath, dest], {
+            cwd: join(__dirname, ".."),
+            stdio: ["ignore", "ignore", "pipe"],
+          });
+          let stderr = "";
+          child.stderr?.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+          child.on("exit", (code) => resolve({ code, stderr }));
+        }),
+      ),
+    );
+
+    assert.ok(exits.some(({ code }) => code === 0), JSON.stringify(exits));
+    assert.ok(exits.every(({ code }) => code === 0), JSON.stringify(exits));
+    assert.ok(existsSync(snapshotPath(dest)));
+    assert.equal(countListings(snapshotPath(dest)), 2);
+    assert.deepEqual(tempResidue(dest), []);
+  });
+
   it("does not use a fixed predictable .tmp name that can be raced", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-notmp-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-notmp-"));
     // Plant a competing fixed-name trap (old vulnerability surface).
     const fixedTmp = join(dest, `${EXPORT_FILENAME}.tmp`);
     writeFileSync(fixedTmp, "trap");
@@ -359,7 +845,7 @@ describe("exportSnapshot service", () => {
   it("uses exclusive temp dirs that are removed after success", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-export-exclusive-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-export-exclusive-"));
     let seenTemp: string | undefined;
     exportSnapshot(db, dest, {
       afterVacuum: (tempFile) => {
@@ -375,6 +861,39 @@ describe("exportSnapshot service", () => {
     assert.deepEqual(tempResidue(dest), []);
     db.close();
   });
+
+  it("applies POSIX 0700/0600 modes on new destination and snapshot (platform-conditional)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = join(mkdtempSync(join(realTmp(), "adp-export-mode-")), "new-dest");
+
+    const result = exportSnapshot(db, dest);
+    if (process.platform === "win32") {
+      // Windows: Node mode bits are not a full ACL guarantee — just ensure write works.
+      assert.ok(existsSync(result.path));
+    } else {
+      assert.equal(posixModeBits(dest), 0o700);
+      assert.equal(posixModeBits(result.path), 0o600);
+    }
+    db.close();
+  });
+
+  it("does not loosen permissions on a pre-existing destination directory", () => {
+    if (process.platform === "win32") {
+      // Mode bits are not meaningful the same way on Windows ACLs.
+      return;
+    }
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-keepmode-"));
+    chmodSync(dest, 0o755);
+    assert.equal(posixModeBits(dest), 0o755);
+
+    exportSnapshot(db, dest);
+    assert.equal(posixModeBits(dest), 0o755, "existing dir mode must not be loosened or rewritten");
+    assert.equal(posixModeBits(snapshotPath(dest)), 0o600);
+    db.close();
+  });
 });
 
 describe("production startServer auto-export lifecycle", () => {
@@ -383,7 +902,7 @@ describe("production startServer auto-export lifecycle", () => {
   });
 
   it("unsubscribes on close so later syncs do not export or touch a closed DB", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "adp-export-lifecycle-"));
+    const dir = mkdtempSync(join(realTmp(), "adp-export-lifecycle-"));
     const dbPath = join(dir, "data.sqlite");
     const dest = mkdtempSync(join(dir, "sync-"));
 
@@ -409,7 +928,7 @@ describe("production startServer auto-export lifecycle", () => {
 
     try {
       await started.ready;
-      const outcome = await request(started.port, "POST", "/api/sync-outcome/fanza_doujin", {
+      const outcome = await request(started.port, "POST", "/api/sync-outcome/full_sync", {
         ok: true,
         counts: { inserted: 1, updated: 0 },
         fetched: 1,
@@ -425,11 +944,7 @@ describe("production startServer auto-export lifecycle", () => {
 
       // Directly open DB and fire success outcome after close — listener must be gone.
       const post = openDatabase(dbPath);
-      persistSyncOutcome(post.sqlite, "fanza_doujin", {
-        ok: true,
-        counts: { inserted: 0, updated: 1 },
-        fetched: 1,
-      });
+      fullSyncOk(post.sqlite);
       post.close();
       assert.ok(!existsSync(snapshotPath(dest)), "closed server must not auto-export");
     } finally {
@@ -444,7 +959,7 @@ describe("production startServer auto-export lifecycle", () => {
   });
 
   it("supports concurrent double-close without throwing", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "adp-export-dblclose-"));
+    const dir = mkdtempSync(join(realTmp(), "adp-export-dblclose-"));
     const dbPath = join(dir, "data.sqlite");
     openDatabase(dbPath).close();
 
@@ -472,10 +987,18 @@ describe("production startServer auto-export lifecycle", () => {
     }
   });
 
-  it("cleans up after listen failure (port already bound)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "adp-export-listenfail-"));
+  it("cleans up after listen failure without caller close (listener/DB gone)", async () => {
+    const dir = mkdtempSync(join(realTmp(), "adp-export-listenfail-"));
     const dbPath = join(dir, "data.sqlite");
-    openDatabase(dbPath).close();
+    const dest = mkdtempSync(join(dir, "sync-"));
+    const seed = openDatabase(dbPath);
+    seedListings(seed.sqlite);
+    persistAdminSettings(
+      seed.sqlite,
+      { port: 41321, exportDestination: dest },
+      new Date().toISOString(),
+    );
+    seed.close();
 
     const blocker = createServer();
     await new Promise<void>((resolve, reject) => {
@@ -486,8 +1009,13 @@ describe("production startServer auto-export lifecycle", () => {
     const busyPort = typeof addr === "object" && addr ? addr.port : 0;
     assert.ok(busyPort > 0);
 
+    let probeCalls = 0;
+    const probeUnsub = subscribeSyncSuccess(() => {
+      probeCalls += 1;
+    });
+
     const started = startServer({
-      env: { ADP_DB_PATH: dbPath },
+      env: { ADP_DB_PATH: dbPath, ADP_EXTENSION_ORIGIN: TEST_EXTENSION_ORIGIN },
       host: "127.0.0.1",
       port: busyPort,
       listen: true,
@@ -495,17 +1023,32 @@ describe("production startServer auto-export lifecycle", () => {
     });
 
     await assert.rejects(() => started.ready);
+
+    // Caller intentionally does NOT call close — listen-failure path must have
+    // already unsubscribed auto-export and closed the DB.
+    const beforeProbe = probeCalls;
+    const post = openDatabase(dbPath);
+    fullSyncOk(post.sqlite);
+    post.close();
+
+    // Probe (still subscribed) must fire; auto-export must not create a snapshot.
+    assert.ok(probeCalls > beforeProbe, "module dispatch still works for other listeners");
+    assert.ok(!existsSync(snapshotPath(dest)), "auto-export listener must be unsubscribed");
+
+    // Idempotent close after automatic cleanup.
     assert.doesNotThrow(() => {
       started.close();
       started.close();
     });
+
+    probeUnsub();
     blocker.close();
     clearSyncSuccessListeners();
     rmSync(dir, { recursive: true, force: true });
   });
 
   it("multiple startServer instances each export independently and close cleanly", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "adp-export-multi-"));
+    const dir = mkdtempSync(join(realTmp(), "adp-export-multi-"));
     const dbPathA = join(dir, "a.sqlite");
     const dbPathB = join(dir, "b.sqlite");
     const destA = mkdtempSync(join(dir, "sync-a-"));
@@ -544,17 +1087,20 @@ describe("production startServer auto-export lifecycle", () => {
       await Promise.all([a.ready, b.ready]);
       assert.notEqual(a.port, b.port);
 
-      const ra = await request(a.port, "POST", "/api/sync-outcome/fanza_doujin", {
-        ok: true,
-        counts: { inserted: 1, updated: 0 },
-      });
-      const rb = await request(b.port, "POST", "/api/sync-outcome/fanza_doujin", {
+      const ra = await request(a.port, "POST", "/api/sync-outcome/full_sync", {
         ok: true,
         counts: { inserted: 1, updated: 0 },
       });
       assert.equal(ra.status, 200);
-      assert.equal(rb.status, 200);
       assert.ok(existsSync(snapshotPath(destA)));
+      // Cross-fire must not populate B's destination from A's full_sync.
+      assert.ok(!existsSync(snapshotPath(destB)));
+
+      const rb = await request(b.port, "POST", "/api/sync-outcome/full_sync", {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+      });
+      assert.equal(rb.status, 200);
       assert.ok(existsSync(snapshotPath(destB)));
 
       a.close();
@@ -564,10 +1110,7 @@ describe("production startServer auto-export lifecycle", () => {
       rmSync(snapshotPath(destB), { force: true });
 
       const postA = openDatabase(dbPathA);
-      persistSyncOutcome(postA.sqlite, "fanza_doujin", {
-        ok: true,
-        counts: { inserted: 0, updated: 1 },
-      });
+      fullSyncOk(postA.sqlite);
       postA.close();
       assert.ok(!existsSync(snapshotPath(destA)));
       assert.ok(!existsSync(snapshotPath(destB)));
@@ -585,5 +1128,51 @@ describe("production startServer auto-export lifecycle", () => {
       clearSyncSuccessListeners();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("direct production entry exits on EADDRINUSE without unhandled rejection", async () => {
+    const dir = mkdtempSync(join(realTmp(), "adp-export-entry-eaddr-"));
+    const dbPath = join(dir, "data.sqlite");
+    openDatabase(dbPath).close();
+
+    const blocker = createServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once("error", reject);
+      blocker.listen(0, "127.0.0.1", () => resolve());
+    });
+    const addr = blocker.address();
+    const busyPort = typeof addr === "object" && addr ? addr.port : 0;
+    assert.ok(busyPort > 0);
+
+    const staticEntry = join(__dirname, "..", "src", "static.ts");
+    const child: ChildProcess = spawn(
+      process.execPath,
+      ["--import", "tsx", staticEntry],
+      {
+        cwd: join(__dirname, ".."),
+        env: {
+          ...process.env,
+          ADP_DB_PATH: dbPath,
+          ADP_PORT: String(busyPort),
+          ADP_HOST: "127.0.0.1",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+
+    const exit = await new Promise<{ code: number | null; output: string }>((resolve) => {
+      let output = "";
+      child.stdout?.on("data", (c: Buffer) => {
+        output += c.toString();
+      });
+      child.stderr?.on("data", (c: Buffer) => {
+        output += c.toString();
+      });
+      child.on("exit", (code) => resolve({ code, output }));
+    });
+
+    assert.notEqual(exit.code, 0, `expected non-zero exit, got ${exit.code}: ${exit.output}`);
+    blocker.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

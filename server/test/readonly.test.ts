@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -35,6 +36,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PRODUCTION_ENTRY_FIXTURE = join(__dirname, "fixtures", "readonly-server.ts");
 const TEST_EXTENSION_ORIGIN = "chrome-extension://test-extension";
 const TEST_EXTENSION_ORIGINS = new Set([TEST_EXTENSION_ORIGIN]);
+
+/** realpath'd tmp base so export symlink-ancestor checks accept macOS temp paths. */
+function realTmp(): string {
+  return realpathSync(tmpdir());
+}
 
 function request(
   port: number,
@@ -178,7 +184,7 @@ describe("readonly config", () => {
   it("opens a snapshot DB read-only without migrations", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    const dest = mkdtempSync(join(tmpdir(), "adp-ro-config-"));
+    const dest = mkdtempSync(join(realTmp(), "adp-ro-config-"));
     const snapshot = exportSnapshot(db, dest).path;
     db.close();
 
@@ -267,7 +273,7 @@ describe("production startServer read-only mode (in-process, same static.ts)", (
   });
 
   it("enforces readonly HTTP contract without writing snapshot bytes", async () => {
-    const root = mkdtempSync(join(tmpdir(), "adp-ro-static-"));
+    const root = mkdtempSync(join(realTmp(), "adp-ro-static-"));
     const dest = mkdtempSync(join(root, "snap-"));
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
@@ -336,7 +342,7 @@ describe("production startServer read-only mode (in-process, same static.ts)", (
   });
 
   it("does not mkdir or mutate DB path on readonly startup", async () => {
-    const root = mkdtempSync(join(tmpdir(), "adp-ro-startup-"));
+    const root = mkdtempSync(join(realTmp(), "adp-ro-startup-"));
     const dest = mkdtempSync(join(root, "snap-"));
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
@@ -387,7 +393,7 @@ describe("production startServer normal mode auto-export + close", () => {
   });
 
   it("auto-exports on success sync and detaches listener on close", async () => {
-    const root = mkdtempSync(join(tmpdir(), "adp-normal-auto-"));
+    const root = mkdtempSync(join(realTmp(), "adp-normal-auto-"));
     const dbPath = join(root, "data.sqlite");
     const dest = mkdtempSync(join(root, "sync-"));
 
@@ -413,7 +419,7 @@ describe("production startServer normal mode auto-export + close", () => {
 
     try {
       await started.ready;
-      const ok = await request(started.port, "POST", "/api/sync-outcome/fanza_doujin", {
+      const ok = await request(started.port, "POST", "/api/sync-outcome/full_sync", {
         ok: true,
         counts: { inserted: 1, updated: 0 },
       });
@@ -425,7 +431,7 @@ describe("production startServer normal mode auto-export + close", () => {
       writeFileSync(join(dest, "marker"), "1");
       const listingBefore = readdirSync(dest).sort().join(",");
       const post = openDatabase(dbPath);
-      persistSyncOutcome(post.sqlite, "fanza_doujin", {
+      persistSyncOutcome(post.sqlite, "full_sync", {
         ok: true,
         counts: { inserted: 0, updated: 1 },
       });
@@ -453,7 +459,7 @@ describe("production-entry child process (thin launcher → static.startServer)"
   before(async () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
-    dest = mkdtempSync(join(tmpdir(), "adp-ro-process-"));
+    dest = mkdtempSync(join(realTmp(), "adp-ro-process-"));
     snapshot = exportSnapshot(db, dest).path;
     db.close();
     beforeHash = sha256(snapshot);
