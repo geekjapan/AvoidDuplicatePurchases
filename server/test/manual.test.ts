@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer, type Server } from "node:http";
@@ -8,8 +9,17 @@ import { openDatabase } from "../src/db.js";
 import { handleApi } from "../src/http.js";
 import { runRematch } from "../src/services/lookup.js";
 import type { DatabaseSync } from "node:sqlite";
-import { parseManualProductUrl } from "../src/routes/manual.js";
-import { createProductionProductFetcher } from "../src/static.js";
+import {
+  parseManualProductUrl,
+  sanitizeProductImageUrl,
+} from "../src/routes/manual.js";
+import {
+  createProductionProductFetcher,
+  startServer,
+  resolveListenPort,
+} from "../src/static.js";
+import { loadAdminSettings, persistAdminSettings } from "../src/routes/settings.js";
+import { loadConfig } from "../src/config.js";
 import "../src/routes/manual.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,14 +134,24 @@ describe("manual listing URL contract", () => {
     assert.equal(parseManualProductUrl("https://example.com/no-cid"), null);
   });
 
-  it("rejects spoof hosts, http, userinfo, query/path injection, and malformed segments", () => {
-    const rejected = [
+  it("negative matrix: rejects fragment/userinfo/port/spoof/encoded/malformed/Unicode/arbitrary CID for all sources", () => {
+    const bases = {
+      dlsite: "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      fanza_doujin: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123456/",
+      fanza_books: "https://book.dmm.co.jp/product/12345/b100xx001/",
+      fanza_video: "https://video.dmm.co.jp/av/content/?id=abc123",
+      fanza_dlsoft: "https://dlsoft.dmm.co.jp/detail/game001/",
+    } as const;
+
+    const rejected: string[] = [
       // evil host with product-shaped query/path (href substring spoof)
       "https://evil.example/?q=https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
       "https://evil.example/path/product_id/RJ123456",
       "https://evil.example/maniax/work/=/product_id/RJ123456.html",
       "https://evil.example/dc/doujin/-/detail/=/cid=d_900001/",
       "https://evil.example/product/100001/b100xxxxx01001/",
+      "https://evil.example/av/content/?id=abc123",
+      "https://evil.example/detail/game001/",
       // hostname suffix lookalikes
       "https://www.dlsite.com.evil.example/maniax/work/=/product_id/RJ123456.html",
       "https://www.dmm.co.jp.evil.example/dc/doujin/-/detail/=/cid=d_900001/",
@@ -147,12 +167,31 @@ describe("manual listing URL contract", () => {
       // userinfo
       "https://user:pass@www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
       "https://user@book.dmm.co.jp/product/12345/b100xx001/",
+      "https://user:pass@www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123456/",
+      "https://u:p@video.dmm.co.jp/av/content/?id=abc123",
+      "https://u@dlsoft.dmm.co.jp/detail/game001/",
+      // non-default port
+      "https://www.dlsite.com:8443/maniax/work/=/product_id/RJ123456.html",
+      "https://www.dmm.co.jp:4430/dc/doujin/-/detail/=/cid=d_123456/",
+      "https://book.dmm.co.jp:8080/product/12345/b100xx001/",
+      "https://video.dmm.co.jp:8443/av/content/?id=abc123",
+      "https://dlsoft.dmm.co.jp:9/detail/game001/",
+      // fragments forbidden
+      `${bases.dlsite}#frag`,
+      `${bases.fanza_doujin}#x`,
+      `${bases.fanza_books}#top`,
+      `${bases.fanza_video}#clip`,
+      `${bases.fanza_dlsoft}#dl`,
       // disallowed query on non-video stores / extra video query
       "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html?evil=1",
       "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_123456/?x=1",
       "https://book.dmm.co.jp/product/12345/b100xx001/?x=1",
       "https://dlsoft.dmm.co.jp/detail/game001/?x=1",
       "https://video.dmm.co.jp/av/content/?id=abc123&other=1",
+      // video id must be exactly one
+      "https://video.dmm.co.jp/av/content/",
+      "https://video.dmm.co.jp/av/content/?id=abc123&id=def456",
+      "https://video.dmm.co.jp/amateur/content/?id=a&id=b",
       // extra path suffix
       "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html/extra",
       "https://dlsoft.dmm.co.jp/detail/game001/extra",
@@ -169,9 +208,25 @@ describe("manual listing URL contract", () => {
       "https://dlsoft.dmm.co.jp/detail/game%2F001/",
       "https://video.dmm.co.jp/av/content/?id=abc%2F123",
       "https://video.dmm.co.jp/av/content/?id=abc%2",
-      // invalid source-specific cid shape
+      // Unicode / non-ASCII cid
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_あいう/",
+      "https://book.dmm.co.jp/product/12345/b100xx%E3%81%82/",
+      "https://video.dmm.co.jp/av/content/?id=abc%E3%81%84",
+      "https://dlsoft.dmm.co.jp/detail/ゲーム001/",
+      // invalid source-specific cid shape / arbitrary junk
       "https://www.dlsite.com/maniax/work/=/product_id/XX123456.html",
       "https://www.dlsite.com/maniax/work/=/product_id/RJ12345.html",
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ12345678901.html",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=/",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=..%2Fevil/",
+      "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=has space/",
+      "https://book.dmm.co.jp/product/12a45/b100xx001/",
+      "https://book.dmm.co.jp/product/12345//",
+      "https://dlsoft.dmm.co.jp/detail//",
+      "https://dlsoft.dmm.co.jp/detail/has space/",
+      "https://video.dmm.co.jp/av/content/?id=",
+      "https://video.dmm.co.jp/av/content/?id=has%20space",
+      "https://video.dmm.co.jp/foo/content/?id=abc123",
     ];
     for (const url of rejected) {
       assert.equal(parseManualProductUrl(url), null, `expected reject: ${url}`);
@@ -227,10 +282,163 @@ describe("manual listing API", () => {
       "https://www.dlsite.com.evil.example/maniax/work/=/product_id/RJ123456.html",
       "http://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
       "https://user:pass@www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html#frag",
+      "https://video.dmm.co.jp/av/content/?id=a&id=b",
     ];
     for (const url of spoofs) {
       const res = await request(port, "POST", "/api/listings/manual", { url });
       assert.equal(res.status, 400, `expected 400 for ${url}`);
+    }
+  });
+});
+
+describe("manual re-registration preserves enriched fields (idempotent)", () => {
+  it("does not regress title/image/maker/precision/workIdLocked on cid-only re-run", async () => {
+    const db = openDatabase(":memory:").sqlite;
+    const productJson = JSON.parse(
+      readFileSync(join(FIXTURES, "dlsite-product-rj000001.json"), "utf8"),
+    );
+    const { server, port } = await startTestServer(db, async (workno) => {
+      if (workno === "RJ000001") return productJson;
+      return null;
+    });
+    try {
+      const first = await request(port, "POST", "/api/listings/manual", {
+        url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+      });
+      assert.equal(first.status, 201);
+      const listing = (
+        first.json as {
+          listing: {
+            id: number;
+            title: string;
+            maker: string | null;
+            imageUrl: string | null;
+            workId: number;
+            workIdLocked: boolean;
+          };
+        }
+      ).listing;
+      assert.equal(listing.title, "テスト作品A");
+      assert.equal(listing.maker, "サークルA");
+      assert.ok(listing.imageUrl);
+
+      // Manually enrich precision / lock like a prior import + human lock.
+      db.prepare(
+        `UPDATE listing SET purchased_at = ?, purchased_at_precision = 'day', work_id_locked = 1 WHERE id = ?`,
+      ).run("2026-01-02", listing.id);
+
+      // Re-run without product fetcher → cid-only fallback must not regress.
+      const { server: s2, port: p2 } = await startTestServer(db, async () => null);
+      try {
+        const second = await request(p2, "POST", "/api/listings/manual", {
+          url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+        });
+        assert.equal(second.status, 200);
+        const again = (
+          second.json as {
+            listing: {
+              title: string;
+              maker: string | null;
+              imageUrl: string | null;
+              workId: number;
+              workIdLocked: boolean;
+              purchasedAt: string | null;
+            };
+          }
+        ).listing;
+        assert.equal(again.title, "テスト作品A");
+        assert.equal(again.maker, "サークルA");
+        assert.equal(again.imageUrl, listing.imageUrl);
+        assert.equal(again.workId, listing.workId);
+        assert.equal(again.workIdLocked, true);
+        assert.equal(again.purchasedAt, "2026-01-02");
+
+        const row = db
+          .prepare(
+            `SELECT title, maker_name, image_url, purchased_at_precision, work_id_locked, work_id
+             FROM listing WHERE cid = 'RJ000001'`,
+          )
+          .get() as {
+          title: string;
+          maker_name: string | null;
+          image_url: string | null;
+          purchased_at_precision: string;
+          work_id_locked: number;
+          work_id: number;
+        };
+        assert.equal(row.title, "テスト作品A");
+        assert.equal(row.maker_name, "サークルA");
+        assert.equal(row.image_url, listing.imageUrl);
+        assert.equal(row.purchased_at_precision, "day");
+        assert.equal(row.work_id_locked, 1);
+        assert.equal(row.work_id, listing.workId);
+      } finally {
+        s2.close();
+      }
+    } finally {
+      server.close();
+      db.close();
+    }
+  });
+});
+
+describe("productFetcher trust boundary + atomic upsert", () => {
+  it("sanitizeProductImageUrl rejects non-http(s) and malformed values", () => {
+    assert.equal(sanitizeProductImageUrl("https://img.example/a.jpg"), "https://img.example/a.jpg");
+    assert.equal(sanitizeProductImageUrl("http://img.example/a.jpg"), "http://img.example/a.jpg");
+    assert.equal(sanitizeProductImageUrl("not a url"), null);
+    assert.equal(sanitizeProductImageUrl("ftp://img.example/a.jpg"), null);
+    assert.equal(sanitizeProductImageUrl("javascript:alert(1)"), null);
+    assert.equal(sanitizeProductImageUrl(""), null);
+    assert.equal(sanitizeProductImageUrl(null), null);
+    assert.equal(sanitizeProductImageUrl(123), null);
+  });
+
+  it("invalid product image URL nulls image without 500 or partial commit regression", async () => {
+    const db = openDatabase(":memory:").sqlite;
+    const badProduct = [
+      {
+        workno: "RJ000777",
+        work_name: "Bad Image Work",
+        maker_name: "MakerX",
+        series_id: null,
+        image_url: "not-a-valid-url",
+      },
+    ];
+    const { server, port } = await startTestServer(db, async (workno) => {
+      if (workno === "RJ000777") return badProduct;
+      return null;
+    });
+    try {
+      const beforeCount = (
+        db.prepare("SELECT COUNT(*) AS c FROM listing").get() as { c: number }
+      ).c;
+      const res = await request(port, "POST", "/api/listings/manual", {
+        url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000777.html",
+      });
+      assert.equal(res.status, 201);
+      const listing = (
+        res.json as {
+          listing: { title: string; maker: string | null; imageUrl: string | null };
+        }
+      ).listing;
+      assert.equal(listing.title, "Bad Image Work");
+      assert.equal(listing.maker, "MakerX");
+      assert.equal(listing.imageUrl, null);
+
+      const afterCount = (
+        db.prepare("SELECT COUNT(*) AS c FROM listing").get() as { c: number }
+      ).c;
+      assert.equal(afterCount, beforeCount + 1);
+      const row = db
+        .prepare("SELECT image_url, title FROM listing WHERE cid = 'RJ000777'")
+        .get() as { image_url: string | null; title: string };
+      assert.equal(row.image_url, null);
+      assert.equal(row.title, "Bad Image Work");
+    } finally {
+      server.close();
+      db.close();
     }
   });
 });
@@ -359,6 +567,95 @@ describe("production productFetcher wiring (stubbed, no live network)", () => {
         server.close();
         db.close();
       }
+    }
+  });
+});
+
+describe("actual production startServer wiring (stubbed fetch, no live network)", () => {
+  it("startServer ApiContext includes productFetcher and enriches manual listings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "adp-start-"));
+    const dbPath = join(dir, "data.sqlite");
+    const productJson = JSON.parse(
+      readFileSync(join(FIXTURES, "dlsite-product-rj000001.json"), "utf8"),
+    );
+    let fetchCalls = 0;
+    const fetchImpl = (async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify(productJson), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const started = startServer({
+      env: {
+        ADP_DB_PATH: dbPath,
+        ADP_EXTENSION_ORIGIN: TEST_EXTENSION_ORIGIN,
+        // no ADP_PORT → default / persisted path
+      },
+      fetchImpl,
+      host: "127.0.0.1",
+      port: 0,
+      listen: true,
+    });
+    try {
+      await started.ready;
+      assert.equal(started.hasProductFetcher, true);
+      assert.ok(started.port > 0);
+      const res = await request(started.port, "POST", "/api/listings/manual", {
+        url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+      });
+      assert.equal(res.status, 201);
+      assert.equal(fetchCalls, 1);
+      const listing = (res.json as { listing: { title: string; cid: string } }).listing;
+      assert.equal(listing.cid, "RJ000001");
+      assert.equal(listing.title, "テスト作品A");
+    } finally {
+      started.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("applies persisted port after DB open (restart-equivalent, env ADP_PORT unset)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "adp-port-"));
+    const dbPath = join(dir, "data.sqlite");
+    try {
+      const appDb = openDatabase(dbPath);
+      persistAdminSettings(
+        appDb.sqlite,
+        { port: 43210, exportDestination: "/tmp/adp-export-folder" },
+        new Date().toISOString(),
+      );
+      appDb.close();
+
+      const env: Record<string, string | undefined> = {
+        ADP_DB_PATH: dbPath,
+        // ADP_PORT intentionally unset
+      };
+      const config = loadConfig(env);
+      assert.equal(config.port, 41321);
+
+      const reopened = openDatabase(dbPath);
+      const resolved = resolveListenPort(config, reopened.sqlite, env);
+      assert.equal(resolved, 43210);
+      const settings = loadAdminSettings(reopened.sqlite, config.port);
+      assert.equal(settings.port, 43210);
+      assert.equal(settings.exportDestination, "/tmp/adp-export-folder");
+      reopened.close();
+
+      // Explicit ADP_PORT wins over persisted
+      const envForced = { ...env, ADP_PORT: "45000" };
+      const configForced = loadConfig(envForced);
+      const reopened2 = openDatabase(dbPath);
+      assert.equal(resolveListenPort(configForced, reopened2.sqlite, envForced), 45000);
+      reopened2.close();
+
+      // forced option wins over both
+      const reopened3 = openDatabase(dbPath);
+      assert.equal(resolveListenPort(configForced, reopened3.sqlite, envForced, 0), 0);
+      reopened3.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

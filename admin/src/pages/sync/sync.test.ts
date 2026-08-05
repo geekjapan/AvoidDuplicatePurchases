@@ -102,4 +102,57 @@ describe("sync page", () => {
     assert.equal(status.getAttribute("role"), "status");
     assert.equal(status.getAttribute("aria-live"), "polite");
   });
+
+  it("shows per-source fetch errors and marks overall partial/error (not 未同期)", async () => {
+    window = installDom();
+    defineGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url.includes("/api/sync-state/dlsite")) {
+        return new Response(
+          JSON.stringify({
+            cursor: null,
+            lastSyncedAt: "2026-03-01T00:00:00.000Z",
+            latestOutcome: null,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (method === "GET" && url.includes("/api/sync-state/fanza_doujin")) {
+        return new Response(JSON.stringify({ error: "boom" }), { status: 500 });
+      }
+      if (method === "GET" && url.includes("/api/sync-state/")) {
+        return new Response(
+          JSON.stringify({ cursor: null, lastSyncedAt: null, latestOutcome: null }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ error: "unexpected" }), { status: 500 });
+    });
+
+    const { renderSync } = await import("./sync.js");
+    const root = document.getElementById("app")!;
+    await renderSync(root);
+
+    await waitFor(
+      () => document.querySelector('[data-testid="sync-row-fanza_doujin"]') !== null,
+      "doujin row",
+    );
+    const doujin = document.querySelector('[data-testid="sync-row-fanza_doujin"]');
+    assert.equal(doujin?.getAttribute("data-load"), "error");
+    assert.match(doujin?.textContent ?? "", /取得エラー/);
+    assert.doesNotMatch(doujin?.textContent ?? "", /未同期/);
+
+    const dlsite = document.querySelector('[data-testid="sync-row-dlsite"]');
+    assert.equal(dlsite?.getAttribute("data-load"), "ok");
+
+    const status = document.querySelector('[data-testid="sync-status-region"]') as HTMLElement;
+    await waitFor(
+      () => status.getAttribute("data-kind") === "partial",
+      "partial overall status",
+    );
+    assert.equal(status.getAttribute("data-kind"), "partial");
+    assert.match(status.textContent ?? "", /一部/);
+    assert.equal(status.getAttribute("role"), "alert");
+  });
 });

@@ -23,6 +23,12 @@ interface SyncState {
   latestOutcome?: SyncOutcome | null;
 }
 
+type SourceLoadResult =
+  | { source: string; ok: true; state: SyncState }
+  | { source: string; ok: false; error: string };
+
+export type LoadStatesResult = "ok" | "partial" | "error";
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   props: Record<string, string> = {},
@@ -67,6 +73,11 @@ function formatOutcome(source: string, state: SyncState | null): string {
     return `${label}: エラー ${latest.error}${counts}（${last}）`;
   }
   return `${label}: 失敗（${last}）`;
+}
+
+function formatFetchError(source: string, error: string): string {
+  const label = SOURCE_LABELS[source] ?? source;
+  return `${label}: 取得エラー ${error}`;
 }
 
 async function fetchSyncState(source: string): Promise<SyncState> {
@@ -164,11 +175,12 @@ export async function renderSync(root: HTMLElement): Promise<void> {
     urlInput.disabled = value;
   }
 
-  function setStatus(message: string, kind: "info" | "success" | "error" = "info"): void {
+  function setStatus(message: string, kind: "info" | "success" | "error" | "partial" = "info"): void {
     statusRegion.textContent = message;
-    statusRegion.className = `status-region status-${kind}`;
+    const statusKind = kind === "partial" ? "error" : kind;
+    statusRegion.className = `status-region status-${statusKind}`;
     statusRegion.setAttribute("data-kind", kind);
-    if (kind === "error") {
+    if (kind === "error" || kind === "partial") {
       statusRegion.setAttribute("role", "alert");
       statusRegion.setAttribute("aria-live", "assertive");
     } else {
@@ -177,43 +189,56 @@ export async function renderSync(root: HTMLElement): Promise<void> {
     }
   }
 
-  function renderRows(states: Record<string, SyncState | null>): void {
+  function renderRows(results: SourceLoadResult[]): void {
     statusList.replaceChildren();
-    for (const source of [...SOURCES, "full_sync"]) {
-      const line = formatOutcome(source, states[source] ?? null);
+    for (const result of results) {
+      const line = result.ok
+        ? formatOutcome(result.source, result.state)
+        : formatFetchError(result.source, result.error);
       const item = el("li", {
         textContent: line,
-        "data-testid": `sync-row-${source}`,
+        "data-testid": `sync-row-${result.source}`,
         "aria-label": line,
+        "data-load": result.ok ? "ok" : "error",
       });
+      if (!result.ok) {
+        item.className = "sync-row-error";
+      }
       statusList.append(item);
     }
   }
 
-  async function loadStates(): Promise<void> {
+  async function loadStates(): Promise<LoadStatesResult> {
     const keys = [...SOURCES, "full_sync"];
-    const results = await Promise.all(
+    const results: SourceLoadResult[] = await Promise.all(
       keys.map(async (source) => {
         try {
-          return [source, await fetchSyncState(source)] as const;
-        } catch {
-          return [source, null] as const;
+          const state = await fetchSyncState(source);
+          return { source, ok: true as const, state };
+        } catch (err) {
+          return { source, ok: false as const, error: errorMessage(err) };
         }
       }),
     );
-    const map: Record<string, SyncState | null> = {};
-    for (const [source, state] of results) {
-      map[source] = state;
-    }
-    renderRows(map);
+    renderRows(results);
+    const failures = results.filter((r) => !r.ok).length;
+    if (failures === 0) return "ok";
+    if (failures === results.length) return "error";
+    return "partial";
   }
 
   async function refresh(): Promise<void> {
     setPending(true);
     setStatus("同期状態を読み込み中…");
     try {
-      await loadStates();
-      setStatus("同期状態を更新しました", "success");
+      const result = await loadStates();
+      if (result === "ok") {
+        setStatus("同期状態を更新しました", "success");
+      } else if (result === "partial") {
+        setStatus("一部の同期状態の取得に失敗しました", "partial");
+      } else {
+        setStatus("同期状態の取得に失敗しました", "error");
+      }
     } catch (err) {
       setStatus(errorMessage(err), "error");
     } finally {
@@ -228,11 +253,23 @@ export async function renderSync(root: HTMLElement): Promise<void> {
       setStatus("再照合を実行中…");
       try {
         const result = await postRematch();
-        await loadStates();
-        setStatus(
-          `再照合完了: ${result.rematched} 件再割当 / 候補 ${result.candidates} 件`,
-          "success",
-        );
+        const loadResult = await loadStates();
+        if (loadResult === "ok") {
+          setStatus(
+            `再照合完了: ${result.rematched} 件再割当 / 候補 ${result.candidates} 件`,
+            "success",
+          );
+        } else if (loadResult === "partial") {
+          setStatus(
+            `再照合完了: ${result.rematched} 件再割当 / 候補 ${result.candidates} 件（一部状態取得失敗）`,
+            "partial",
+          );
+        } else {
+          setStatus(
+            `再照合完了: ${result.rematched} 件再割当 / 候補 ${result.candidates} 件（状態再取得失敗）`,
+            "error",
+          );
+        }
       } catch (err) {
         setStatus(errorMessage(err), "error");
       } finally {
@@ -252,8 +289,14 @@ export async function renderSync(root: HTMLElement): Promise<void> {
       try {
         await postManualListing(url);
         urlInput.value = "";
-        await loadStates();
-        setStatus("手動登録が完了しました", "success");
+        const loadResult = await loadStates();
+        if (loadResult === "ok") {
+          setStatus("手動登録が完了しました", "success");
+        } else if (loadResult === "partial") {
+          setStatus("手動登録が完了しました（一部状態取得失敗）", "partial");
+        } else {
+          setStatus("手動登録が完了しました（状態再取得失敗）", "error");
+        }
       } catch (err) {
         setStatus(errorMessage(err), "error");
       } finally {

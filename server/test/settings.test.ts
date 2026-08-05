@@ -131,3 +131,33 @@ describe("settings API", () => {
     assert.equal(relative.status, 400);
   });
 });
+
+describe("persisted settings survive reopen (restart-equivalent)", () => {
+  it("loadAdminSettings returns saved port/exportDestination after DB reopen", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { loadAdminSettings, persistAdminSettings } = await import("../src/routes/settings.js");
+    const dir = mkdtempSync(join(tmpdir(), "adp-settings-"));
+    const dbPath = join(dir, "data.sqlite");
+    try {
+      const first = openDatabase(dbPath);
+      persistAdminSettings(
+        first.sqlite,
+        { port: 43210, exportDestination: "/tmp/adp-export-folder" },
+        new Date().toISOString(),
+      );
+      first.close();
+
+      const second = openDatabase(dbPath);
+      const settings = loadAdminSettings(second.sqlite, 41321);
+      assert.deepEqual(settings, {
+        port: 43210,
+        exportDestination: "/tmp/adp-export-folder",
+      });
+      second.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
