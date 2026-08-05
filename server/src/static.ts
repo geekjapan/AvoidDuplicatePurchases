@@ -5,8 +5,11 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { dlsiteProductJsonUrl } from "@adp/shared/adapters/dlsite";
 import { isAllowedOrigin, loadConfig, type ServerConfig } from "./config.js";
+import { isReadonlyMode, openReadonlyDatabase } from "./config/readonly.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
+import { withReadonlyGuard } from "./middleware/readonly-guard.js";
+import { installAutoExport } from "./export/auto.js";
 import type { ProductFetcher } from "./services/import.js";
 import { loadAdminSettings } from "./routes/settings.js";
 import "./routes/listings.js";
@@ -14,6 +17,7 @@ import "./routes/candidates.js";
 import "./routes/work.js";
 import "./routes/settings.js";
 import "./routes/manual.js";
+import "./export/route.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = join(__dirname, "..");
@@ -166,9 +170,11 @@ export function resolveListenPort(
 export function startServer(options: StartServerOptions = {}): StartedServer {
   const env = options.env ?? (process.env as Record<string, string | undefined>);
   const config = options.config ?? loadConfig(env);
-  mkdirSync(dirname(config.dbPath), { recursive: true });
-  const appDb = openDatabase(config.dbPath);
-  const db = appDb.sqlite;
+  const readonly = isReadonlyMode(env);
+  if (!readonly) mkdirSync(dirname(config.dbPath), { recursive: true });
+  // Read-only mode opens the snapshot directly: no migrations, no writes.
+  const appDb = readonly ? null : openDatabase(config.dbPath);
+  const db = appDb ? appDb.sqlite : openReadonlyDatabase(config.dbPath);
 
   const runtime = {
     port: resolveListenPort(config, db, env, options.port),
@@ -177,6 +183,9 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   const productFetcher = createProductionProductFetcher(
     options.fetchImpl ?? globalThis.fetch.bind(globalThis),
   );
+  const apiHandler = readonly ? withReadonlyGuard(handleApi) : handleApi;
+  // Successful syncs auto-export on the main (writable) machine only.
+  if (!readonly) installAutoExport(db, runtime.port);
 
   const server = createServer(async (req, res) => {
     try {
@@ -190,7 +199,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
       }
 
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-      const apiHandled = await handleApi(req, res, {
+      const apiHandled = await apiHandler(req, res, {
         db,
         port,
         extensionOrigins: config.extensionOrigins,
@@ -229,7 +238,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   return {
     close: () => {
       server.close();
-      appDb.close();
+      db.close();
     },
     get port() {
       return runtime.port;
