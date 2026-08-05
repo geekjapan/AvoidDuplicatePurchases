@@ -185,7 +185,11 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   );
   const apiHandler = readonly ? withReadonlyGuard(handleApi) : handleApi;
   // Successful syncs auto-export on the main (writable) machine only.
-  if (!readonly) installAutoExport(db, runtime.port);
+  // Production instance holds the unsubscribe so close can detach exactly once
+  // before the DB handle is closed (listener must not fire on a closed DB).
+  const unsubscribeAutoExport = readonly
+    ? null
+    : installAutoExport(db, runtime.port);
 
   const server = createServer(async (req, res) => {
     try {
@@ -219,11 +223,25 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
 
   const shouldListen = options.listen !== false;
   let resolveReady!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    resolveReady = resolve;
+  let rejectReady!: (err: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = () => {
+      if (readySettled) return;
+      readySettled = true;
+      resolve();
+    };
+    rejectReady = (err: Error) => {
+      if (readySettled) return;
+      readySettled = true;
+      reject(err);
+    };
   });
 
   if (shouldListen) {
+    server.once("error", (err) => {
+      rejectReady(err instanceof Error ? err : new Error(String(err)));
+    });
     server.listen(runtime.port, host, () => {
       if (runtime.port === 0) {
         const addr = server.address();
@@ -235,11 +253,23 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
     resolveReady();
   }
 
-  return {
-    close: () => {
-      server.close();
+  let closed = false;
+  const close = (): void => {
+    // Idempotent: concurrent / double close must unsubscribe and close DB once.
+    if (closed) return;
+    closed = true;
+    // Detach auto-export before closing the DB so a late sync cannot call into it.
+    unsubscribeAutoExport?.();
+    server.close();
+    try {
       db.close();
-    },
+    } catch {
+      // Already-closed or listen-failed handles must not break shutdown.
+    }
+  };
+
+  return {
+    close,
     get port() {
       return runtime.port;
     },

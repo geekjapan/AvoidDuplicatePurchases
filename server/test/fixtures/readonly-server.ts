@@ -1,54 +1,49 @@
 /**
- * Test-only read-only server process (T-EXPORT acceptance 3/4).
- * Mirrors the intended production wiring: ADP_READONLY=1 opens the snapshot
- * DB directly (no migrations, read-only handle) and wraps the API with the
- * readonly guard. Prints `READY <port>` once listening.
+ * Thin production-entry launcher for read-only / normal secondary-process tests.
+ *
+ * Does NOT reimplement production wiring: it spawns the same `startServer` from
+ * `server/src/static.ts` (the production entry SHA under test) and prints
+ * `READY <port>` once listening. SIGTERM/SIGINT close the instance cleanly.
  */
-import { createServer } from "node:http";
-import { isReadonlyMode, openReadonlyDatabase } from "../../src/config/readonly.js";
-import { handleApi } from "../../src/http.js";
-import { withReadonlyGuard } from "../../src/middleware/readonly-guard.js";
-import "../../src/routes/listings.js";
-import "../../src/routes/candidates.js";
-import "../../src/routes/work.js";
-import "../../src/routes/settings.js";
-import "../../src/routes/manual.js";
-import "../../src/export/route.js";
+import { startServer } from "../../src/static.js";
 
 const env = process.env as Record<string, string | undefined>;
 const dbPath = env.ADP_DB_PATH ?? "";
 
-if (!isReadonlyMode(env) || !dbPath) {
-  console.error("readonly-server fixture requires ADP_READONLY=1 and ADP_DB_PATH");
+if (!dbPath) {
+  console.error("production-entry fixture requires ADP_DB_PATH");
   process.exit(2);
 }
 
-const db = openReadonlyDatabase(dbPath);
+const started = startServer({
+  env,
+  host: "127.0.0.1",
+  port: 0,
+  listen: true,
+});
 
-const server = createServer(async (req, res) => {
+const shutdown = (): void => {
   try {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1:0");
-    const handled = await withReadonlyGuard(handleApi)(req, res, {
-      db,
-      port: 0,
-      extensionOrigins: new Set(),
-    });
-    if (handled) return;
-    if (url.pathname.startsWith("/api/")) {
-      res.writeHead(404, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "not_found" }));
-      return;
-    }
-    res.writeHead(404);
-    res.end();
+    started.close();
   } catch {
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "internal_error" }));
+    // ignore double-close during signal races
   }
-});
+  process.exit(0);
+};
 
-server.listen(0, "127.0.0.1", () => {
-  const addr = server.address();
-  const port = typeof addr === "object" && addr ? addr.port : 0;
-  console.log(`READY ${port}`);
-});
+process.once("SIGTERM", shutdown);
+process.once("SIGINT", shutdown);
+
+started.ready
+  .then(() => {
+    console.log(`READY ${started.port}`);
+  })
+  .catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    try {
+      started.close();
+    } catch {
+      // ignore
+    }
+    process.exit(1);
+  });
