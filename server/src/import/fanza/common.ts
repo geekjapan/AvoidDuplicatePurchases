@@ -1,5 +1,6 @@
 import type { Source } from "@adp/shared";
 import type { DatabaseSync } from "node:sqlite";
+import { dispatchSyncSuccess } from "../../hooks/sync-success.js";
 
 export interface UpsertableListing {
   cid: string;
@@ -102,6 +103,19 @@ export function persistSyncOutcome(
        cursor = excluded.cursor,
        last_synced_at = excluded.last_synced_at`,
   ).run(outcomeSourceKey(source), JSON.stringify(payload), now);
+
+  if (outcome.ok) {
+    dispatchSyncSuccess({
+      source,
+      outcome: {
+        ok: true,
+        counts: payload.counts,
+        error: null,
+        fetched: payload.fetched,
+        recordedAt: payload.recordedAt,
+      },
+    });
+  }
 }
 
 export function getLatestSyncOutcome(

@@ -9,6 +9,8 @@ import { handleApi } from "./http.js";
 import "./routes/listings.js";
 import "./routes/candidates.js";
 import "./routes/work.js";
+import "./routes/settings.js";
+import "./routes/manual.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = join(__dirname, "..");
