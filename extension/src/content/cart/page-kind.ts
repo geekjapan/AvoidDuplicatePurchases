@@ -1,17 +1,23 @@
 import type { InterventionSource } from "@adp/shared";
 
-/** Cart page classification for T-CART (inverse of T-DISPLAY page-kind). */
+/**
+ * Cart page classification for T-CART (inverse of T-DISPLAY page-kind).
+ * Exact documented cart pathnames only; trailing slash is the sole tolerance.
+ * Child paths (checkout / ajax / API subpaths) are not cart pages.
+ */
 export function isCartInterventionPage(
   source: InterventionSource,
   pathname: string,
 ): boolean {
   switch (source) {
     case "dlsite":
-      return /^\/maniax\/cart(?:\/|$)/i.test(pathname);
+      return pathname === "/maniax/cart" || pathname === "/maniax/cart/";
     case "fanza_doujin":
-      return /^\/dc\/doujin\/-\/basket(?:\/|$)/i.test(pathname);
+      return (
+        pathname === "/dc/doujin/-/basket" || pathname === "/dc/doujin/-/basket/"
+      );
     case "fanza_books":
-      return /^\/basket(?:\/|$)/i.test(pathname);
+      return pathname === "/basket" || pathname === "/basket/";
     default:
       return false;
   }

@@ -167,6 +167,73 @@ describe("cart row parsers", () => {
     );
   });
 
+  it("runtime-case reject: mylibrary camelCase contentId-only / numeric error_code / blank secondary product_id → 0 rows", () => {
+    const html = readFileSync(join(fixtures, "fanza-doujin-cart.html"), "utf8");
+    const doc = buildCartFixtureDocument(
+      html,
+      "https://www.dmm.co.jp/dc/doujin/-/basket/",
+    );
+
+    // 1) Basket-external mylibrary camelCase contentId/productId-only shape.
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: "0",
+        data: [
+          {
+            contentId: "d_900001",
+            productId: "d_900001",
+            title: "mylibrary-shape",
+            makerName: "x",
+          },
+        ],
+      }),
+      [],
+      "mylibrary camelCase contentId-only must yield 0 rows",
+    );
+
+    // 2) Numeric error_code 0 is wrong type (canonical success is string "0").
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: 0,
+        error_message: [],
+        data: [{ content_id: "d_900001", title: "numeric-error-code" }],
+      }),
+      [],
+      "numeric error_code 0 must yield 0 rows",
+    );
+
+    // 3) Blank secondary product_id rejects whole item even when content_id valid.
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: "0",
+        data: [
+          {
+            content_id: "d_900001",
+            product_id: "   ",
+            title: "blank-secondary",
+          },
+        ],
+      }),
+      [],
+      "blank product_id with valid content_id must yield 0 rows",
+    );
+
+    // product_id present but inconsistent with content_id → reject.
+    assert.deepEqual(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+        error_code: "0",
+        data: [
+          {
+            content_id: "d_900001",
+            product_id: "d_other",
+            title: "mismatch-secondary",
+          },
+        ],
+      }),
+      [],
+    );
+  });
+
   it("rejects Books payload with unknown keys / wrong types / blank product ids", () => {
     const html = readFileSync(join(fixtures, "fanza-books-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(html, "https://book.dmm.co.jp/basket/");

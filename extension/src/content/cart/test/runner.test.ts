@@ -394,4 +394,58 @@ describe("cart runner", () => {
     assert.notEqual(rows[0]!.host, doc.body);
     assert.notEqual(rows[1]!.host, doc.body);
   });
+
+  it("mounts warnings for quote/CSS-meta cids without throw and without cross-row match", async () => {
+    const html = readFileSync(join(fixtures, "dlsite-cart.html"), "utf8");
+    const doc = buildCartFixtureDocument(html, "https://www.dlsite.com/maniax/cart");
+    const { mountCartWarning } = await import("../warning.js");
+    const { createCartDeleter } = await import("../../../cart-deleter/index.js");
+
+    // CSS/meta-hostile cids: quotes, attribute closers, combinators.
+    const cidA = `evil"][data-x="1`;
+    const cidB = `other" .adp-cart-warning`;
+    const hostA = doc.createElement("div");
+    const hostB = doc.createElement("div");
+    doc.body.appendChild(hostA);
+    doc.body.appendChild(hostB);
+
+    const deleter = createCartDeleter({
+      source: "dlsite",
+      doc: doc as unknown as Document,
+      fetchFn: async () => ({ ok: true }) as Response,
+    });
+    const hit = { owned: true, other: [] as [] };
+
+    assert.doesNotThrow(() => {
+      mountCartWarning(
+        doc as unknown as Document,
+        { cid: cidA, title: "A", maker: null, host: hostA as unknown as HTMLElement },
+        hit,
+        deleter,
+      );
+      mountCartWarning(
+        doc as unknown as Document,
+        { cid: cidB, title: "B", maker: null, host: hostB as unknown as HTMLElement },
+        hit,
+        deleter,
+      );
+      // Second mount same cid must be no-op (duplicate guard) without throw.
+      mountCartWarning(
+        doc as unknown as Document,
+        { cid: cidA, title: "A", maker: null, host: hostA as unknown as HTMLElement },
+        hit,
+        deleter,
+      );
+    });
+
+    const warnA = hostA.querySelectorAll(`.${ADP_CART_WARNING_CLASS}`);
+    const warnB = hostB.querySelectorAll(`.${ADP_CART_WARNING_CLASS}`);
+    assert.equal(warnA.length, 1, "exactly one warning on host A");
+    assert.equal(warnB.length, 1, "exactly one warning on host B");
+    assert.equal(warnA[0]!.getAttribute("data-adp-cart-warning"), cidA);
+    assert.equal(warnB[0]!.getAttribute("data-adp-cart-warning"), cidB);
+    // No cross-row mis-match: A host must not claim B's cid.
+    assert.notEqual(warnA[0]!.getAttribute("data-adp-cart-warning"), cidB);
+    assert.notEqual(warnB[0]!.getAttribute("data-adp-cart-warning"), cidA);
+  });
 });

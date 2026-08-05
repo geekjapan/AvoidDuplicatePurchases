@@ -113,6 +113,13 @@ describe("e2e cart surfaces", () => {
       FANZA_CART_RECHECK_CHECKPOINT.cartHumanCommit,
       CART_GATE_REFERENCE.humanGateCommit,
     );
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.fanzaCommit,
+      CART_GATE_REFERENCE.fanzaAcceptedCommit,
+    );
+    // Clear separation: synthetic E2E = functional; accepted SHAs = human evidence.
+    assert.equal(FANZA_CART_RECHECK_CHECKPOINT.evidenceKind, "synthetic-functional-e2e");
+    assert.equal(CART_GATE_REFERENCE.evidenceKind, "human-redacted-checkpoint");
     assert.equal(FANZA_CART_RECHECK_CHECKPOINT.mode, "synthetic-local-import-pipeline");
     assert.equal(FANZA_CART_RECHECK_CHECKPOINT.syntheticCid, "d_900001");
   });

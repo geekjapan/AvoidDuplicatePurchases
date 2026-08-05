@@ -244,6 +244,90 @@ describe("cart deleter", () => {
     }
   });
 
+  it("after mount, cart child paths yield zero fetch for delete and undo on all stores", async () => {
+    const cases: Array<{
+      source: "dlsite" | "fanza-doujin" | "fanza-books";
+      cartHref: string;
+      childPath: string;
+      csrfToken?: string;
+    }> = [
+      {
+        source: "dlsite",
+        cartHref: "https://www.dlsite.com/maniax/cart",
+        childPath: "/maniax/cart/ajax/=/mode/other",
+      },
+      {
+        source: "fanza-doujin",
+        cartHref: "https://www.dmm.co.jp/dc/doujin/-/basket/",
+        childPath: "/dc/doujin/-/basket/checkout",
+        csrfToken: TOKEN,
+      },
+      {
+        source: "fanza-books",
+        cartHref: OWN_URL,
+        childPath: "/basket/checkout",
+      },
+    ];
+
+    for (const c of cases) {
+      const { fetchFn, urls } = recordingFetch([{ ok: true }, { ok: true }]);
+      const doc = liveDoc({
+        href: c.cartHref,
+        csrfToken: c.csrfToken,
+      }) as Document & { setPathname: (p: string) => void };
+      const deleter = createCartDeleter({
+        source: c.source,
+        doc,
+        fetchFn,
+      });
+      // Mounted on cart, then pathname becomes documented child path.
+      doc.setPathname(c.childPath);
+      const result = await deleter.remove(["cid1"]);
+      assert.deepEqual(result, { ok: [], failed: ["cid1"] }, c.source);
+      assert.equal(urls.length, 0, `${c.source} delete on child path must fetch 0`);
+      await deleter.restore(["cid1"]);
+      assert.equal(urls.length, 0, `${c.source} undo on child path must fetch 0`);
+    }
+  });
+
+  it("allows delete when pathname is exact cart even if href has query string", async () => {
+    const { fetchFn, urls } = recordingFetch([{ ok: true }]);
+    const doc = liveDoc({
+      href: "https://www.dlsite.com/maniax/cart?from=nav",
+      pathname: "/maniax/cart",
+    });
+    const deleter = createCartDeleter({
+      source: "dlsite",
+      doc,
+      fetchFn,
+    });
+    const result = await deleter.remove(["RJ123456"]);
+    assert.deepEqual(result.ok, ["RJ123456"]);
+    assert.equal(urls.length, 1);
+  });
+
+  it("references human evidence kind separately from synthetic functional e2e", async () => {
+    const { FANZA_CART_RECHECK_CHECKPOINT } = await import("../gate-reference.js");
+    assert.equal(CART_GATE_REFERENCE.evidenceKind, "human-redacted-checkpoint");
+    assert.equal(FANZA_CART_RECHECK_CHECKPOINT.evidenceKind, "synthetic-functional-e2e");
+    assert.equal(
+      CART_GATE_REFERENCE.humanGateCommit,
+      "24c4bbe166f02c1ab5679789d58ea2627809f965",
+    );
+    assert.equal(
+      CART_GATE_REFERENCE.fanzaAcceptedCommit,
+      "a31b7e3d97dc0f394d53aa608742e822931fb92a",
+    );
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.fanzaCommit,
+      CART_GATE_REFERENCE.fanzaAcceptedCommit,
+    );
+    assert.equal(
+      FANZA_CART_RECHECK_CHECKPOINT.cartHumanCommit,
+      CART_GATE_REFERENCE.humanGateCommit,
+    );
+  });
+
   it("never auto-deletes without explicit remove call", async () => {
     const { fetchFn, urls } = recordingFetch([]);
     createCartDeleter({

@@ -4,9 +4,12 @@ import { describe, it } from "node:test";
 import { isCartInterventionPage } from "../page-kind.js";
 
 describe("cart page classification", () => {
-  it("classifies cart pages for all three intervention stores", () => {
+  it("classifies exact cart pathnames for all three intervention stores", () => {
     assert.equal(isCartInterventionPage("dlsite", "/maniax/cart"), true);
+    assert.equal(isCartInterventionPage("dlsite", "/maniax/cart/"), true);
+    assert.equal(isCartInterventionPage("fanza_doujin", "/dc/doujin/-/basket"), true);
     assert.equal(isCartInterventionPage("fanza_doujin", "/dc/doujin/-/basket/"), true);
+    assert.equal(isCartInterventionPage("fanza_books", "/basket"), true);
     assert.equal(isCartInterventionPage("fanza_books", "/basket/"), true);
   });
 
@@ -23,5 +26,17 @@ describe("cart page classification", () => {
       isCartInterventionPage("fanza_books", "/product/100001/b100xxxxx01001/"),
       false,
     );
+  });
+
+  it("does not classify cart child paths (checkout/ajax/API) as cart", () => {
+    assert.equal(
+      isCartInterventionPage("dlsite", "/maniax/cart/ajax/=/mode/other"),
+      false,
+    );
+    assert.equal(
+      isCartInterventionPage("fanza_doujin", "/dc/doujin/-/basket/checkout"),
+      false,
+    );
+    assert.equal(isCartInterventionPage("fanza_books", "/basket/checkout"), false);
   });
 });

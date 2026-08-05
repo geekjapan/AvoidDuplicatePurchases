@@ -13,6 +13,18 @@ function warningMessage(hit: LookupHit): string {
   return "";
 }
 
+/**
+ * Duplicate-mount guard: never interpolate raw cid into a CSS selector.
+ * Attribute presence + exact getAttribute string compare (no CSS.escape).
+ */
+function hasMountedWarningForCid(host: Element, cid: string): boolean {
+  const candidates = host.querySelectorAll(`.${ADP_CART_WARNING_CLASS}`);
+  for (const el of Array.from(candidates)) {
+    if (el.getAttribute(MOUNT_ATTR) === cid) return true;
+  }
+  return false;
+}
+
 export function renderCartWarning(
   doc: Document,
   row: CartRow,
@@ -55,7 +67,7 @@ export function mountCartWarning(
   deleter: CartDeleter,
   onDeleted?: (cid: string) => void,
 ): void {
-  if (row.host.querySelector(`[${MOUNT_ATTR}="${row.cid}"]`)) return;
+  if (hasMountedWarningForCid(row.host, row.cid)) return;
   const warning = renderCartWarning(doc, row, hit, () => {
     void handleDelete(doc, row.cid, deleter, onDeleted).catch(() => {});
   });
