@@ -14808,15 +14808,18 @@ async function renderCandidates(root) {
             listingBlock(candidate.b)
           ])
         );
+        const pairLabel = `${candidate.a.title}\uFF08${candidate.a.source} / ${candidate.a.cid}\uFF09 \u3068 ${candidate.b.title}\uFF08${candidate.b.source} / ${candidate.b.cid}\uFF09`;
         const approve = el("button", {
           className: "primary",
           textContent: "\u25CB \u540C\u4E00",
-          "data-testid": `approve-${candidate.id}`
+          "data-testid": `approve-${candidate.id}`,
+          "aria-label": `\u25CB \u540C\u4E00: ${pairLabel}`
         });
         const reject = el("button", {
           className: "danger",
           textContent: "\xD7 \u5225\u7269",
-          "data-testid": `reject-${candidate.id}`
+          "data-testid": `reject-${candidate.id}`,
+          "aria-label": `\xD7 \u5225\u7269: ${pairLabel}`
         });
         const runDecision = async (same) => {
           if (pending) return;
@@ -15061,9 +15064,11 @@ async function renderLibrary(root) {
           if (checkbox.checked) selected.add(listing.id);
           else selected.delete(listing.id);
         });
+        const splitAccessibleName = `\u5206\u96E2: ${listing.title}\uFF08${listing.source} / ${listing.cid}\uFF09`;
         const splitBtn = el2("button", {
           textContent: "\u5206\u96E2",
-          "data-testid": `split-${listing.cid}`
+          "data-testid": `split-${listing.cid}`,
+          "aria-label": splitAccessibleName
         });
         splitButtons.add(splitBtn);
         splitBtn.addEventListener("click", () => {

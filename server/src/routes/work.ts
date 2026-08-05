@@ -67,18 +67,21 @@ function deleteCandidatesForListing(db: ApiContext["db"], listingId: number): vo
  * Trust-boundary body for work assignment.
  * Shared contract still requires workId for explicit merge; split uses allocateNew
  * so the client never invents a work id (avoids hidden-work collisions).
+ *
+ * Manual merge/split always lock (spec: work_id_locked=1). lock may be omitted or
+ * true for compatibility; lock:false is rejected at the schema boundary (400).
  */
 const LocalWorkAssignmentSchema = z.union([
   z
     .object({
       workId: z.number().int().positive(),
-      lock: z.boolean().optional(),
+      lock: z.literal(true).optional(),
     })
     .strict(),
   z
     .object({
       allocateNew: z.literal(true),
-      lock: z.boolean().optional(),
+      lock: z.literal(true).optional(),
     })
     .strict(),
 ]);
@@ -141,7 +144,7 @@ async function handleWorkRoute(
     return true;
   }
 
-  const locked = parsed.lock ?? true;
+  // Manual merge/split always lock; lock is not a client choice (STD/SPEC-ADMIN-MANUAL-LOCK-BYPASS-1).
   const workId = runInTransaction(ctx.db, () => {
     const assigned =
       "allocateNew" in parsed && parsed.allocateNew
@@ -152,8 +155,8 @@ async function handleWorkRoute(
             return explicit;
           })();
     ctx.db
-      .prepare("UPDATE listing SET work_id = ?, work_id_locked = ? WHERE id = ?")
-      .run(assigned, locked ? 1 : 0, listing.id);
+      .prepare("UPDATE listing SET work_id = ?, work_id_locked = 1 WHERE id = ?")
+      .run(assigned, listing.id);
     // Manual merge/split must suppress related candidate rows for the affected listing.
     deleteCandidatesForListing(ctx.db, listing.id);
     return assigned;
@@ -164,7 +167,7 @@ async function handleWorkRoute(
     200,
     WorkAssignmentResponseSchema.parse({
       workId,
-      locked,
+      locked: true,
     }),
   );
   return true;

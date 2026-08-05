@@ -432,6 +432,157 @@ describe("e2e admin core journey (browser-equivalent)", () => {
     );
   });
 
+  it("gives each library split button a unique accessible name with title/source/cid (SPEC-ADMIN-A11Y-ACTION-CONTEXT-1)", async () => {
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "ライブラリ",
+      "library for split a11y",
+    );
+    const makerFilter = window.document.querySelector(
+      '[data-testid="filter-maker"]',
+    ) as HTMLInputElement;
+    const searchBtn = window.document.querySelector(
+      '[data-testid="search-btn"]',
+    ) as HTMLButtonElement;
+    makerFilter.value = "Merge Maker";
+    click(searchBtn);
+    await waitFor(
+      () =>
+        window.document.querySelector('[data-testid="split-RJ_E2E_MERGE_A"]') !== null &&
+        window.document.querySelector('[data-testid="split-d_e2e_merge_b"]') !== null,
+      "two split buttons for a11y",
+    );
+
+    const splitA = window.document.querySelector(
+      '[data-testid="split-RJ_E2E_MERGE_A"]',
+    ) as HTMLButtonElement;
+    const splitB = window.document.querySelector(
+      '[data-testid="split-d_e2e_merge_b"]',
+    ) as HTMLButtonElement;
+    assert.equal(splitA.textContent?.trim(), "分離", "visible split label preserved");
+    assert.equal(splitB.textContent?.trim(), "分離", "visible split label preserved");
+
+    const nameA = splitA.getAttribute("aria-label") ?? "";
+    const nameB = splitB.getAttribute("aria-label") ?? "";
+    assert.match(nameA, /分離/);
+    assert.match(nameA, /Manual Merge Target Alpha|Merge/i);
+    assert.match(nameA, /dlsite/);
+    assert.match(nameA, /RJ_E2E_MERGE_A/);
+    assert.match(nameB, /分離/);
+    assert.match(nameB, /Manual Merge Target Beta|Merge/i);
+    assert.match(nameB, /fanza_doujin/);
+    assert.match(nameB, /d_e2e_merge_b/);
+    assert.notEqual(nameA, nameB, "each split button must uniquely identify its listing");
+    assert.ok(!nameA.includes("d_e2e_merge_b"), "split A name must not include B cid");
+    assert.ok(!nameB.includes("RJ_E2E_MERGE_A"), "split B name must not include A cid");
+
+    makerFilter.value = "";
+    click(searchBtn);
+    await waitFor(
+      () => window.document.querySelectorAll("[data-cid]").length >= 4,
+      "library reset after split a11y",
+    );
+  });
+
+  it("gives each candidate action button a unique accessible name with pair identity (SPEC-ADMIN-A11Y-ACTION-CONTEXT-1)", async () => {
+    // Seed two distinct candidate cards so accessible names must disambiguate pairs.
+    const a1 = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_A11Y_A1",
+      title: "A11y Pair One Alpha",
+      maker: "A11y Maker",
+    });
+    const b1 = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_e2e_a11y_b1",
+      title: "A11y Pair One Beta",
+      maker: "A11y Maker",
+    });
+    const a2 = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_E2E_A11Y_A2",
+      title: "A11y Pair Two Alpha",
+      maker: "A11y Maker",
+    });
+    const b2 = insertListing(db, {
+      source: "fanza_books",
+      cid: "b_e2e_a11y_b2",
+      title: "A11y Pair Two Beta",
+      maker: "A11y Maker",
+    });
+    const cand1 = insertCandidate(db, a1, b1, 0.9);
+    const cand2 = insertCandidate(db, a2, b2, 0.91);
+
+    const navCandidates = window.document.querySelector(
+      'nav a[href="/candidates"]',
+    ) as HTMLAnchorElement;
+    click(navCandidates);
+    await waitFor(
+      () =>
+        window.document.querySelector(`[data-candidate-id="${cand1}"]`) !== null &&
+        window.document.querySelector(`[data-candidate-id="${cand2}"]`) !== null,
+      "two candidate cards for a11y",
+    );
+
+    const approve1 = window.document.querySelector(
+      `[data-testid="approve-${cand1}"]`,
+    ) as HTMLButtonElement;
+    const reject1 = window.document.querySelector(
+      `[data-testid="reject-${cand1}"]`,
+    ) as HTMLButtonElement;
+    const approve2 = window.document.querySelector(
+      `[data-testid="approve-${cand2}"]`,
+    ) as HTMLButtonElement;
+    const reject2 = window.document.querySelector(
+      `[data-testid="reject-${cand2}"]`,
+    ) as HTMLButtonElement;
+    assert.ok(approve1 && reject1 && approve2 && reject2);
+
+    assert.equal(approve1.textContent?.trim(), "○ 同一");
+    assert.equal(reject1.textContent?.trim(), "× 別物");
+
+    const approveName1 = approve1.getAttribute("aria-label") ?? "";
+    const rejectName1 = reject1.getAttribute("aria-label") ?? "";
+    const approveName2 = approve2.getAttribute("aria-label") ?? "";
+    const rejectName2 = reject2.getAttribute("aria-label") ?? "";
+
+    for (const name of [approveName1, rejectName1]) {
+      assert.match(name, /A11y Pair One Alpha/);
+      assert.match(name, /RJ_E2E_A11Y_A1/);
+      assert.match(name, /A11y Pair One Beta/);
+      assert.match(name, /d_e2e_a11y_b1/);
+      assert.match(name, /dlsite/);
+      assert.match(name, /fanza_doujin/);
+    }
+    for (const name of [approveName2, rejectName2]) {
+      assert.match(name, /A11y Pair Two Alpha/);
+      assert.match(name, /RJ_E2E_A11Y_A2/);
+      assert.match(name, /A11y Pair Two Beta/);
+      assert.match(name, /b_e2e_a11y_b2/);
+    }
+    assert.match(approveName1, /○ 同一|同一/);
+    assert.match(rejectName1, /× 別物|別物/);
+    assert.notEqual(approveName1, approveName2, "approve names uniquely identify each pair");
+    assert.notEqual(rejectName1, rejectName2, "reject names uniquely identify each pair");
+    assert.ok(
+      !approveName1.includes("RJ_E2E_A11Y_A2"),
+      "card1 approve must not include card2 cid",
+    );
+    assert.ok(
+      !approveName2.includes("RJ_E2E_A11Y_A1"),
+      "card2 approve must not include card1 cid",
+    );
+
+    // Leave candidates page for later journey steps that expect library.
+    const navLibrary = window.document.querySelector(
+      'nav a[href="/"]',
+    ) as HTMLAnchorElement;
+    click(navLibrary);
+    await waitFor(
+      () => window.document.querySelector("h2")?.textContent === "ライブラリ",
+      "library after candidate a11y",
+    );
+  });
+
   it("filters library by title, maker, and source through the UI", async () => {
     const q = window.document.querySelector(
       '[data-testid="filter-q"]',

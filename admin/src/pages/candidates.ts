@@ -95,15 +95,18 @@ export async function renderCandidates(root: HTMLElement): Promise<void> {
             listingBlock(candidate.b),
           ]),
         );
+        const pairLabel = `${candidate.a.title}（${candidate.a.source} / ${candidate.a.cid}） と ${candidate.b.title}（${candidate.b.source} / ${candidate.b.cid}）`;
         const approve = el("button", {
           className: "primary",
           textContent: "○ 同一",
           "data-testid": `approve-${candidate.id}`,
+          "aria-label": `○ 同一: ${pairLabel}`,
         });
         const reject = el("button", {
           className: "danger",
           textContent: "× 別物",
           "data-testid": `reject-${candidate.id}`,
+          "aria-label": `× 別物: ${pairLabel}`,
         });
 
         const runDecision = async (same: boolean): Promise<void> => {

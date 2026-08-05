@@ -246,9 +246,11 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
           if (checkbox.checked) selected.add(listing.id);
           else selected.delete(listing.id);
         });
+        const splitAccessibleName = `分離: ${listing.title}（${listing.source} / ${listing.cid}）`;
         const splitBtn = el("button", {
           textContent: "分離",
           "data-testid": `split-${listing.cid}`,
+          "aria-label": splitAccessibleName,
         });
         splitButtons.add(splitBtn);
         splitBtn.addEventListener("click", () => {

@@ -592,6 +592,166 @@ describe("work assignment API", () => {
   });
 });
 
+describe("manual lock bypass rejected (STD/SPEC-ADMIN-MANUAL-LOCK-BYPASS-1)", () => {
+  let server: Server;
+  let port: number;
+  let db: DatabaseSync;
+
+  after(() => {
+    server?.close();
+    db?.close();
+  });
+
+  it("rejects lock:false on explicit work merge; work_id/work_id_locked/candidates unchanged", async () => {
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_LOCKFALSE_MERGE_A",
+      title: "Lockfalse Merge Alpha",
+      maker: "Lockfalse Maker",
+    });
+    const idB = insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_lockfalse_merge_b",
+      title: "Lockfalse Merge Beta",
+      maker: "Lockfalse Maker",
+    });
+    const candidateId = insertCandidate(db, idA, idB, 0.91);
+    ({ server, port } = await startTestServer(db));
+
+    const snap = (id: number) =>
+      db
+        .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+        .get(id) as { work_id: number; work_id_locked: number };
+    const beforeA = snap(idA);
+    const beforeB = snap(idB);
+    assert.equal(beforeA.work_id_locked, 0);
+    assert.equal(beforeB.work_id_locked, 0);
+
+    const candidateCountBefore = (
+      db.prepare("SELECT COUNT(*) AS n FROM candidate").get() as { n: number }
+    ).n;
+    assert.equal(candidateCountBefore, 1);
+
+    // Explicit existing-work merge with lock:false must be schema-rejected.
+    const res = await request(port, "POST", `/api/listings/dlsite/RJ_LOCKFALSE_MERGE_A/work`, {
+      workId: beforeA.work_id,
+      lock: false,
+    });
+    assert.equal(res.status, 400);
+
+    assert.deepEqual(snap(idA), beforeA);
+    assert.deepEqual(snap(idB), beforeB);
+    const residual = db
+      .prepare("SELECT COUNT(*) AS n FROM candidate WHERE id = ?")
+      .get(candidateId) as { n: number };
+    assert.equal(residual.n, 1, "lock:false merge must not suppress candidates");
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM candidate").get() as { n: number }).n,
+      candidateCountBefore,
+    );
+  });
+
+  it("rejects lock:false on allocateNew split; work_id/work_id_locked/candidates unchanged", async () => {
+    server?.close();
+    db?.close();
+    db = openDatabase(":memory:").sqlite;
+    const idA = insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_LOCKFALSE_SPLIT_A",
+      title: "Lockfalse Split Alpha",
+      maker: "Lockfalse Split Maker",
+    });
+    const idB = insertListing(db, {
+      source: "fanza_books",
+      cid: "b_lockfalse_split_b",
+      title: "Lockfalse Split Beta",
+      maker: "Lockfalse Split Maker",
+    });
+    const candidateId = insertCandidate(db, idA, idB, 0.88);
+    ({ server, port } = await startTestServer(db));
+
+    const snap = (id: number) =>
+      db
+        .prepare("SELECT work_id, work_id_locked FROM listing WHERE id = ?")
+        .get(id) as { work_id: number; work_id_locked: number };
+    const beforeA = snap(idA);
+    const beforeB = snap(idB);
+    assert.equal(beforeA.work_id_locked, 0);
+    assert.equal(beforeB.work_id_locked, 0);
+    const candidateCountBefore = (
+      db.prepare("SELECT COUNT(*) AS n FROM candidate").get() as { n: number }
+    ).n;
+
+    const res = await request(
+      port,
+      "POST",
+      `/api/listings/fanza_books/b_lockfalse_split_b/work`,
+      { allocateNew: true, lock: false },
+    );
+    assert.equal(res.status, 400);
+
+    assert.deepEqual(snap(idA), beforeA);
+    assert.deepEqual(snap(idB), beforeB);
+    const residual = db
+      .prepare("SELECT COUNT(*) AS n FROM candidate WHERE id = ?")
+      .get(candidateId) as { n: number };
+    assert.equal(residual.n, 1, "lock:false split must not suppress candidates");
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM candidate").get() as { n: number }).n,
+      candidateCountBefore,
+    );
+  });
+
+  it("accepts lock omitted / lock:true and always returns locked=true with DB locked=1", async () => {
+    server?.close();
+    db?.close();
+    db = openDatabase(":memory:").sqlite;
+    insertListing(db, {
+      source: "dlsite",
+      cid: "RJ_LOCK_OK_A",
+      title: "Lock Ok Alpha",
+      maker: "Lock Ok Maker",
+    });
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_lock_ok_b",
+      title: "Lock Ok Beta",
+      maker: "Lock Ok Maker",
+    });
+    ({ server, port } = await startTestServer(db));
+
+    const listings = await request(port, "GET", "/api/listings");
+    const rows = (listings.json as {
+      listings: Array<{ source: string; cid: string; workId: number }>;
+    }).listings;
+    const target = Math.min(...rows.map((r) => r.workId));
+
+    // lock omitted on explicit merge
+    const mergeOmit = await request(port, "POST", `/api/listings/dlsite/RJ_LOCK_OK_A/work`, {
+      workId: target,
+    });
+    assert.equal(mergeOmit.status, 200);
+    assert.equal((mergeOmit.json as { locked: boolean }).locked, true);
+
+    // lock:true on allocateNew split
+    const splitTrue = await request(
+      port,
+      "POST",
+      `/api/listings/fanza_doujin/d_lock_ok_b/work`,
+      { allocateNew: true, lock: true },
+    );
+    assert.equal(splitTrue.status, 200);
+    assert.equal((splitTrue.json as { locked: boolean }).locked, true);
+
+    const after = await request(port, "GET", "/api/listings");
+    const afterRows = (after.json as {
+      listings: Array<{ cid: string; workIdLocked?: boolean }>;
+    }).listings;
+    assert.ok(afterRows.every((r) => r.workIdLocked === true));
+  });
+});
+
 describe("stale candidate after manual merge/split lock (ADMIN-LOCK-1)", () => {
   let server: Server;
   let port: number;
