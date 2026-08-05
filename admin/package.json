@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --format=esm --platform=browser --target=es2022 --outfile=dist/main.js --legal-comments=none && cp index.html dist/index.html && cp src/styles.css dist/styles.css",
-    "test": "node --import tsx --test 'test/**/*.test.ts'",
-    "test:e2e": "node --import tsx --test 'test/**/*.e2e.test.ts'"
+    "test": "node --import tsx --test 'test/**/*.test.ts' 'src/pages/**/*.test.ts'",
+    "test:e2e": "node --import tsx --test 'test/**/*.e2e.test.ts' 'src/pages/**/*.e2e.test.ts'"
   },
   "dependencies": {
     "@adp/shared": "0.0.0"
