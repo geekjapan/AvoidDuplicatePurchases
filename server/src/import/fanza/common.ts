@@ -1,5 +1,6 @@
 import type { Source } from "@adp/shared";
 import type { DatabaseSync } from "node:sqlite";
+import { dispatchSyncSuccess } from "../../hooks/sync-success.js";
 
 export interface UpsertableListing {
   cid: string;
@@ -102,6 +103,19 @@ export function persistSyncOutcome(
        cursor = excluded.cursor,
        last_synced_at = excluded.last_synced_at`,
   ).run(outcomeSourceKey(source), JSON.stringify(payload), now);
+
+  if (outcome.ok) {
+    dispatchSyncSuccess({
+      source,
+      outcome: {
+        ok: true,
+        counts: payload.counts,
+        error: null,
+        fetched: payload.fetched,
+        recordedAt: payload.recordedAt,
+      },
+    });
+  }
 }
 
 export function getLatestSyncOutcome(
@@ -120,6 +134,37 @@ export function getLatestSyncOutcome(
 
 function preferNonNull<T>(next: T | null, prev: T | null): T | null {
   return next !== null && next !== undefined ? next : prev;
+}
+
+const PRECISION_RANK: Record<UpsertableListing["purchasedAtPrecision"], number> = {
+  unknown: 0,
+  day: 1,
+  second: 2,
+};
+
+/**
+ * Prefer richer purchased_at_precision; never regress second/day to unknown when
+ * a later partial import/manual re-run only carries the fallback precision.
+ */
+export function preferPurchasedAtPrecision(
+  next: UpsertableListing["purchasedAtPrecision"],
+  prev: UpsertableListing["purchasedAtPrecision"] | null | undefined,
+): UpsertableListing["purchasedAtPrecision"] {
+  if (!prev) return next;
+  return PRECISION_RANK[next] >= PRECISION_RANK[prev] ? next : prev;
+}
+
+/**
+ * Prefer new title when it is real product evidence.
+ * A cid-only fallback must not erase a previously enriched title.
+ */
+export function preferListingTitle(next: string, prev: string, cid: string): string {
+  const n = (next ?? "").trim();
+  const p = (prev ?? "").trim();
+  if (!n) return p || cid;
+  if (!p) return n;
+  if (n === cid && p !== cid) return p;
+  return n;
 }
 
 /**
@@ -187,25 +232,37 @@ export function upsertFanzaListing(
   const cid = listing.cid.trim();
   const existing = db
     .prepare(
-      `SELECT id, maker_name, series_id, image_url, purchased_at, raw_json
+      `SELECT id, title, maker_name, series_id, image_url, purchased_at,
+              purchased_at_precision, raw_json, work_id, work_id_locked
        FROM listing WHERE source = ? AND cid = ?`,
     )
     .get(source, cid) as
     | {
         id: number;
+        title: string;
         maker_name: string | null;
         series_id: string | null;
         image_url: string | null;
         purchased_at: string | null;
+        purchased_at_precision: UpsertableListing["purchasedAtPrecision"];
         raw_json: string;
+        work_id: number;
+        work_id_locked: number;
       }
     | undefined;
 
   if (existing) {
+    // Non-regressing field merge: only apply new valid evidence.
+    // work_id / work_id_locked are intentionally never rewritten here.
+    const title = preferListingTitle(listing.title, existing.title, cid);
     const maker = preferNonNull(listing.maker, existing.maker_name);
     const seriesId = preferNonNull(listing.seriesId, existing.series_id);
     const imageUrl = preferNonNull(listing.imageUrl, existing.image_url);
     const purchasedAt = preferNonNull(listing.purchasedAt, existing.purchased_at);
+    const purchasedAtPrecision = preferPurchasedAtPrecision(
+      listing.purchasedAtPrecision,
+      existing.purchased_at_precision,
+    );
     const rawJson = mergeRawJsonEvidence(existing.raw_json, listing.rawJson);
     db.prepare(
       `UPDATE listing SET
@@ -213,12 +270,12 @@ export function upsertFanzaListing(
         purchased_at = ?, purchased_at_precision = ?, raw_json = ?, imported_at = ?
        WHERE id = ?`,
     ).run(
-      listing.title,
+      title,
       maker,
       seriesId,
       imageUrl,
       purchasedAt,
-      listing.purchasedAtPrecision,
+      purchasedAtPrecision,
       rawJson,
       now,
       existing.id,

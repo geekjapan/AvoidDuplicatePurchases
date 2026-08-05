@@ -1,14 +1,19 @@
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
-import { isAllowedOrigin, loadConfig } from "./config.js";
+import { dlsiteProductJsonUrl } from "@adp/shared/adapters/dlsite";
+import { isAllowedOrigin, loadConfig, type ServerConfig } from "./config.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
+import type { ProductFetcher } from "./services/import.js";
+import { loadAdminSettings } from "./routes/settings.js";
 import "./routes/listings.js";
 import "./routes/candidates.js";
 import "./routes/work.js";
+import "./routes/settings.js";
+import "./routes/manual.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = join(__dirname, "..");
@@ -80,27 +85,116 @@ export function handleStatic(
   return true;
 }
 
-/** Start API + admin SPA server (T-ADMIN-CORE entry). */
-export function startServer(): { close: () => void } {
-  const config = loadConfig();
+/**
+ * Production DLsite product.json fetcher for manual/import metadata enrichment.
+ * Reuses the shared public product.json URL contract. Network / non-2xx / invalid
+ * JSON never throw — callers fall back to cid-only registration.
+ */
+export function createProductionProductFetcher(
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+): ProductFetcher {
+  return async (workno: string) => {
+    try {
+      const res = await fetchImpl(dlsiteProductJsonUrl(workno), {
+        headers: { "User-Agent": "Mozilla/5.0 (ADP)" },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+}
+
+export interface StartServerOptions {
+  /** Env map for loadConfig (defaults to process.env). */
+  env?: Record<string, string | undefined>;
+  /** Injected fetch for product.json (defaults to global fetch). */
+  fetchImpl?: typeof fetch;
+  /**
+   * When false, create the HTTP server but do not call listen.
+   * Tests can still drive requests via the returned `server` when listen is true
+   * on an ephemeral port, or use handleApi seams.
+   */
+  listen?: boolean;
+  /** Override listen host (defaults to config.host). */
+  host?: string;
+  /**
+   * Force listen port. When set, takes precedence over env and persisted settings.
+   * Use 0 for an ephemeral port (listen required).
+   */
+  port?: number;
+  /** Optional pre-built config (skips loadConfig when provided). */
+  config?: ServerConfig;
+}
+
+export interface StartedServer {
+  close: () => void;
+  /** Actual listen port (resolved after ready when ephemeral 0 was requested). */
+  readonly port: number;
+  host: string;
+  server: Server;
+  /** Resolves once listen has bound (or immediately when listen:false). */
+  ready: Promise<void>;
+  /** True when productFetcher was installed on the production ApiContext path. */
+  hasProductFetcher: boolean;
+}
+
+/**
+ * Resolve listen port after DB open.
+ * Priority (conservative, matches existing config contract):
+ * 1. explicit options.port
+ * 2. ADP_PORT when set in env (ops override / loadConfig)
+ * 3. persisted admin settings port from DB
+ * 4. loadConfig default port
+ */
+export function resolveListenPort(
+  config: ServerConfig,
+  db: import("node:sqlite").DatabaseSync,
+  env: Record<string, string | undefined>,
+  forcedPort?: number,
+): number {
+  if (forcedPort !== undefined) return forcedPort;
+  if (env.ADP_PORT !== undefined && String(env.ADP_PORT).trim() !== "") {
+    return config.port;
+  }
+  const settings = loadAdminSettings(db, config.port);
+  return settings.port;
+}
+
+/** Start API + admin SPA server (T-ADMIN-CORE entry + T-ADMIN-OPS wiring). */
+export function startServer(options: StartServerOptions = {}): StartedServer {
+  const env = options.env ?? (process.env as Record<string, string | undefined>);
+  const config = options.config ?? loadConfig(env);
   mkdirSync(dirname(config.dbPath), { recursive: true });
   const appDb = openDatabase(config.dbPath);
   const db = appDb.sqlite;
+
+  const runtime = {
+    port: resolveListenPort(config, db, env, options.port),
+  };
+  const host = options.host ?? config.host;
+  const productFetcher = createProductionProductFetcher(
+    options.fetchImpl ?? globalThis.fetch.bind(globalThis),
+  );
 
   const server = createServer(async (req, res) => {
     try {
       // Shared Origin gate for API and static SPA (spec §7).
       // No Origin header remains allowed (curl / same-machine tools).
-      if (!isAllowedOrigin(req.headers.origin, config.port, config.extensionOrigins)) {
+      // Port must match the actual listen/origin port (persisted or env).
+      const port = runtime.port;
+      if (!isAllowedOrigin(req.headers.origin, port, config.extensionOrigins)) {
         forbidden(res);
         return;
       }
 
-      const url = new URL(req.url ?? "/", `http://127.0.0.1:${config.port}`);
+      const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
       const apiHandled = await handleApi(req, res, {
         db,
-        port: config.port,
+        port,
         extensionOrigins: config.extensionOrigins,
+        productFetcher,
       });
       if (apiHandled) return;
 
@@ -114,12 +208,36 @@ export function startServer(): { close: () => void } {
     }
   });
 
-  server.listen(config.port, config.host);
+  const shouldListen = options.listen !== false;
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+
+  if (shouldListen) {
+    server.listen(runtime.port, host, () => {
+      if (runtime.port === 0) {
+        const addr = server.address();
+        runtime.port = typeof addr === "object" && addr ? addr.port : runtime.port;
+      }
+      resolveReady();
+    });
+  } else {
+    resolveReady();
+  }
+
   return {
     close: () => {
       server.close();
       appDb.close();
     },
+    get port() {
+      return runtime.port;
+    },
+    host,
+    server,
+    ready,
+    hasProductFetcher: true,
   };
 }
 
