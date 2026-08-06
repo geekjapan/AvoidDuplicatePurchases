@@ -34,7 +34,10 @@ import {
   dispatchSyncSuccess,
   subscribeSyncSuccess,
 } from "../src/hooks/sync-success.js";
-import { persistSyncOutcome } from "../src/import/fanza/common.js";
+import {
+  getLatestSyncOutcomeRecord,
+  persistSyncOutcome,
+} from "../src/import/fanza/common.js";
 import { startServer } from "../src/static.js";
 
 const TEST_EXTENSION_ORIGIN = "chrome-extension://test-extension";
@@ -292,7 +295,7 @@ describe("auto export via sync-success hook", () => {
     db.close();
   });
 
-  it("exports at most once per successful full_sync recordedAt (duplicate payload)", () => {
+  it("exports at most once per successful full_sync syncId (duplicate payload)", () => {
     const db = openDatabase(":memory:").sqlite;
     seedListings(db);
     const dest = mkdtempSync(join(realTmp(), "adp-export-dedupe-"));
@@ -313,19 +316,63 @@ describe("auto export via sync-success hook", () => {
       recordedAt,
     );
     assert.equal(calls, 1);
+    const record = getLatestSyncOutcomeRecord(db, AUTO_EXPORT_SOURCE);
+    assert.ok(record?.syncId);
+    assert.ok(record?.originInstanceId);
 
     // Duplicate module-global dispatch of the same payload must not re-export.
     dispatchSyncSuccess({
       source: AUTO_EXPORT_SOURCE,
+      originInstanceId: record!.originInstanceId,
       outcome: {
         ok: true,
         counts: { inserted: 1, updated: 0 },
         error: null,
         fetched: 1,
         recordedAt,
+        syncId: record!.syncId,
       },
     });
     assert.equal(calls, 1);
+
+    unsubscribe();
+    db.close();
+  });
+
+  it("exports twice for distinct full_sync at the same recordedAt (syncId collision-free)", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-collision-"));
+    persistAdminSettings(db, { port: 41321, exportDestination: dest }, new Date().toISOString());
+    let calls = 0;
+    const unsubscribe = installAutoExport(db, 41321, {
+      exportSnapshot: (d, destination) => {
+        calls += 1;
+        return exportSnapshot(d, destination);
+      },
+    });
+
+    const sameRecordedAt = "2026-08-06T12:00:00.000Z";
+    persistSyncOutcome(
+      db,
+      AUTO_EXPORT_SOURCE,
+      { ok: true, counts: { inserted: 1, updated: 0 }, fetched: 1 },
+      sameRecordedAt,
+    );
+    const first = getLatestSyncOutcomeRecord(db, AUTO_EXPORT_SOURCE);
+    assert.ok(first?.syncId);
+
+    persistSyncOutcome(
+      db,
+      AUTO_EXPORT_SOURCE,
+      { ok: true, counts: { inserted: 2, updated: 0 }, fetched: 2 },
+      sameRecordedAt,
+    );
+    const second = getLatestSyncOutcomeRecord(db, AUTO_EXPORT_SOURCE);
+    assert.ok(second?.syncId);
+    assert.notEqual(first!.syncId, second!.syncId);
+    assert.equal(first!.recordedAt, second!.recordedAt);
+    assert.equal(calls, 2);
 
     unsubscribe();
     db.close();
@@ -409,6 +456,9 @@ describe("auto export via sync-success hook", () => {
         oldRecordedAt,
       );
     }
+    const staleLocal = getLatestSyncOutcomeRecord(local, AUTO_EXPORT_SOURCE);
+    const staleForeign = getLatestSyncOutcomeRecord(foreign, AUTO_EXPORT_SOURCE);
+    assert.ok(staleLocal && staleForeign);
 
     let localCalls = 0;
     let foreignCalls = 0;
@@ -425,14 +475,30 @@ describe("auto export via sync-success hook", () => {
       },
     });
 
+    // Replaying pre-install outcomes (including their origin ids) must not export:
+    // install rebinds origin, so origin proof fails.
     dispatchSyncSuccess({
       source: AUTO_EXPORT_SOURCE,
+      originInstanceId: staleLocal!.originInstanceId,
       outcome: {
         ok: true,
         counts: { inserted: 1, updated: 0 },
         error: null,
         fetched: 1,
         recordedAt: oldRecordedAt,
+        syncId: staleLocal!.syncId,
+      },
+    });
+    dispatchSyncSuccess({
+      source: AUTO_EXPORT_SOURCE,
+      originInstanceId: staleForeign!.originInstanceId,
+      outcome: {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+        error: null,
+        fetched: 1,
+        recordedAt: oldRecordedAt,
+        syncId: staleForeign!.syncId,
       },
     });
     assert.equal(localCalls, 0);
@@ -451,6 +517,37 @@ describe("auto export via sync-success hook", () => {
     unsubForeign();
     local.close();
     foreign.close();
+  });
+
+  it("cleans staged residue when post-staging identity validation fails", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const root = mkdtempSync(join(realTmp(), "adp-export-stage-gap-"));
+    const dest = mkdtempSync(join(root, "dest-"));
+    const outside = join(root, "outside-secret.sqlite");
+    writeFileSync(outside, "SECRET");
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterStage: (stagedFile) => {
+            // Adversary replaces the staged inode after rename.
+            // stagedIdentity was pinned pre-rename so cleanup must still run.
+            rmSync(stagedFile, { force: true });
+            symlinkSync(outside, stagedFile);
+          },
+        }),
+      /identity changed|replaced|symbolic link|escaped|revalidation|staged/,
+    );
+
+    assert.equal(readFileSync(outside, "utf8"), "SECRET");
+    assert.deepEqual(readFileSync(first.path), before);
+    assert.deepEqual(tempResidue(dest), []);
+    const extras = readdirSync(dest).filter((n) => n !== EXPORT_FILENAME);
+    assert.deepEqual(extras, []);
+    db.close();
   });
 });
 
@@ -976,6 +1073,77 @@ describe("production startServer auto-export lifecycle", () => {
         started.close();
         started.close();
       });
+    } finally {
+      try {
+        started.close();
+      } catch {
+        // ignore
+      }
+      clearSyncSuccessListeners();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the DB open for in-flight requests until server drain completes", async () => {
+    const dir = mkdtempSync(join(realTmp(), "adp-export-inflight-"));
+    const dbPath = join(dir, "data.sqlite");
+    const seed = openDatabase(dbPath);
+    seedListings(seed.sqlite);
+    seed.close();
+
+    const started = startServer({
+      env: {
+        ADP_DB_PATH: dbPath,
+        ADP_EXTENSION_ORIGIN: TEST_EXTENSION_ORIGIN,
+      },
+      host: "127.0.0.1",
+      port: 0,
+      listen: true,
+      fetchImpl: (async () => new Response(null, { status: 404 })) as typeof fetch,
+    });
+
+    try {
+      await started.ready;
+
+      // Hold the socket open without finishing the HTTP response consumption
+      // until after close() is requested — drain must keep DB usable.
+      const inflight = new Promise<{ status: number }>((resolve, reject) => {
+        import("node:http").then(({ request: httpRequest }) => {
+          const req = httpRequest(
+            {
+              hostname: "127.0.0.1",
+              port: started.port,
+              path: "/api/listings",
+              method: "GET",
+              headers: { Origin: TEST_EXTENSION_ORIGIN },
+            },
+            (res) => {
+              const chunks: Buffer[] = [];
+              res.on("data", (c) => chunks.push(c));
+              res.on("end", () => {
+                resolve({ status: res.statusCode ?? 0 });
+              });
+            },
+          );
+          req.on("error", reject);
+          req.end();
+        });
+      });
+
+      // Yield so the request reaches the handler before we stop listening.
+      await new Promise((r) => setTimeout(r, 50));
+      started.close();
+      const result = await inflight;
+      assert.equal(result.status, 200);
+
+      // After drain, further requests must fail (server closed).
+      await assert.rejects(
+        () => request(started.port, "GET", "/api/listings"),
+        (err: unknown) => {
+          const code = (err as NodeJS.ErrnoException)?.code;
+          return code === "ECONNREFUSED" || code === "ECONNRESET" || code === "EPIPE";
+        },
+      );
     } finally {
       try {
         started.close();

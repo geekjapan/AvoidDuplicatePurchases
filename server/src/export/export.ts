@@ -56,6 +56,8 @@ interface ExportSnapshotOptions {
     pin: Readonly<Omit<DirectoryPin, "fd">>,
   ) => void;
   afterVacuum?: (tempFile: string) => void;
+  /** Invoked after the staging rename, before staged identity revalidation. */
+  afterStage?: (stagedFile: string) => void;
 }
 
 const DIR_OPEN_FLAGS =
@@ -294,6 +296,31 @@ function requireStagedIdentity(path: string, pin: DirectoryPin): PathIdentity {
   return identity;
 }
 
+/** Compare against a creation-time pin; never adopts a replacement as expected. */
+function assertPinnedPathIdentity(
+  path: string,
+  expected: PathIdentity,
+  expectedType: "directory" | "file",
+  pin: DirectoryPin,
+  label: string,
+): void {
+  const actual = requirePathIdentity(path, expectedType, pin);
+  if (!sameIdentity(actual, expected)) {
+    throw new Error(`${label} identity changed during export`);
+  }
+}
+
+function assertPinnedStagedIdentity(
+  path: string,
+  expected: PathIdentity,
+  pin: DirectoryPin,
+): void {
+  const actual = requireStagedIdentity(path, pin);
+  if (!sameIdentity(actual, expected)) {
+    throw new Error("export staged file identity changed during export");
+  }
+}
+
 function applySnapshotMode(path: string): void {
   if (process.platform === "win32") {
     // Node mode bits cannot express Windows ACL equivalence to POSIX 0600.
@@ -307,12 +334,12 @@ function errorValue(error: unknown): Error {
 }
 
 function aggregate(primary: unknown, cleanupErrors: Error[]): never {
-  const errors =
-    primary instanceof AggregateError
-      ? primary.errors.map(errorValue)
-      : primary === undefined
-        ? []
-        : [errorValue(primary)];
+  const errors: Error[] = [];
+  if (primary instanceof AggregateError) {
+    errors.push(...primary.errors.map(errorValue));
+  } else if (primary !== undefined) {
+    errors.push(errorValue(primary));
+  }
   errors.push(...cleanupErrors);
   if (errors.length === 1) throw errors[0];
   throw new AggregateError(errors, "export failed with cleanup errors");
@@ -357,9 +384,9 @@ function removeCreatedPath(
 
 /**
  * Write a complete SQLite snapshot through an exclusive same-filesystem staging
- * area. Every path component and inode is revalidated around VACUUM and rename.
- * Cleanup completes before the final atomic target replacement, so a reported
- * cleanup failure cannot replace an existing snapshot.
+ * area. Creation-time path identities are pinned immutably; later checks only
+ * compare against those pins. Cleanup completes before the final atomic target
+ * replacement, so a reported cleanup failure cannot replace an existing snapshot.
  */
 export function exportSnapshot(
   db: DatabaseSync,
@@ -381,6 +408,8 @@ export function exportSnapshot(
 
   let tempDir: string | undefined;
   let tempDirIdentity: PathIdentity | undefined;
+  let vacuumFile: string | undefined;
+  let vacuumIdentity: PathIdentity | undefined;
   let stagedFile: string | undefined;
   let stagedIdentity: PathIdentity | undefined;
   let primaryError: unknown;
@@ -399,29 +428,41 @@ export function exportSnapshot(
     }
 
     tempDir = mkdtempSync(join(operationDestination, TEMP_DIR_PREFIX));
+    // Immutable creation-time pin — never reassigned from later revalidation.
     tempDirIdentity = requirePathIdentity(tempDir, "directory", pin);
     options.afterTempDir?.(tempDir, publicPin(pin));
     revalidatePinnedDirectory(pin);
-    tempDirIdentity = requirePathIdentity(tempDir, "directory", pin);
+    assertPinnedPathIdentity(tempDir, tempDirIdentity, "directory", pin, "export temporary directory");
 
-    const tempFile = join(tempDir, EXPORT_FILENAME);
-    db.prepare("VACUUM INTO ?").run(tempFile);
+    vacuumFile = join(tempDir, EXPORT_FILENAME);
+    db.prepare("VACUUM INTO ?").run(vacuumFile);
     revalidatePinnedDirectory(pin);
-    requirePathIdentity(tempFile, "file", pin);
-    applySnapshotMode(tempFile);
+    // Pin the VACUUM inode at creation; later checks must not adopt replacements.
+    vacuumIdentity = requirePathIdentity(vacuumFile, "file", pin);
+    applySnapshotMode(vacuumFile);
+    assertPinnedPathIdentity(vacuumFile, vacuumIdentity, "file", pin, "export temporary file");
 
-    options.afterVacuum?.(tempFile);
+    options.afterVacuum?.(vacuumFile);
     revalidatePinnedDirectory(pin);
-    requirePathIdentity(tempFile, "file", pin);
+    assertPinnedPathIdentity(vacuumFile, vacuumIdentity, "file", pin, "export temporary file");
 
     // Move the complete snapshot out of its temp directory, then remove and
     // verify the directory before touching the existing target.
-    stagedFile = `${tempDir}.sqlite`;
-    if (pathIdentity(stagedFile)) {
+    const stagedPath = `${tempDir}.sqlite`;
+    if (pathIdentity(stagedPath)) {
       throw new Error("exclusive export staging path already exists");
     }
-    renameSync(tempFile, stagedFile);
-    stagedIdentity = requireStagedIdentity(stagedFile, pin);
+
+    // Same-filesystem rename preserves inode. Pin staged identity from the
+    // vacuum file *before* rename so a post-rename validation failure still
+    // has a cleanup target (staging rename cleanup gap).
+    stagedFile = stagedPath;
+    stagedIdentity = vacuumIdentity;
+    renameSync(vacuumFile, stagedFile);
+    vacuumFile = undefined;
+    vacuumIdentity = undefined;
+    options.afterStage?.(stagedFile);
+    assertPinnedStagedIdentity(stagedFile, stagedIdentity, pin);
 
     const preRenameCleanup = removeCreatedPath(
       tempDir,
@@ -433,8 +474,10 @@ export function exportSnapshot(
     tempDir = undefined;
     tempDirIdentity = undefined;
 
+    // Final rename window: revalidate everything immediately before pathname
+    // rename, then verify destination identity against the immutable staged pin.
     revalidatePinnedDirectory(pin);
-    stagedIdentity = requireStagedIdentity(stagedFile, pin);
+    assertPinnedStagedIdentity(stagedFile, stagedIdentity, pin);
     const currentTarget = pathIdentity(target);
     if (currentTarget?.isSymbolicLink) {
       throw new Error("export target must not be a symbolic link");
@@ -443,18 +486,31 @@ export function exportSnapshot(
       throw new Error("export target must be a regular file");
     }
 
+    const stagedPathForAbsence = stagedFile;
     finalRename(stagedFile, target);
-    stagedFile = undefined;
-    stagedIdentity = undefined;
 
+    // Post-rename fail-closed checks before releasing staged cleanup ownership.
+    // Revalidate the destination pin (external sentinel) and require a regular
+    // non-symlink file under it. Staged path must be gone. A different inode
+    // than the staged pin is allowed only as a concurrent export race.
     revalidatePinnedDirectory(pin);
     const finalTarget = pathIdentity(target);
-    if (!finalTarget?.isFile || finalTarget.isSymbolicLink || finalTarget.dev !== pin.dev) {
+    if (!finalTarget || finalTarget.isSymbolicLink || !finalTarget.isFile || finalTarget.dev !== pin.dev) {
       throw new Error("export target invalid after rename");
+    }
+    if (pathIdentity(stagedPathForAbsence)) {
+      throw new Error("export staged path residual after rename");
+    }
+    if (realpathSync(join(target, "..")) !== pin.realPath) {
+      throw new Error("export target escaped configured destination after rename");
     }
     if (process.platform !== "win32" && (lstatSync(target).mode & 0o777) !== EXPORT_FILE_MODE) {
       throw new Error("export target permissions changed during rename");
     }
+
+    // Only release staged cleanup pins after destination verification.
+    stagedFile = undefined;
+    stagedIdentity = undefined;
     completed = true;
   } catch (error) {
     primaryError = error;
@@ -465,6 +521,11 @@ export function exportSnapshot(
   const cleanupErrors: Error[] = [];
   if (stagedFile && stagedIdentity) {
     cleanupErrors.push(...removeCreatedPath(stagedFile, stagedIdentity, false, remove));
+  }
+  if (vacuumFile && vacuumIdentity) {
+    // VACUUM file still under tempDir; recursive tempDir cleanup covers it when
+    // tempDir is still tracked. If only the file pin remains, remove the file.
+    cleanupErrors.push(...removeCreatedPath(vacuumFile, vacuumIdentity, false, remove));
   }
   if (tempDir && tempDirIdentity) {
     cleanupErrors.push(...removeCreatedPath(tempDir, tempDirIdentity, true, remove));

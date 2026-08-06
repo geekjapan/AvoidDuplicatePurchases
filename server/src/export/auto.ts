@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   subscribeSyncSuccess,
   type SyncSuccessPayload,
 } from "../hooks/sync-success.js";
-import { getLatestSyncOutcome } from "../import/fanza/common.js";
+import {
+  bindOriginInstanceId,
+  getLatestSyncOutcomeRecord,
+} from "../import/fanza/common.js";
 import { loadAdminSettings } from "../routes/settings.js";
 import { exportSnapshot, type ExportResult } from "./export.js";
 
@@ -21,24 +25,30 @@ interface InstallAutoExportOptions {
    * Production leaves this unset.
    */
   exportSnapshot?: ExportSnapshotFn;
+  /**
+   * Optional fixed origin id (tests). Production generates a UUID per install.
+   */
+  originInstanceId?: string;
 }
 
 /**
  * Decide whether this module-global sync-success event should trigger export
  * for the given DB instance.
  *
- * Isolation rules (scope-safe; hooks/http stay read-only):
+ * Isolation / exactly-once rules:
  * - Only `source === "full_sync"` with ok outcome.
- * - The same outcome must already be persisted on *this* DB (recordedAt +
- *   counts/fetched match) so another startServer instance's event cannot
- *   cross-fire into this export.
- * - One successful export per distinct full_sync recordedAt (dedupe).
+ * - Payload must carry syncId + originInstanceId.
+ * - This install's originInstanceId must match the payload (origin proof).
+ * - The same outcome must already be persisted on *this* DB with matching
+ *   syncId + originInstanceId + counts/fetched (cross-instance events fail).
+ * - One successful export per distinct syncId (not recordedAt).
  */
 function shouldAutoExportForDb(
   db: DatabaseSync,
   payload: SyncSuccessPayload,
-  lastExportedRecordedAt: string | null,
-): { export: true; recordedAt: string } | { export: false } {
+  originInstanceId: string,
+  lastExportedSyncId: string | null,
+): { export: true; syncId: string } | { export: false } {
   if (payload.source !== AUTO_EXPORT_SOURCE) {
     return { export: false };
   }
@@ -46,19 +56,25 @@ function shouldAutoExportForDb(
     return { export: false };
   }
 
-  const recordedAt = payload.outcome.recordedAt;
-  if (!recordedAt) {
+  const syncId = payload.outcome.syncId;
+  if (!syncId || !payload.originInstanceId) {
     return { export: false };
   }
-  if (lastExportedRecordedAt === recordedAt) {
+  if (payload.originInstanceId !== originInstanceId) {
+    return { export: false };
+  }
+  if (lastExportedSyncId === syncId) {
     return { export: false };
   }
 
-  const latest = getLatestSyncOutcome(db, AUTO_EXPORT_SOURCE);
+  const latest = getLatestSyncOutcomeRecord(db, AUTO_EXPORT_SOURCE);
   if (!latest || !latest.ok) {
     return { export: false };
   }
-  if (latest.recordedAt !== recordedAt) {
+  if (latest.syncId !== syncId) {
+    return { export: false };
+  }
+  if (latest.originInstanceId !== originInstanceId) {
     return { export: false };
   }
   if (
@@ -69,7 +85,7 @@ function shouldAutoExportForDb(
     return { export: false };
   }
 
-  return { export: true, recordedAt };
+  return { export: true, syncId };
 }
 
 /**
@@ -79,8 +95,8 @@ function shouldAutoExportForDb(
  * persistence.
  *
  * Partial source outcomes (dlsite / fanza_*) never export. Only the
- * canonical `full_sync` success path does, at most once per recordedAt,
- * and only when this DB is the originator of the persisted outcome.
+ * canonical `full_sync` success path does, at most once per syncId, and only
+ * when this install is the originator of the persisted outcome.
  */
 export function installAutoExport(
   db: DatabaseSync,
@@ -88,20 +104,30 @@ export function installAutoExport(
   options: InstallAutoExportOptions = {},
 ): () => void {
   const runExport = options.exportSnapshot ?? exportSnapshot;
-  // An already-persisted outcome predates this listener. Seeding the dedupe
-  // fence prevents a matching event from another server instance from
-  // exporting this DB's stale outcome after restart.
-  let lastExportedRecordedAt =
-    getLatestSyncOutcome(db, AUTO_EXPORT_SOURCE)?.recordedAt ?? null;
+  const originInstanceId = options.originInstanceId ?? randomUUID();
+  // Bind before any later persist on this handle so outcomes carry our origin.
+  bindOriginInstanceId(db, originInstanceId);
+
+  // An already-persisted outcome predates this listener only when its origin
+  // matches. Seeding the dedupe fence prevents replay of our own stale outcome
+  // after restart; foreign-origin rows are ignored by origin checks.
+  const seeded = getLatestSyncOutcomeRecord(db, AUTO_EXPORT_SOURCE);
+  let lastExportedSyncId =
+    seeded && seeded.originInstanceId === originInstanceId ? seeded.syncId : null;
 
   return subscribeSyncSuccess((payload) => {
-    const decision = shouldAutoExportForDb(db, payload, lastExportedRecordedAt);
+    const decision = shouldAutoExportForDb(
+      db,
+      payload,
+      originInstanceId,
+      lastExportedSyncId,
+    );
     if (!decision.export) return;
 
     const destination = loadAdminSettings(db, port).exportDestination.trim();
     if (!destination) return;
 
     runExport(db, destination);
-    lastExportedRecordedAt = decision.recordedAt;
+    lastExportedSyncId = decision.syncId;
   });
 }

@@ -239,20 +239,37 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   });
 
   // Declare close before the listen error handler so listen-failure cleanup can
-  // call the same idempotent shutdown without TDZ (unsubscribe → server/db close).
+  // call the same idempotent shutdown without TDZ (unsubscribe → drain → DB close).
   let closed = false;
-  const close = (): void => {
-    // Idempotent: concurrent / double close must unsubscribe and close DB once.
-    if (closed) return;
-    closed = true;
-    // Detach auto-export before closing the DB so a late sync cannot call into it.
-    unsubscribeAutoExport?.();
+  let dbClosed = false;
+  const closeDbOnce = (): void => {
+    if (dbClosed) return;
+    dbClosed = true;
     try {
       db.close();
     } catch {
       // Already-closed or listen-failed handles must not break shutdown.
     }
-    server.close();
+  };
+  const close = (): void => {
+    // Idempotent: concurrent / double close must unsubscribe and close DB once.
+    if (closed) return;
+    closed = true;
+    // Detach auto-export before any late sync can call into a closing DB.
+    unsubscribeAutoExport?.();
+    // Stop accepting new connections first; close DB only after in-flight drain.
+    if (server.listening) {
+      server.close(() => {
+        closeDbOnce();
+      });
+      return;
+    }
+    try {
+      server.close();
+    } catch {
+      // listen:false / never-bound servers may reject close; still free the DB.
+    }
+    closeDbOnce();
   };
 
   if (shouldListen) {

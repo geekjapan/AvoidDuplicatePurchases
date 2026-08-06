@@ -261,6 +261,19 @@ describe("readonly guard", () => {
     assert.equal(settings.status, 200);
   });
 
+  it("rejects unknown GET /api routes with 403 (not 404)", async () => {
+    for (const path of [
+      "/api/does-not-exist",
+      "/api/listings/extra",
+      "/api/sync-state/unknown_source",
+      "/api/export",
+    ]) {
+      const res = await request(port, "GET", path);
+      assert.equal(res.status, 403, `${path} must be 403`);
+      assert.deepEqual(res.json, { error: "forbidden" });
+    }
+  });
+
   it("does not touch non-API paths", async () => {
     const res = await request(port, "GET", "/static/asset.js");
     assert.equal(res.status, 404);
@@ -320,6 +333,12 @@ describe("production startServer read-only mode (in-process, same static.ts)", (
       for (const [method, path] of UNKNOWN_WRITE_METHODS) {
         const res = await request(started.port, method, path, {});
         assert.equal(res.status, 403, `${method} ${path}`);
+      }
+
+      for (const path of ["/api/does-not-exist", "/api/listings/extra", "/api/export"]) {
+        const res = await request(started.port, "GET", path);
+        assert.equal(res.status, 403, `GET ${path}`);
+        assert.deepEqual(res.json, { error: "forbidden" });
       }
 
       const badOrigin = await request(
@@ -502,6 +521,12 @@ describe("production-entry child process (thin launcher → static.startServer)"
     for (const [method, path] of UNKNOWN_WRITE_METHODS) {
       const res = await request(port, method, path, {}, null);
       assert.equal(res.status, 403, `${method} ${path} must be 403`);
+    }
+
+    for (const path of ["/api/does-not-exist", "/api/listings/extra", "/api/export"]) {
+      const res = await request(port, "GET", path, undefined, null);
+      assert.equal(res.status, 403, `GET ${path} must be 403`);
+      assert.deepEqual(res.json, { error: "forbidden" });
     }
 
     const badOrigin = await request(
