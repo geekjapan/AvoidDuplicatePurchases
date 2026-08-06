@@ -1,0 +1,22 @@
+{
+  "name": "@adp/extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run build:sw && npm run build:content && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
+    "build:sw": "esbuild src/background/index.ts --bundle --format=esm --platform=browser --target=chrome109 --outfile=dist/background/index.js --legal-comments=none",
+    "build:content": "esbuild src/content/dlsite.ts src/content/fanza-doujin.ts src/content/fanza-books.ts --bundle --format=iife --platform=browser --target=chrome109 --outdir=dist/content --legal-comments=none",
+    "test": "node --import tsx --test 'src/**/*.test.ts'",
+    "test:e2e": "node --import tsx --test 'src/**/*.e2e.test.ts'"
+  },
+  "dependencies": {
+    "@adp/shared": "0.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.3"
+  }
+}

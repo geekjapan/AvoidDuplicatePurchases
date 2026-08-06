@@ -1,0 +1,454 @@
+import { randomUUID } from "node:crypto";
+import type { Source } from "@adp/shared";
+import type { DatabaseSync } from "node:sqlite";
+import { dispatchSyncSuccess } from "../../hooks/sync-success.js";
+
+export interface UpsertableListing {
+  cid: string;
+  title: string;
+  maker: string | null;
+  seriesId: string | null;
+  imageUrl: string | null;
+  purchasedAt: string | null;
+  purchasedAtPrecision: "second" | "day" | "unknown";
+  rawJson: string;
+}
+
+export interface ImportCounts {
+  inserted: number;
+  updated: number;
+}
+
+export interface SyncOutcomeInput {
+  ok: boolean;
+  counts?: ImportCounts;
+  error?: string;
+  fetched?: number;
+}
+
+/** Public outcome shape returned by API paths (identity fields stripped). */
+export interface PersistedSyncOutcome {
+  ok: boolean;
+  counts: ImportCounts;
+  error: string | null;
+  fetched: number | null;
+  recordedAt: string;
+}
+
+/**
+ * Full persisted record including exactly-once / origin identity.
+ * Stored in sync_state.cursor JSON; API reads strip identity fields.
+ */
+export interface PersistedSyncOutcomeRecord extends PersistedSyncOutcome {
+  syncId: string;
+  originInstanceId: string;
+}
+
+export interface SyncStateWithOutcome {
+  cursor: string | null;
+  lastSyncedAt: string | null;
+  latestOutcome: PersistedSyncOutcome | null;
+}
+
+/** Per-DB origin identity for the server instance that owns this handle. */
+const originByDb = new WeakMap<DatabaseSync, string>();
+
+/** Bind a stable origin instance id for this DB (installAutoExport / startServer). */
+export function bindOriginInstanceId(db: DatabaseSync, originInstanceId: string): void {
+  originByDb.set(db, originInstanceId);
+}
+
+/** Return the bound origin, or create and bind one for this DB handle. */
+export function ensureOriginInstanceId(db: DatabaseSync): string {
+  const existing = originByDb.get(db);
+  if (existing) return existing;
+  const created = randomUUID();
+  originByDb.set(db, created);
+  return created;
+}
+
+/**
+ * Reserved sync_state.source key for latest outcomes.
+ * Reuses the migration-backed sync_state table — no runtime DDL.
+ */
+function outcomeSourceKey(source: string): string {
+  return `__sync_outcome__:${source}`;
+}
+
+function parseOutcomeRecord(
+  cursor: string | null,
+  recordedAt: string,
+): PersistedSyncOutcomeRecord | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(cursor) as {
+      ok?: unknown;
+      counts?: { inserted?: unknown; updated?: unknown };
+      error?: unknown;
+      fetched?: unknown;
+      recordedAt?: unknown;
+      syncId?: unknown;
+      originInstanceId?: unknown;
+    };
+    if (typeof parsed.ok !== "boolean") return null;
+    const inserted =
+      typeof parsed.counts?.inserted === "number" ? parsed.counts.inserted : 0;
+    const updated =
+      typeof parsed.counts?.updated === "number" ? parsed.counts.updated : 0;
+    // Pre-identity rows lack syncId/origin — treat as incomplete for exactly-once.
+    if (
+      typeof parsed.syncId !== "string" ||
+      !parsed.syncId ||
+      typeof parsed.originInstanceId !== "string" ||
+      !parsed.originInstanceId
+    ) {
+      // Still surface public fields for API consumers of legacy rows.
+      return null;
+    }
+    return {
+      ok: parsed.ok,
+      counts: { inserted, updated },
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      fetched: typeof parsed.fetched === "number" ? parsed.fetched : null,
+      recordedAt:
+        typeof parsed.recordedAt === "string" && parsed.recordedAt
+          ? parsed.recordedAt
+          : recordedAt,
+      syncId: parsed.syncId,
+      originInstanceId: parsed.originInstanceId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse public outcome fields even for legacy rows without sync identity.
+ * Used by API GET paths that must keep the historical response shape.
+ */
+function parseOutcomePublic(
+  cursor: string | null,
+  recordedAt: string,
+): PersistedSyncOutcome | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(cursor) as {
+      ok?: unknown;
+      counts?: { inserted?: unknown; updated?: unknown };
+      error?: unknown;
+      fetched?: unknown;
+      recordedAt?: unknown;
+    };
+    if (typeof parsed.ok !== "boolean") return null;
+    const inserted =
+      typeof parsed.counts?.inserted === "number" ? parsed.counts.inserted : 0;
+    const updated =
+      typeof parsed.counts?.updated === "number" ? parsed.counts.updated : 0;
+    return {
+      ok: parsed.ok,
+      counts: { inserted, updated },
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      fetched: typeof parsed.fetched === "number" ? parsed.fetched : null,
+      recordedAt:
+        typeof parsed.recordedAt === "string" && parsed.recordedAt
+          ? parsed.recordedAt
+          : recordedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function persistSyncOutcome(
+  db: DatabaseSync,
+  source: string,
+  outcome: SyncOutcomeInput,
+  now = new Date().toISOString(),
+): void {
+  const syncId = randomUUID();
+  const originInstanceId = ensureOriginInstanceId(db);
+  const record: PersistedSyncOutcomeRecord = {
+    ok: outcome.ok,
+    counts: {
+      inserted: outcome.counts?.inserted ?? 0,
+      updated: outcome.counts?.updated ?? 0,
+    },
+    error: outcome.error ?? null,
+    fetched: outcome.fetched ?? null,
+    recordedAt: now,
+    syncId,
+    originInstanceId,
+  };
+  // Persist into existing sync_state rows (migration-backed). No CREATE TABLE.
+  db.prepare(
+    `INSERT INTO sync_state (source, cursor, last_synced_at) VALUES (?, ?, ?)
+     ON CONFLICT(source) DO UPDATE SET
+       cursor = excluded.cursor,
+       last_synced_at = excluded.last_synced_at`,
+  ).run(outcomeSourceKey(source), JSON.stringify(record), now);
+
+  if (outcome.ok) {
+    dispatchSyncSuccess({
+      source,
+      originInstanceId,
+      outcome: {
+        ok: true,
+        counts: record.counts,
+        error: null,
+        fetched: record.fetched,
+        recordedAt: record.recordedAt,
+        syncId,
+      },
+    });
+  }
+}
+
+export function getLatestSyncOutcome(
+  db: DatabaseSync,
+  source: string,
+): PersistedSyncOutcome | null {
+  // Read-only SELECT against migration-backed schema. Never mutates schema.
+  const row = db
+    .prepare("SELECT cursor, last_synced_at FROM sync_state WHERE source = ?")
+    .get(outcomeSourceKey(source)) as
+    | { cursor: string | null; last_synced_at: string }
+    | undefined;
+  if (!row) return null;
+  // Strip identity fields so API deep-equality contracts stay stable.
+  return parseOutcomePublic(row.cursor, row.last_synced_at);
+}
+
+/**
+ * Full latest outcome including syncId + originInstanceId.
+ * Used by auto-export exactly-once / origin matching. Null when missing identity.
+ */
+export function getLatestSyncOutcomeRecord(
+  db: DatabaseSync,
+  source: string,
+): PersistedSyncOutcomeRecord | null {
+  const row = db
+    .prepare("SELECT cursor, last_synced_at FROM sync_state WHERE source = ?")
+    .get(outcomeSourceKey(source)) as
+    | { cursor: string | null; last_synced_at: string }
+    | undefined;
+  if (!row) return null;
+  return parseOutcomeRecord(row.cursor, row.last_synced_at);
+}
+
+function preferNonNull<T>(next: T | null, prev: T | null): T | null {
+  return next !== null && next !== undefined ? next : prev;
+}
+
+const PRECISION_RANK: Record<UpsertableListing["purchasedAtPrecision"], number> = {
+  unknown: 0,
+  day: 1,
+  second: 2,
+};
+
+/**
+ * Prefer richer purchased_at_precision; never regress second/day to unknown when
+ * a later partial import/manual re-run only carries the fallback precision.
+ */
+export function preferPurchasedAtPrecision(
+  next: UpsertableListing["purchasedAtPrecision"],
+  prev: UpsertableListing["purchasedAtPrecision"] | null | undefined,
+): UpsertableListing["purchasedAtPrecision"] {
+  if (!prev) return next;
+  return PRECISION_RANK[next] >= PRECISION_RANK[prev] ? next : prev;
+}
+
+/**
+ * Prefer new title when it is real product evidence.
+ * A cid-only fallback must not erase a previously enriched title.
+ */
+export function preferListingTitle(next: string, prev: string, cid: string): string {
+  const n = (next ?? "").trim();
+  const p = (prev ?? "").trim();
+  if (!n) return p || cid;
+  if (!p) return n;
+  if (n === cid && p !== cid) return p;
+  return n;
+}
+
+/**
+ * Deep object merge: keep prior nested keys that a partial later import omits,
+ * while letting new keys win on conflict. Arrays and scalars are replaced.
+ */
+function deepMergeEvidence(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...prev, ...next };
+  for (const key of Object.keys(prev)) {
+    const p = prev[key];
+    const n = next[key];
+    if (
+      p &&
+      typeof p === "object" &&
+      !Array.isArray(p) &&
+      n &&
+      typeof n === "object" &&
+      !Array.isArray(n)
+    ) {
+      merged[key] = deepMergeEvidence(
+        p as Record<string, unknown>,
+        n as Record<string, unknown>,
+      );
+    }
+  }
+  return merged;
+}
+
+/**
+ * Lossless raw evidence merge: keep prior top-level and nested object keys that
+ * a partial later import omits, while letting new keys win on conflict.
+ */
+export function mergeRawJsonEvidence(prevRaw: string, nextRaw: string): string {
+  try {
+    const prev = JSON.parse(prevRaw) as unknown;
+    const next = JSON.parse(nextRaw) as unknown;
+    if (
+      !prev ||
+      typeof prev !== "object" ||
+      Array.isArray(prev) ||
+      !next ||
+      typeof next !== "object" ||
+      Array.isArray(next)
+    ) {
+      return nextRaw;
+    }
+    return JSON.stringify(
+      deepMergeEvidence(prev as Record<string, unknown>, next as Record<string, unknown>),
+    );
+  } catch {
+    // Unparseable prior evidence: keep it rather than destroying with partial next.
+    return prevRaw || nextRaw;
+  }
+}
+
+export function upsertFanzaListing(
+  db: DatabaseSync,
+  source: Source,
+  listing: UpsertableListing,
+  now: string,
+): "inserted" | "updated" {
+  const cid = listing.cid.trim();
+  const existing = db
+    .prepare(
+      `SELECT id, title, maker_name, series_id, image_url, purchased_at,
+              purchased_at_precision, raw_json, work_id, work_id_locked
+       FROM listing WHERE source = ? AND cid = ?`,
+    )
+    .get(source, cid) as
+    | {
+        id: number;
+        title: string;
+        maker_name: string | null;
+        series_id: string | null;
+        image_url: string | null;
+        purchased_at: string | null;
+        purchased_at_precision: UpsertableListing["purchasedAtPrecision"];
+        raw_json: string;
+        work_id: number;
+        work_id_locked: number;
+      }
+    | undefined;
+
+  if (existing) {
+    // Non-regressing field merge: only apply new valid evidence.
+    // work_id / work_id_locked are intentionally never rewritten here.
+    const title = preferListingTitle(listing.title, existing.title, cid);
+    const maker = preferNonNull(listing.maker, existing.maker_name);
+    const seriesId = preferNonNull(listing.seriesId, existing.series_id);
+    const imageUrl = preferNonNull(listing.imageUrl, existing.image_url);
+    const purchasedAt = preferNonNull(listing.purchasedAt, existing.purchased_at);
+    const purchasedAtPrecision = preferPurchasedAtPrecision(
+      listing.purchasedAtPrecision,
+      existing.purchased_at_precision,
+    );
+    const rawJson = mergeRawJsonEvidence(existing.raw_json, listing.rawJson);
+    db.prepare(
+      `UPDATE listing SET
+        title = ?, maker_name = ?, series_id = ?, image_url = ?,
+        purchased_at = ?, purchased_at_precision = ?, raw_json = ?, imported_at = ?
+       WHERE id = ?`,
+    ).run(
+      title,
+      maker,
+      seriesId,
+      imageUrl,
+      purchasedAt,
+      purchasedAtPrecision,
+      rawJson,
+      now,
+      existing.id,
+    );
+    return "updated";
+  }
+
+  db.prepare("INSERT INTO work DEFAULT VALUES").run();
+  const workId = Number(db.prepare("SELECT last_insert_rowid() AS id").get()?.id);
+  db.prepare(
+    `INSERT INTO listing (
+      source, cid, work_id, title, maker_name, series_id, image_url,
+      purchased_at, purchased_at_precision, raw_json, imported_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    source,
+    cid,
+    workId,
+    listing.title,
+    listing.maker,
+    listing.seriesId,
+    listing.imageUrl,
+    listing.purchasedAt,
+    listing.purchasedAtPrecision,
+    listing.rawJson,
+    now,
+  );
+  return "inserted";
+}
+
+export function importListingBatch(
+  db: DatabaseSync,
+  source: Source,
+  listings: UpsertableListing[],
+): ImportCounts {
+  const now = new Date().toISOString();
+  let inserted = 0;
+  let updated = 0;
+  db.exec("BEGIN");
+  try {
+    for (const listing of listings) {
+      const result = upsertFanzaListing(db, source, listing, now);
+      if (result === "inserted") inserted++;
+      else updated++;
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { inserted, updated };
+}
+
+export function markSourceSynced(db: DatabaseSync, source: string, now = new Date().toISOString()): void {
+  db.prepare(
+    `INSERT INTO sync_state (source, cursor, last_synced_at) VALUES (?, NULL, ?)
+     ON CONFLICT(source) DO UPDATE SET last_synced_at = excluded.last_synced_at`,
+  ).run(source, now);
+}
+
+export function getSyncState(
+  db: DatabaseSync,
+  source: string,
+): SyncStateWithOutcome {
+  const row = db
+    .prepare("SELECT cursor, last_synced_at FROM sync_state WHERE source = ?")
+    .get(source) as { cursor: string | null; last_synced_at: string } | undefined;
+  return {
+    cursor: row?.cursor ?? null,
+    lastSyncedAt: row?.last_synced_at ?? null,
+    latestOutcome: getLatestSyncOutcome(db, source),
+  };
+}
