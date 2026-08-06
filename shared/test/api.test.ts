@@ -84,6 +84,16 @@ describe("shared API endpoint schemas", () => {
       ],
     });
     assert.equal(res.results[0]?.other.length, 1);
+
+    const owned = LookupResponseSchema.parse({
+      results: [{ owned: true, purchasedAt: "2023-12-30", other: [] }],
+    });
+    assert.equal(owned.results[0]?.purchasedAt, "2023-12-30");
+
+    const ownedNullDate = LookupResponseSchema.parse({
+      results: [{ owned: true, purchasedAt: null, other: [] }],
+    });
+    assert.equal(ownedNullDate.results[0]?.purchasedAt, null);
   });
 
   it("validates POST /api/import/:source path and body", () => {

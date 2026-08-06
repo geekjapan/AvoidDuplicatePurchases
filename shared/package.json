@@ -7,10 +7,30 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./adapters/dlsite": {
+      "types": "./dist/adapters/dlsite/index.d.ts",
+      "import": "./dist/adapters/dlsite/index.js"
+    },
+    "./adapters/fanza_doujin": {
+      "types": "./dist/adapters/fanza_doujin/index.d.ts",
+      "import": "./dist/adapters/fanza_doujin/index.js"
+    },
+    "./adapters/fanza_books": {
+      "types": "./dist/adapters/fanza_books/index.d.ts",
+      "import": "./dist/adapters/fanza_books/index.js"
+    },
+    "./adapters/fanza_video": {
+      "types": "./dist/adapters/fanza_video/index.d.ts",
+      "import": "./dist/adapters/fanza_video/index.js"
+    },
+    "./adapters/fanza_dlsoft": {
+      "types": "./dist/adapters/fanza_dlsoft/index.d.ts",
+      "import": "./dist/adapters/fanza_dlsoft/index.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p adapters/dlsite/tsconfig.json && tsc -p adapters/fanza_doujin/tsconfig.json && tsc -p adapters/fanza_books/tsconfig.json && tsc -p adapters/fanza_video/tsconfig.json && tsc -p adapters/fanza_dlsoft/tsconfig.json",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {

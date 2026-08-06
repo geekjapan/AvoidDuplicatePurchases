@@ -1,0 +1,1 @@
+{"version":3,"file":"types.d.ts","sourceRoot":"","sources":["../../../adapters/fanza_dlsoft/types.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,wBAAwB;IACvC,GAAG,EAAE,MAAM,CAAC;IACZ,KAAK,EAAE,MAAM,CAAC;IACd,KAAK,EAAE,MAAM,GAAG,IAAI,CAAC;IACrB,QAAQ,EAAE,IAAI,CAAC;IACf,QAAQ,EAAE,MAAM,GAAG,IAAI,CAAC;IACxB,WAAW,EAAE,IAAI,CAAC;IAClB,oBAAoB,EAAE,SAAS,CAAC;IAChC,OAAO,EAAE,MAAM,CAAC;CACjB"}

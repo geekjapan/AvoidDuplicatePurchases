@@ -1,0 +1,74 @@
+import { z } from "zod";
+const NonBlankString = z.string().trim().min(1);
+const LibraryItemSchema = z
+    .object({
+    contentId: NonBlankString,
+    productId: z.string().optional(),
+    title: NonBlankString,
+    floor: z.string().optional(),
+    brand: z.object({ name: z.string().optional() }).nullable().optional(),
+    authorArray: z.array(z.object({ name: z.string().optional() }).passthrough()).optional(),
+    packageImageUrl: z.string().optional(),
+    deliveryBeginDate: z.string().optional(),
+})
+    .passthrough();
+const LibraryPageSchema = z.object({
+    error: z
+        .unknown()
+        .optional()
+        .refine((value) => value === undefined || value === null, { message: "source error" }),
+    body: z.object({
+        totalCount: z.number().optional(),
+        library: z.array(LibraryItemSchema).optional(),
+    }),
+});
+function itemEvidence(item) {
+    return { ...item };
+}
+/** Parse dlsoft library page; no purchase date (deliveryBeginDate is not purchased_at). */
+export function parseDlsoftLibraryPayload(raw) {
+    const parsed = LibraryPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_dlsoft payload failed schema validation");
+    }
+    return (parsed.data.body.library ?? []).map((item) => {
+        const makerFromBrand = item.brand && typeof item.brand.name === "string" && item.brand.name.trim()
+            ? item.brand.name.trim()
+            : null;
+        const imageUrl = typeof item.packageImageUrl === "string" && item.packageImageUrl.trim()
+            ? item.packageImageUrl.trim()
+            : null;
+        return {
+            cid: item.contentId.trim(),
+            title: item.title.trim(),
+            maker: makerFromBrand,
+            seriesId: null,
+            imageUrl,
+            purchasedAt: null,
+            purchasedAtPrecision: "unknown",
+            rawJson: JSON.stringify({ sale: itemEvidence(item) }),
+        };
+    });
+}
+export function dlsoftPageHasNext(raw, fetchedSoFar) {
+    const parsed = LibraryPageSchema.safeParse(raw);
+    if (!parsed.success)
+        return false;
+    const library = parsed.data.body.library ?? [];
+    if (library.length === 0)
+        return false;
+    const total = parsed.data.body.totalCount ?? fetchedSoFar;
+    return fetchedSoFar < total;
+}
+export function dlsoftPageInfo(raw) {
+    const parsed = LibraryPageSchema.safeParse(raw);
+    if (!parsed.success) {
+        throw new Error("fanza_dlsoft payload failed schema validation");
+    }
+    const itemCount = (parsed.data.body.library ?? []).length;
+    return {
+        itemCount,
+        totalCount: parsed.data.body.totalCount ?? itemCount,
+    };
+}
+//# sourceMappingURL=parse.js.map

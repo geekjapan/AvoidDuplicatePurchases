@@ -1,0 +1,38 @@
+import type { DlsiteParsedListing, DlsiteSaleEntry } from "./types.js";
+/**
+ * Strict UTC ISO-8601 instant: `YYYY-MM-DDTHH:mm:ss[.fraction]Z` only.
+ * Rejects locale dates, offset timezones, and impossible calendar days (e.g. Feb 30).
+ */
+export declare function isStrictUtcIsoInstant(value: string): boolean;
+/**
+ * Parse raw extension payload from DLsite sales API.
+ * Accepts a non-empty array of sale entries or `{ items: [...] }`.
+ * Invalid entries reject the entire batch (no silent drop).
+ */
+export declare function parseDlsiteSalesPayload(raw: unknown): DlsiteSaleEntry[];
+/** Build a listing stub from sales history alone (product.json unavailable). */
+export declare function listingFromSale(entry: DlsiteSaleEntry): DlsiteParsedListing;
+/** Merge product.json metadata into a sales-derived listing. */
+export declare function mergeProductInfo(sale: DlsiteSaleEntry, product: {
+    workno?: string;
+    work_name?: string;
+    maker_name?: string | null;
+    series_id?: string | null;
+    image_url?: string | null;
+    raw?: Record<string, unknown>;
+} | null): DlsiteParsedListing;
+/**
+ * Exact chronological compare for validated UTC ISO instants without Date/Number precision loss.
+ * - Lexical compare of fixed-width second base (YYYY-MM-DDTHH:mm:ss)
+ * - Fraction digits compared after right-padding the shorter with zeros
+ * - Raw-string tie-break for equal instants (e.g. .1Z vs .100Z) so result is order-independent
+ * Returns negative if a < b, positive if a > b, zero if equal after tie-break.
+ */
+export declare function compareUtcIsoInstants(a: string, b: string): number;
+/**
+ * Compute the `last=` cursor from the newest sales_date in a batch.
+ * Uses exact UTC ISO instant comparison (arbitrary fraction digits, no ms truncation);
+ * returns the original winning sales_date string.
+ */
+export declare function maxSalesCursor(entries: DlsiteSaleEntry[]): string | null;
+//# sourceMappingURL=parse-sales.d.ts.map

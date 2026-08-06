@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "start": "node dist/index.js"
   },
   "dependencies": {
-    "@adp/shared": "*"
+    "@adp/shared": "0.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
   }
 }

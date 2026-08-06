@@ -1,0 +1,15 @@
+{
+  "seriesId": "100001",
+  "author": "黒斗",
+  "payload": {
+    "pager": { "page": 1, "per_page": 100, "total_count": 1 },
+    "volume_books": [
+      {
+        "content_id": "b100xxxxx01001",
+        "title": "巻1",
+        "volume_number": 1,
+        "purchased": { "purchased_date": "2023-12-30T12:00:00+09:00" }
+      }
+    ]
+  }
+}
