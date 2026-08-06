@@ -1,12 +1,19 @@
 /** Payload emitted when a sync outcome is persisted with ok === true. */
 export interface SyncSuccessPayload {
   source: string;
+  /**
+   * Origin server/DB instance that persisted this outcome.
+   * Auto-export uses this with syncId for exactly-once origin proof.
+   */
+  originInstanceId: string;
   outcome: {
     ok: true;
     counts: { inserted: number; updated: number };
     error: null;
     fetched: number | null;
     recordedAt: string;
+    /** Unique id for this persisted success (exactly-once export key). */
+    syncId: string;
   };
 }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Source } from "@adp/shared";
 import type { DatabaseSync } from "node:sqlite";
 import { dispatchSyncSuccess } from "../../hooks/sync-success.js";
@@ -25,6 +26,7 @@ export interface SyncOutcomeInput {
   fetched?: number;
 }
 
+/** Public outcome shape returned by API paths (identity fields stripped). */
 export interface PersistedSyncOutcome {
   ok: boolean;
   counts: ImportCounts;
@@ -33,10 +35,36 @@ export interface PersistedSyncOutcome {
   recordedAt: string;
 }
 
+/**
+ * Full persisted record including exactly-once / origin identity.
+ * Stored in sync_state.cursor JSON; API reads strip identity fields.
+ */
+export interface PersistedSyncOutcomeRecord extends PersistedSyncOutcome {
+  syncId: string;
+  originInstanceId: string;
+}
+
 export interface SyncStateWithOutcome {
   cursor: string | null;
   lastSyncedAt: string | null;
   latestOutcome: PersistedSyncOutcome | null;
+}
+
+/** Per-DB origin identity for the server instance that owns this handle. */
+const originByDb = new WeakMap<DatabaseSync, string>();
+
+/** Bind a stable origin instance id for this DB (installAutoExport / startServer). */
+export function bindOriginInstanceId(db: DatabaseSync, originInstanceId: string): void {
+  originByDb.set(db, originInstanceId);
+}
+
+/** Return the bound origin, or create and bind one for this DB handle. */
+export function ensureOriginInstanceId(db: DatabaseSync): string {
+  const existing = originByDb.get(db);
+  if (existing) return existing;
+  const created = randomUUID();
+  originByDb.set(db, created);
+  return created;
 }
 
 /**
@@ -47,7 +75,58 @@ function outcomeSourceKey(source: string): string {
   return `__sync_outcome__:${source}`;
 }
 
-function parseOutcomeCursor(
+function parseOutcomeRecord(
+  cursor: string | null,
+  recordedAt: string,
+): PersistedSyncOutcomeRecord | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(cursor) as {
+      ok?: unknown;
+      counts?: { inserted?: unknown; updated?: unknown };
+      error?: unknown;
+      fetched?: unknown;
+      recordedAt?: unknown;
+      syncId?: unknown;
+      originInstanceId?: unknown;
+    };
+    if (typeof parsed.ok !== "boolean") return null;
+    const inserted =
+      typeof parsed.counts?.inserted === "number" ? parsed.counts.inserted : 0;
+    const updated =
+      typeof parsed.counts?.updated === "number" ? parsed.counts.updated : 0;
+    // Pre-identity rows lack syncId/origin — treat as incomplete for exactly-once.
+    if (
+      typeof parsed.syncId !== "string" ||
+      !parsed.syncId ||
+      typeof parsed.originInstanceId !== "string" ||
+      !parsed.originInstanceId
+    ) {
+      // Still surface public fields for API consumers of legacy rows.
+      return null;
+    }
+    return {
+      ok: parsed.ok,
+      counts: { inserted, updated },
+      error: typeof parsed.error === "string" ? parsed.error : null,
+      fetched: typeof parsed.fetched === "number" ? parsed.fetched : null,
+      recordedAt:
+        typeof parsed.recordedAt === "string" && parsed.recordedAt
+          ? parsed.recordedAt
+          : recordedAt,
+      syncId: parsed.syncId,
+      originInstanceId: parsed.originInstanceId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse public outcome fields even for legacy rows without sync identity.
+ * Used by API GET paths that must keep the historical response shape.
+ */
+function parseOutcomePublic(
   cursor: string | null,
   recordedAt: string,
 ): PersistedSyncOutcome | null {
@@ -86,7 +165,9 @@ export function persistSyncOutcome(
   outcome: SyncOutcomeInput,
   now = new Date().toISOString(),
 ): void {
-  const payload: PersistedSyncOutcome = {
+  const syncId = randomUUID();
+  const originInstanceId = ensureOriginInstanceId(db);
+  const record: PersistedSyncOutcomeRecord = {
     ok: outcome.ok,
     counts: {
       inserted: outcome.counts?.inserted ?? 0,
@@ -95,6 +176,8 @@ export function persistSyncOutcome(
     error: outcome.error ?? null,
     fetched: outcome.fetched ?? null,
     recordedAt: now,
+    syncId,
+    originInstanceId,
   };
   // Persist into existing sync_state rows (migration-backed). No CREATE TABLE.
   db.prepare(
@@ -102,17 +185,19 @@ export function persistSyncOutcome(
      ON CONFLICT(source) DO UPDATE SET
        cursor = excluded.cursor,
        last_synced_at = excluded.last_synced_at`,
-  ).run(outcomeSourceKey(source), JSON.stringify(payload), now);
+  ).run(outcomeSourceKey(source), JSON.stringify(record), now);
 
   if (outcome.ok) {
     dispatchSyncSuccess({
       source,
+      originInstanceId,
       outcome: {
         ok: true,
-        counts: payload.counts,
+        counts: record.counts,
         error: null,
-        fetched: payload.fetched,
-        recordedAt: payload.recordedAt,
+        fetched: record.fetched,
+        recordedAt: record.recordedAt,
+        syncId,
       },
     });
   }
@@ -129,7 +214,25 @@ export function getLatestSyncOutcome(
     | { cursor: string | null; last_synced_at: string }
     | undefined;
   if (!row) return null;
-  return parseOutcomeCursor(row.cursor, row.last_synced_at);
+  // Strip identity fields so API deep-equality contracts stay stable.
+  return parseOutcomePublic(row.cursor, row.last_synced_at);
+}
+
+/**
+ * Full latest outcome including syncId + originInstanceId.
+ * Used by auto-export exactly-once / origin matching. Null when missing identity.
+ */
+export function getLatestSyncOutcomeRecord(
+  db: DatabaseSync,
+  source: string,
+): PersistedSyncOutcomeRecord | null {
+  const row = db
+    .prepare("SELECT cursor, last_synced_at FROM sync_state WHERE source = ?")
+    .get(outcomeSourceKey(source)) as
+    | { cursor: string | null; last_synced_at: string }
+    | undefined;
+  if (!row) return null;
+  return parseOutcomeRecord(row.cursor, row.last_synced_at);
 }
 
 function preferNonNull<T>(next: T | null, prev: T | null): T | null {

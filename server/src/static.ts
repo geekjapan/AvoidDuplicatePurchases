@@ -5,8 +5,11 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { dlsiteProductJsonUrl } from "@adp/shared/adapters/dlsite";
 import { isAllowedOrigin, loadConfig, type ServerConfig } from "./config.js";
+import { isReadonlyMode, openReadonlyDatabase } from "./config/readonly.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
+import { isApiNamespace, withReadonlyGuard } from "./middleware/readonly-guard.js";
+import { installAutoExport } from "./export/auto.js";
 import type { ProductFetcher } from "./services/import.js";
 import { loadAdminSettings } from "./routes/settings.js";
 import "./routes/listings.js";
@@ -14,6 +17,7 @@ import "./routes/candidates.js";
 import "./routes/work.js";
 import "./routes/settings.js";
 import "./routes/manual.js";
+import "./export/route.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = join(__dirname, "..");
@@ -48,7 +52,9 @@ export function handleStatic(
   res: import("node:http").ServerResponse,
   url: URL,
 ): boolean {
-  if (url.pathname.startsWith("/api/")) return false;
+  // Same API-namespace gate as readonly-guard: exact /api and %2F separators
+  // must not fall through to SPA index.html when handleStatic is invoked alone.
+  if (isApiNamespace(url.pathname)) return false;
 
   const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
   const safe = normalize(rel).replace(/^(\.\.(\/|\\|$))+/, "");
@@ -166,9 +172,11 @@ export function resolveListenPort(
 export function startServer(options: StartServerOptions = {}): StartedServer {
   const env = options.env ?? (process.env as Record<string, string | undefined>);
   const config = options.config ?? loadConfig(env);
-  mkdirSync(dirname(config.dbPath), { recursive: true });
-  const appDb = openDatabase(config.dbPath);
-  const db = appDb.sqlite;
+  const readonly = isReadonlyMode(env);
+  if (!readonly) mkdirSync(dirname(config.dbPath), { recursive: true });
+  // Read-only mode opens the snapshot directly: no migrations, no writes.
+  const appDb = readonly ? null : openDatabase(config.dbPath);
+  const db = appDb ? appDb.sqlite : openReadonlyDatabase(config.dbPath);
 
   const runtime = {
     port: resolveListenPort(config, db, env, options.port),
@@ -177,6 +185,13 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   const productFetcher = createProductionProductFetcher(
     options.fetchImpl ?? globalThis.fetch.bind(globalThis),
   );
+  const apiHandler = readonly ? withReadonlyGuard(handleApi) : handleApi;
+  // Successful syncs auto-export on the main (writable) machine only.
+  // Production instance holds the unsubscribe so close can detach exactly once
+  // before the DB handle is closed (listener must not fire on a closed DB).
+  const unsubscribeAutoExport = readonly
+    ? null
+    : installAutoExport(db, runtime.port);
 
   const server = createServer(async (req, res) => {
     try {
@@ -190,7 +205,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
       }
 
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-      const apiHandled = await handleApi(req, res, {
+      const apiHandled = await apiHandler(req, res, {
         db,
         port,
         extensionOrigins: config.extensionOrigins,
@@ -210,11 +225,62 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
 
   const shouldListen = options.listen !== false;
   let resolveReady!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    resolveReady = resolve;
+  let rejectReady!: (err: Error) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = () => {
+      if (readySettled) return;
+      readySettled = true;
+      resolve();
+    };
+    rejectReady = (err: Error) => {
+      if (readySettled) return;
+      readySettled = true;
+      reject(err);
+    };
   });
 
+  // Declare close before the listen error handler so listen-failure cleanup can
+  // call the same idempotent shutdown without TDZ (unsubscribe → drain → DB close).
+  let closed = false;
+  let dbClosed = false;
+  const closeDbOnce = (): void => {
+    if (dbClosed) return;
+    dbClosed = true;
+    try {
+      db.close();
+    } catch {
+      // Already-closed or listen-failed handles must not break shutdown.
+    }
+  };
+  const close = (): void => {
+    // Idempotent: concurrent / double close must unsubscribe and close DB once.
+    if (closed) return;
+    closed = true;
+    // Detach auto-export before any late sync can call into a closing DB.
+    unsubscribeAutoExport?.();
+    // Stop accepting new connections first; close DB only after in-flight drain.
+    if (server.listening) {
+      server.close(() => {
+        closeDbOnce();
+      });
+      return;
+    }
+    try {
+      server.close();
+    } catch {
+      // listen:false / never-bound servers may reject close; still free the DB.
+    }
+    closeDbOnce();
+  };
+
   if (shouldListen) {
+    server.once("error", (err) => {
+      // Listen failure must free the auto-export listener and DB even when the
+      // caller never invokes close() (EADDRINUSE etc.).
+      close();
+      rejectReady(err instanceof Error ? err : new Error(String(err)));
+    });
     server.listen(runtime.port, host, () => {
       if (runtime.port === 0) {
         const addr = server.address();
@@ -227,10 +293,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
   }
 
   return {
-    close: () => {
-      server.close();
-      appDb.close();
-    },
+    close,
     get port() {
       return runtime.port;
     },
@@ -243,5 +306,16 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(entry).href) {
-  startServer();
+  // Direct production entry: never leave ready rejection unhandled.
+  const started = startServer();
+  started.ready.catch((err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
+    try {
+      started.close();
+    } catch {
+      // listen-failure path already closed; ignore double-close
+    }
+    process.exitCode = 1;
+  });
 }
