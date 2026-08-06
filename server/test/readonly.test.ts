@@ -21,7 +21,7 @@ import { handleApi } from "../src/http.js";
 import { withReadonlyGuard } from "../src/middleware/readonly-guard.js";
 import { isReadonlyMode, openReadonlyDatabase } from "../src/config/readonly.js";
 import { exportSnapshot } from "../src/export/export.js";
-import { startServer } from "../src/static.js";
+import { handleStatic, startServer } from "../src/static.js";
 import { clearSyncSuccessListeners } from "../src/hooks/sync-success.js";
 import { persistAdminSettings } from "../src/routes/settings.js";
 import { persistSyncOutcome } from "../src/import/fanza/common.js";
@@ -285,6 +285,35 @@ describe("readonly guard", () => {
   it("does not touch non-API paths", async () => {
     const res = await request(port, "GET", "/static/asset.js");
     assert.equal(res.status, 404);
+  });
+});
+
+describe("handleStatic API namespace gate (direct handler)", () => {
+  it("does not serve SPA for /api root and encoded separator variants", () => {
+    for (const path of ["/api", "/api/", "/api%2F", "/api%2f"]) {
+      const url = new URL(path, "http://127.0.0.1:1");
+      let status: number | null = null;
+      let ended = false;
+      const res = {
+        writeHead(code: number) {
+          status = code;
+          return res;
+        },
+        end() {
+          ended = true;
+          return res;
+        },
+      } as unknown as import("node:http").ServerResponse;
+      const req = {} as import("node:http").IncomingMessage;
+      const handled = handleStatic(req, res, url);
+      assert.equal(
+        handled,
+        false,
+        `${path}: handleStatic must not claim SPA for API namespace`,
+      );
+      assert.equal(status, null, `${path}: must not write SPA status`);
+      assert.equal(ended, false, `${path}: must not end SPA body`);
+    }
   });
 });
 

@@ -8,7 +8,7 @@ import { isAllowedOrigin, loadConfig, type ServerConfig } from "./config.js";
 import { isReadonlyMode, openReadonlyDatabase } from "./config/readonly.js";
 import { openDatabase } from "./db.js";
 import { handleApi } from "./http.js";
-import { withReadonlyGuard } from "./middleware/readonly-guard.js";
+import { isApiNamespace, withReadonlyGuard } from "./middleware/readonly-guard.js";
 import { installAutoExport } from "./export/auto.js";
 import type { ProductFetcher } from "./services/import.js";
 import { loadAdminSettings } from "./routes/settings.js";
@@ -52,7 +52,9 @@ export function handleStatic(
   res: import("node:http").ServerResponse,
   url: URL,
 ): boolean {
-  if (url.pathname.startsWith("/api/")) return false;
+  // Same API-namespace gate as readonly-guard: exact /api and %2F separators
+  // must not fall through to SPA index.html when handleStatic is invoked alone.
+  if (isApiNamespace(url.pathname)) return false;
 
   const rel = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\//, "");
   const safe = normalize(rel).replace(/^(\.\.(\/|\\|$))+/, "");
