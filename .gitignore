@@ -5,6 +5,7 @@ prototype/normalize/samples/
 *.db
 
 node_modules/
+.codegraph/
 .env
 .DS_Store
 .orca/
