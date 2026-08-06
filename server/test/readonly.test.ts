@@ -274,6 +274,14 @@ describe("readonly guard", () => {
     }
   });
 
+  it("rejects exact GET /api and encoded separator variants with 403", async () => {
+    for (const path of ["/api", "/api/", "/api%2F", "/api%2f"]) {
+      const res = await request(port, "GET", path);
+      assert.equal(res.status, 403, `GET ${path} must be 403`);
+      assert.deepEqual(res.json, { error: "forbidden" });
+    }
+  });
+
   it("does not touch non-API paths", async () => {
     const res = await request(port, "GET", "/static/asset.js");
     assert.equal(res.status, 404);
@@ -338,6 +346,13 @@ describe("production startServer read-only mode (in-process, same static.ts)", (
       for (const path of ["/api/does-not-exist", "/api/listings/extra", "/api/export"]) {
         const res = await request(started.port, "GET", path);
         assert.equal(res.status, 403, `GET ${path}`);
+        assert.deepEqual(res.json, { error: "forbidden" });
+      }
+
+      // Exact /api must not fall through to SPA index.html (200 HTML).
+      for (const path of ["/api", "/api/", "/api%2F", "/api%2f"]) {
+        const res = await request(started.port, "GET", path);
+        assert.equal(res.status, 403, `GET ${path} must be 403 (not SPA)`);
         assert.deepEqual(res.json, { error: "forbidden" });
       }
 
@@ -526,6 +541,12 @@ describe("production-entry child process (thin launcher → static.startServer)"
     for (const path of ["/api/does-not-exist", "/api/listings/extra", "/api/export"]) {
       const res = await request(port, "GET", path, undefined, null);
       assert.equal(res.status, 403, `GET ${path} must be 403`);
+      assert.deepEqual(res.json, { error: "forbidden" });
+    }
+
+    for (const path of ["/api", "/api/", "/api%2F", "/api%2f"]) {
+      const res = await request(port, "GET", path, undefined, null);
+      assert.equal(res.status, 403, `GET ${path} must be 403 (not SPA)`);
       assert.deepEqual(res.json, { error: "forbidden" });
     }
 

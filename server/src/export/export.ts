@@ -419,6 +419,8 @@ export function exportSnapshot(
     options.afterPin?.(publicPin(pin));
     revalidatePinnedDirectory(pin);
 
+    // Pin start-of-export target identity (or absence). Final rename must only
+    // replace that same inode, never a substituted file or a newly planted one.
     const existingTarget = pathIdentity(target);
     if (existingTarget?.isSymbolicLink) {
       throw new Error("export target must not be a symbolic link");
@@ -426,6 +428,7 @@ export function exportSnapshot(
     if (existingTarget && !existingTarget.isFile) {
       throw new Error("export target must be a regular file");
     }
+    const expectedTargetIdentity: PathIdentity | null = existingTarget;
 
     tempDir = mkdtempSync(join(operationDestination, TEMP_DIR_PREFIX));
     // Immutable creation-time pin — never reassigned from later revalidation.
@@ -485,18 +488,26 @@ export function exportSnapshot(
     if (currentTarget && !currentTarget.isFile) {
       throw new Error("export target must be a regular file");
     }
+    if (expectedTargetIdentity === null) {
+      if (currentTarget !== null) {
+        throw new Error("export target appeared during export");
+      }
+    } else if (!currentTarget || !sameIdentity(currentTarget, expectedTargetIdentity)) {
+      throw new Error("export target identity changed during export");
+    }
 
     const stagedPathForAbsence = stagedFile;
     finalRename(stagedFile, target);
 
     // Post-rename fail-closed checks before releasing staged cleanup ownership.
-    // Revalidate the destination pin (external sentinel) and require a regular
-    // non-symlink file under it. Staged path must be gone. A different inode
-    // than the staged pin is allowed only as a concurrent export race.
+    // Destination must be exactly the staged inode (never a substituted file).
     revalidatePinnedDirectory(pin);
     const finalTarget = pathIdentity(target);
     if (!finalTarget || finalTarget.isSymbolicLink || !finalTarget.isFile || finalTarget.dev !== pin.dev) {
       throw new Error("export target invalid after rename");
+    }
+    if (!sameIdentity(finalTarget, stagedIdentity)) {
+      throw new Error("export target identity mismatch after rename");
     }
     if (pathIdentity(stagedPathForAbsence)) {
       throw new Error("export staged path residual after rename");

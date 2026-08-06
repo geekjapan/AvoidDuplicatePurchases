@@ -9,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -549,6 +550,86 @@ describe("auto export via sync-success hook", () => {
     assert.deepEqual(extras, []);
     db.close();
   });
+
+  it("fails closed when an existing target regular file is replaced before final rename", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-target-swap-"));
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+    const adversary = Buffer.from("adversary-regular-target");
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterStage: () => {
+            // Replace the pinned existing target with a different regular inode.
+            rmSync(first.path, { force: true });
+            writeFileSync(first.path, adversary);
+            if (process.platform !== "win32") chmodSync(first.path, 0o600);
+          },
+        }),
+      /target identity changed|appeared during export|symbolic link|must be a regular file/,
+    );
+
+    assert.deepEqual(readFileSync(first.path), adversary);
+    assert.notDeepEqual(readFileSync(first.path), before);
+    assert.deepEqual(tempResidue(dest), []);
+    db.close();
+  });
+
+  it("fails closed when an absent target is planted before final rename", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-target-plant-"));
+    const target = snapshotPath(dest);
+    assert.ok(!existsSync(target));
+    const planted = Buffer.from("planted-before-rename");
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          afterStage: () => {
+            writeFileSync(target, planted);
+            if (process.platform !== "win32") chmodSync(target, 0o600);
+          },
+        }),
+      /target appeared during export|target identity changed|must be a regular file/,
+    );
+
+    assert.deepEqual(readFileSync(target), planted);
+    assert.deepEqual(tempResidue(dest), []);
+    db.close();
+  });
+
+  it("fails closed when post-rename target is a different regular inode", () => {
+    const db = openDatabase(":memory:").sqlite;
+    seedListings(db);
+    const dest = mkdtempSync(join(realTmp(), "adp-export-postrename-"));
+    const first = exportSnapshot(db, dest);
+    const before = readFileSync(first.path);
+    const stolen = Buffer.from("stolen-post-rename-regular");
+
+    assert.throws(
+      () =>
+        exportSnapshot(db, dest, {
+          renameSync: (from, to) => {
+            renameSync(from, to);
+            // Concurrent thief replaces the just-renamed target with another
+            // regular 0600 file before post-rename identity verification.
+            rmSync(to, { force: true });
+            writeFileSync(to, stolen);
+            if (process.platform !== "win32") chmodSync(to, 0o600);
+          },
+        }),
+      /identity mismatch after rename|invalid after rename/,
+    );
+
+    assert.deepEqual(readFileSync(first.path), stolen);
+    assert.notDeepEqual(readFileSync(first.path), before);
+    assert.deepEqual(tempResidue(dest), []);
+    db.close();
+  });
 });
 
 describe("exportSnapshot service", () => {
@@ -916,8 +997,11 @@ describe("exportSnapshot service", () => {
       ),
     );
 
-    assert.ok(exits.some(({ code }) => code === 0), JSON.stringify(exits));
-    assert.ok(exits.every(({ code }) => code === 0), JSON.stringify(exits));
+    // At least one winner must succeed; concurrent losers may fail closed.
+    assert.ok(
+      exits.some(({ code }) => code === 0),
+      `expected at least one successful export: ${JSON.stringify(exits)}`,
+    );
     assert.ok(existsSync(snapshotPath(dest)));
     assert.equal(countListings(snapshotPath(dest)), 2);
     assert.deepEqual(tempResidue(dest), []);

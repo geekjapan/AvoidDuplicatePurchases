@@ -23,6 +23,18 @@ const ALLOWED_GET_EXACT = new Set([
   "/api/sync-state/fanza_dlsoft",
 ]);
 
+/**
+ * API namespace includes the exact root `/api` as well as `/api/...`.
+ * Percent-encoded separators (`%2F` / `%2f`) count as path separators so
+ * variants like `/api%2F` cannot bypass the namespace gate to the SPA.
+ * Exact `/api` must not fall through to the SPA static handler.
+ */
+export function isApiNamespace(pathname: string): boolean {
+  // Node keeps %2F encoded in URL.pathname; normalize before prefix checks.
+  const normalized = pathname.replace(/%2f/gi, "/");
+  return normalized === "/api" || normalized.startsWith("/api/");
+}
+
 /** POST /api/lookup is the only write-verb route a read-only machine may call. */
 function isReadAllowed(method: string, pathname: string): boolean {
   if (method === "POST" && pathname === "/api/lookup") return true;
@@ -38,7 +50,7 @@ function isReadAllowed(method: string, pathname: string): boolean {
 export function withReadonlyGuard(handle: ApiHandler): ApiHandler {
   return async (req, res, ctx) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${ctx.port}`);
-    if (!url.pathname.startsWith("/api/")) return handle(req, res, ctx);
+    if (!isApiNamespace(url.pathname)) return handle(req, res, ctx);
     if (!isReadAllowed((req.method ?? "GET").toUpperCase(), url.pathname)) {
       const payload = JSON.stringify({ error: "forbidden" });
       res.writeHead(403, {
