@@ -19,6 +19,11 @@ export const DISPLAY_CSS = `
   border: 1px solid #ffca28;
   color: #6d4c00;
 }
+.adp-purchased-banner--possible {
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  color: #0d47a1;
+}
 .adp-purchased-banner a {
   color: inherit;
   font-weight: 600;

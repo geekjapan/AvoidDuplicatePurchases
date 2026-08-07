@@ -41,6 +41,8 @@ export const LookupResultSchema = z.object({
   /** ISO8601 / date string from listing.purchased_at when owned; null/omitted when unavailable. */
   purchasedAt: z.string().nullable().optional(),
   other: z.array(LookupOtherSchema),
+  /** Same normalized maker, but only a fuzzy title match; never an ownership assertion. */
+  possible: z.array(LookupOtherSchema).default([]),
 });
 
 export const LookupResponseSchema = z.object({

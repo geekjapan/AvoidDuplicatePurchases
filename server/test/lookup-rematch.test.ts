@@ -110,6 +110,62 @@ describe("lookup other-site ownership", () => {
     assert.equal(noMaker[0]!.other.length, 0);
   });
 
+  it("matches the normalized maker first, then separates exact and fuzzy titles", () => {
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_410001",
+      title: "正規化作品【DL版】",
+      maker: "Sample Circle",
+    });
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_410002",
+      title: "類似タイトルA",
+      maker: "Sample Circle",
+    });
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_410003",
+      title: "類似タイトルA",
+      maker: "Different Circle",
+    });
+
+    const exact = lookupItems(db, [
+      {
+        source: "dlsite",
+        cid: "RJ410001",
+        title: "正規化作品",
+        maker: "ＳＡＭＰＬＥ　ＣＩＲＣＬＥ",
+      },
+    ])[0]!;
+    assert.equal(exact.other.length, 1);
+    assert.equal(exact.other[0]!.cid, "d_410001");
+    assert.equal(exact.possible.length, 0);
+
+    const possible = lookupItems(db, [
+      {
+        source: "dlsite",
+        cid: "RJ410002",
+        title: "類似タイトルB",
+        maker: "Sample Circle",
+      },
+    ])[0]!;
+    assert.equal(possible.other.length, 0);
+    assert.equal(possible.possible.length, 1);
+    assert.equal(possible.possible[0]!.cid, "d_410002");
+
+    const differentMaker = lookupItems(db, [
+      {
+        source: "dlsite",
+        cid: "RJ410003",
+        title: "類似タイトルB",
+        maker: "Unknown Circle",
+      },
+    ])[0]!;
+    assert.equal(differentMaker.other.length, 0);
+    assert.equal(differentMaker.possible.length, 0);
+  });
+
   it("emits verified product URLs and omits unlinkable Books/Video candidates", () => {
     insertListing(db, {
       source: "fanza_doujin",

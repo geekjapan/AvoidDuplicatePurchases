@@ -11,6 +11,7 @@ export interface ServerLookupItem {
 export interface LookupResult {
   owned: boolean;
   other: Array<{ source: string; cid: string; title: string; url: string }>;
+  possible?: Array<{ source: string; cid: string; title: string; url: string }>;
 }
 
 export interface ImportCounts {
