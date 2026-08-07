@@ -81,7 +81,7 @@ describe("settings page", () => {
     port.value = "42000";
     dest.value = "/tmp/adp-export";
     form.dispatchEvent(
-      new (globalThis as unknown as { Event: typeof Event }).Event("submit", {
+      new window.Event("submit", {
         bubbles: true,
         cancelable: true,
       }),
