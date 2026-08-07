@@ -69,23 +69,21 @@ async function waitForVideoPage(tabId: number): Promise<void> {
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
-    let timeout: ReturnType<typeof setTimeout>;
-    let listener: (updatedTabId: number, changeInfo: { status?: string }) => void;
 
-    const finish = (error?: Error) => {
+    function finish(error?: Error): void {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       chrome.tabs.onUpdated.removeListener(listener);
       if (error) reject(error);
       else resolve();
-    };
+    }
 
-    listener = (updatedTabId, changeInfo) => {
+    const listener = (updatedTabId: number, changeInfo: { status?: string }) => {
       if (updatedTabId === tabId && changeInfo.status === "complete") finish();
     };
 
-    timeout = setTimeout(
+    const timeout = setTimeout(
       () => finish(new Error("video_page_timeout")),
       VIDEO_PAGE_READY_TIMEOUT_MS,
     );
