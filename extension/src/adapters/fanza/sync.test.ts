@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { runAllFanzaSyncs, runFanzaBooksSync } from "./sync.ts";
+import {
+  runAllFanzaSyncs,
+  runFanzaBooksSync,
+  runFanzaVideoSync,
+} from "./sync.ts";
 import { renderSyncStatus } from "../../popup/sync-status.ts";
 
 function json(data: unknown, status = 200): Response {
@@ -15,11 +19,16 @@ describe("fanza four-source sync", () => {
   it("declares only the approved Video and Dlsoft history hosts", () => {
     const manifest = JSON.parse(
       readFileSync(new URL("../../../manifest.json", import.meta.url), "utf8"),
-    ) as { host_permissions: string[] };
+    ) as { host_permissions: string[]; permissions: string[] };
+    assert.ok(manifest.permissions.includes("scripting"));
     const newHistoryHosts = manifest.host_permissions.filter(
-      (host) => host.includes("api.video.dmm.co.jp") || host.includes("dlsoft.dmm.co.jp"),
+      (host) =>
+        host.includes("video.dmm.co.jp") ||
+        host.includes("api.video.dmm.co.jp") ||
+        host.includes("dlsoft.dmm.co.jp"),
     );
     assert.deepEqual(newHistoryHosts, [
+      "https://video.dmm.co.jp/*",
       "https://api.video.dmm.co.jp/*",
       "https://dlsoft.dmm.co.jp/*",
     ]);
@@ -35,6 +44,76 @@ describe("fanza four-source sync", () => {
     assert.doesNotMatch(source, /videoPageHasNext/);
     assert.doesNotMatch(source, /dlsoftPageHasNext/);
     assert.doesNotMatch(source, /dlsoftPageInfo/);
+  });
+
+  it("accepts authenticated Video requests from the video page origin", async () => {
+    const previousFetch = globalThis.fetch;
+    const globalWithChrome = globalThis as typeof globalThis & { chrome?: unknown };
+    const previousChrome = globalWithChrome.chrome;
+    let pageRequest: { input: string; init?: RequestInit } | undefined;
+
+    globalWithChrome.chrome = {
+      tabs: {
+        query: async () => [{ id: 17, url: "https://video.dmm.co.jp/av/mylibrary/" }],
+      },
+      scripting: {
+        executeScript: async (details: {
+          target: { tabId: number };
+          world: string;
+          func: (...args: unknown[]) => Promise<unknown>;
+          args?: unknown[];
+        }) => {
+          assert.equal(details.target.tabId, 17);
+          assert.equal(details.world, "MAIN");
+
+          const pageFetch = globalThis.fetch;
+          globalThis.fetch = async (input, init) => {
+            pageRequest = { input: String(input), init };
+            return json({
+              data: {
+                user: {
+                  ppvLibrary: {
+                    contentViewingRightsSummaryList: {
+                      pageInfo: { hasNext: false, totalCount: 1 },
+                      items: [{ content: { id: "video-1", title: "synthetic" } }],
+                    },
+                  },
+                },
+              },
+            });
+          };
+          try {
+            const result = await details.func(...(details.args ?? []));
+            return [{ result }];
+          } finally {
+            globalThis.fetch = pageFetch;
+          }
+        },
+      },
+    };
+
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("http://127.0.0.1:41321/api/import/fanza_video")) {
+        return json({ inserted: 1, updated: 0, itemCount: 1, totalCount: 1, hasNext: false });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/fanza_video")) {
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      return json({}, 403);
+    };
+
+    try {
+      const outcome = await runFanzaVideoSync();
+      assert.equal(outcome.ok, true);
+      assert.equal(outcome.fetched, 1);
+      assert.equal(pageRequest?.input, "https://api.video.dmm.co.jp/graphql");
+      assert.equal(pageRequest?.init?.credentials, "include");
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousChrome === undefined) delete globalWithChrome.chrome;
+      else globalWithChrome.chrome = previousChrome;
+    }
   });
 
   it("fetches, imports, and paginates all four sources sequentially", async () => {
