@@ -6,6 +6,7 @@ prototype/normalize/samples/
 
 node_modules/
 .codegraph/
+release-candidate/
 .env
 .DS_Store
 .orca/

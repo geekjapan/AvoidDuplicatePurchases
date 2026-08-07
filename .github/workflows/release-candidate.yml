@@ -1,0 +1,45 @@
+name: Release candidate
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact existing tag to verify and package
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_OUTPUT_DIR: release-candidate
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Build and verify Release candidate
+        run: node scripts/release.mjs candidate
+
+      - name: Upload Release candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ env.RELEASE_TAG }}
+          path: release-candidate/*
+          if-no-files-found: error
