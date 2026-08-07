@@ -63,6 +63,18 @@ export declare const LookupResultSchema: z.ZodObject<{
         title: z.ZodString;
         url: z.ZodString;
     }, z.core.$strip>>;
+    possible: z.ZodDefault<z.ZodArray<z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+        }>;
+        cid: z.ZodString;
+        title: z.ZodString;
+        url: z.ZodString;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export declare const LookupResponseSchema: z.ZodObject<{
     results: z.ZodArray<z.ZodObject<{
@@ -80,6 +92,18 @@ export declare const LookupResponseSchema: z.ZodObject<{
             title: z.ZodString;
             url: z.ZodString;
         }, z.core.$strip>>;
+        possible: z.ZodDefault<z.ZodArray<z.ZodObject<{
+            source: z.ZodEnum<{
+                dlsite: "dlsite";
+                fanza_doujin: "fanza_doujin";
+                fanza_books: "fanza_books";
+                fanza_video: "fanza_video";
+                fanza_dlsoft: "fanza_dlsoft";
+            }>;
+            cid: z.ZodString;
+            title: z.ZodString;
+            url: z.ZodString;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 /** Path param for `POST /api/import/:source` and `GET /api/sync-state/:source`. */

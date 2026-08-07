@@ -84,6 +84,25 @@ describe("shared API endpoint schemas", () => {
       ],
     });
     assert.equal(res.results[0]?.other.length, 1);
+    assert.deepEqual(res.results[0]?.possible, []);
+
+    const possible = LookupResponseSchema.parse({
+      results: [
+        {
+          owned: false,
+          other: [],
+          possible: [
+            {
+              source: "fanza_doujin",
+              cid: "d_2",
+              title: "possible",
+              url: "https://example.com/possible",
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(possible.results[0]?.possible.length, 1);
 
     const owned = LookupResponseSchema.parse({
       results: [{ owned: true, purchasedAt: "2023-12-30", other: [] }],

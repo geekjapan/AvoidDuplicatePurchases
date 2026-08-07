@@ -106,6 +106,39 @@ describe("cross-store lookup path", () => {
     assert.equal(result!.other.length, 0);
   });
 
+  it("renders a fuzzy same-circle candidate on a DLsite product page", async () => {
+    const titleA = "類似タイトルA";
+    const titleB = "類似タイトルB";
+    const maker = "合成サークル";
+    insertListing(db, {
+      source: "fanza_doujin",
+      cid: "d_410004",
+      title: titleA,
+      maker,
+    });
+
+    const html = readFileSync(join(fixtures, "dlsite-product.html"), "utf8")
+      .replaceAll("RJ123456", "RJ410004")
+      .replaceAll("サンプル同人作品", titleB)
+      .replaceAll("サークル名", maker);
+    const doc = parseFixtureDocument(
+      html,
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ410004.html",
+    );
+    const hit = await runProductPageWithLookup(
+      "dlsite",
+      doc as unknown as Document,
+      async (items) => serverLookupItems(db, items),
+    );
+
+    assert.equal(hit?.other.length, 0);
+    assert.equal(hit?.possible?.length, 1);
+    const banner = doc.getElementById(ADP_BANNER_ID);
+    assert.ok(banner);
+    assert.match(banner!.textContent ?? "", /同一作品の可能性あり/);
+    assert.doesNotMatch(banner!.textContent ?? "", /他サイトで購入済み/);
+  });
+
   it("exercises background handleLookup through the working lookup path", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () =>

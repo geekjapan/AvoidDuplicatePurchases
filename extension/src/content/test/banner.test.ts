@@ -48,6 +48,26 @@ describe("content banner rendering", () => {
     assert.equal(banner, null);
   });
 
+  it("renders fuzzy same-maker candidates as a distinct non-assertive state", () => {
+    const doc = new MockDocument();
+    const banner = renderProductBanner(doc as unknown as Document, {
+      owned: false,
+      other: [],
+      possible: [
+        {
+          source: "fanza_doujin",
+          cid: "d_410002",
+          title: "類似タイトルA",
+          url: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_410002/",
+        },
+      ],
+    });
+    assert.ok(banner);
+    assert.match(banner!.textContent ?? "", /同一作品の可能性あり/);
+    assert.doesNotMatch(banner!.textContent ?? "", /他サイトで購入済み/);
+    assert.match(banner!.className, /adp-purchased-banner--possible/);
+  });
+
   it("rejects non-https or non-approved host/path links per source", () => {
     assert.equal(approvedStoreHttpsUrl("javascript:alert(1)", "dlsite"), null);
     assert.equal(approvedStoreHttpsUrl("http://www.dlsite.com/maniax/work/=/product_id/RJ1.html", "dlsite"), null);

@@ -14551,7 +14551,9 @@ var LookupResultSchema = external_exports.object({
   owned: external_exports.boolean(),
   /** ISO8601 / date string from listing.purchased_at when owned; null/omitted when unavailable. */
   purchasedAt: external_exports.string().nullable().optional(),
-  other: external_exports.array(LookupOtherSchema)
+  other: external_exports.array(LookupOtherSchema),
+  /** Same normalized maker, but only a fuzzy title match; never an ownership assertion. */
+  possible: external_exports.array(LookupOtherSchema).default([])
 });
 var LookupResponseSchema = external_exports.object({
   results: external_exports.array(LookupResultSchema)

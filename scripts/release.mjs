@@ -381,6 +381,7 @@ function assertAllowedBundlePaths(entries) {
       path === "package.json" ||
       path === "package-lock.json" ||
       path === "README.md" ||
+      path === "scripts/runtime.mjs" ||
       (parts[0] === "extension" && parts[1] === "dist" && /\.(?:js|html|css)$/.test(path)) ||
       (parts[0] === "server" && parts[1] === "dist" && path.endsWith(".js")) ||
       (parts[0] === "shared" && parts[1] === "dist" && path.endsWith(".js"));
@@ -399,6 +400,7 @@ function assertAllowedBundlePaths(entries) {
     "package.json",
     "package-lock.json",
     "README.md",
+    "scripts/runtime.mjs",
   ];
   for (const path of required) {
     if (!seen.has(path)) fail(`bundle is missing required file: ${path}`);
@@ -435,7 +437,13 @@ function buildRuntimePackage(version, zodVersion) {
     version,
     private: true,
     type: "module",
-    scripts: { start: "node server/dist/static.js" },
+    scripts: {
+      setup: "node scripts/runtime.mjs setup",
+      start: "node scripts/runtime.mjs start",
+      stop: "node scripts/runtime.mjs stop",
+      restart: "node scripts/runtime.mjs restart",
+      status: "node scripts/runtime.mjs status",
+    },
     dependencies: {
       "@adp/shared": "file:./shared",
       zod: zodVersion,
@@ -463,6 +471,7 @@ function stageBundle(staging, version) {
   copyFile(sharedPackagePath, join(staging, "shared/package.json"));
   copyTree(join(ROOT, "shared/dist"), join(staging, "shared/dist"), (path) => path.endsWith(".js"));
   copyFile(join(ROOT, "README.md"), join(staging, "README.md"));
+  copyFile(join(ROOT, "scripts/runtime.mjs"), join(staging, "scripts/runtime.mjs"));
   writeJson(join(staging, "package.json"), buildRuntimePackage(version, zodVersion));
 
   const lock = run(
