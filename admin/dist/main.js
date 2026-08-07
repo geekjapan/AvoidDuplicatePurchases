@@ -1264,7 +1264,7 @@ function issue(...args) {
 function cleanEnum(obj) {
   return Object.entries(obj).filter(([k, _]) => {
     return Number.isNaN(Number.parseInt(k, 10));
-  }).map((el3) => el3[1]);
+  }).map((el5) => el5[1]);
 }
 function base64ToUint8Array(base643) {
   const binaryString = atob(base643);
@@ -1358,15 +1358,15 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
           let curr = fieldErrors;
           let i = 0;
           while (i < fullpath.length) {
-            const el3 = fullpath[i];
+            const el5 = fullpath[i];
             const terminal = i === fullpath.length - 1;
             if (!terminal) {
-              curr[el3] = curr[el3] || { _errors: [] };
+              curr[el5] = curr[el5] || { _errors: [] };
             } else {
-              curr[el3] = curr[el3] || { _errors: [] };
-              curr[el3]._errors.push(mapper(issue2));
+              curr[el5] = curr[el5] || { _errors: [] };
+              curr[el5]._errors.push(mapper(issue2));
             }
-            curr = curr[el3];
+            curr = curr[el5];
             i++;
           }
         }
@@ -1396,16 +1396,16 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
         let curr = result;
         let i = 0;
         while (i < fullpath.length) {
-          const el3 = fullpath[i];
+          const el5 = fullpath[i];
           const terminal = i === fullpath.length - 1;
-          if (typeof el3 === "string") {
+          if (typeof el5 === "string") {
             curr.properties ?? (curr.properties = {});
-            (_a3 = curr.properties)[el3] ?? (_a3[el3] = { errors: [] });
-            curr = curr.properties[el3];
+            (_a3 = curr.properties)[el5] ?? (_a3[el5] = { errors: [] });
+            curr = curr.properties[el5];
           } else {
             curr.items ?? (curr.items = []);
-            (_b = curr.items)[el3] ?? (_b[el3] = { errors: [] });
-            curr = curr.items[el3];
+            (_b = curr.items)[el5] ?? (_b[el5] = { errors: [] });
+            curr = curr.items[el5];
           }
           if (terminal) {
             curr.errors.push(mapper(issue2));
@@ -3070,10 +3070,10 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const proms = [];
     const shape = value.shape;
     for (const key2 of value.keys) {
-      const el3 = shape[key2];
-      const isOptionalIn = el3._zod.optin === "optional";
-      const isOptionalOut = el3._zod.optout === "optional";
-      const r = el3._zod.run({ value: input[key2], issues: [] }, ctx);
+      const el5 = shape[key2];
+      const isOptionalIn = el5._zod.optin === "optional";
+      const isOptionalOut = el5._zod.optout === "optional";
+      const r = el5._zod.run({ value: input[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
         proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input, isOptionalIn, isOptionalOut)));
       } else {
@@ -3551,9 +3551,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     if (def.rest) {
       let i = items.length - 1;
       const rest = input.slice(items.length);
-      for (const el3 of rest) {
+      for (const el5 of rest) {
         i++;
-        const result = def.rest._zod.run({ value: el3, issues: [] }, ctx);
+        const result = def.rest._zod.run({ value: el5, issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((r) => handleTupleResult(r, payload, i)));
         } else {
@@ -15119,23 +15119,440 @@ async function renderLibrary(root) {
   await load();
 }
 
+// src/pages/sync/sync.ts
+var SOURCE_LABELS = {
+  dlsite: "DLsite",
+  fanza_doujin: "FANZA \u540C\u4EBA",
+  fanza_books: "FANZA \u30D6\u30C3\u30AF\u30B9",
+  fanza_video: "FANZA \u52D5\u753B",
+  fanza_dlsoft: "FANZA PC\u30B2\u30FC\u30E0",
+  full_sync: "\u5168\u4F53\u540C\u671F"
+};
+function el3(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key2, value] of Object.entries(props)) {
+    if (key2 === "className") node.className = value;
+    else if (key2 === "textContent") node.textContent = value;
+    else node.setAttribute(key2, value);
+  }
+  for (const child of children) {
+    node.append(child instanceof Node ? child : document.createTextNode(child));
+  }
+  return node;
+}
+function formatLastSynced(lastSyncedAt) {
+  if (!lastSyncedAt) return "\u672A\u540C\u671F";
+  try {
+    return new Date(lastSyncedAt).toLocaleString("ja-JP");
+  } catch {
+    return lastSyncedAt;
+  }
+}
+function formatOutcome(source, state) {
+  const label = SOURCE_LABELS[source] ?? source;
+  const last = formatLastSynced(state?.lastSyncedAt ?? null);
+  const latest = state?.latestOutcome;
+  if (!latest) {
+    return `${label}: \u6700\u7D42 ${last}`;
+  }
+  if (latest.ok && latest.counts) {
+    const fetched = latest.fetched ?? "?";
+    return `${label}: \u53D6\u5F97 ${fetched} \u30DA\u30FC\u30B8 / \u65B0\u898F ${latest.counts.inserted} / \u66F4\u65B0 ${latest.counts.updated}\uFF08${last}\uFF09`;
+  }
+  if (latest.error) {
+    const counts = latest.counts ? ` / \u65B0\u898F ${latest.counts.inserted} / \u66F4\u65B0 ${latest.counts.updated}` : "";
+    return `${label}: \u30A8\u30E9\u30FC ${latest.error}${counts}\uFF08${last}\uFF09`;
+  }
+  return `${label}: \u5931\u6557\uFF08${last}\uFF09`;
+}
+function formatFetchError(source, error51) {
+  const label = SOURCE_LABELS[source] ?? source;
+  return `${label}: \u53D6\u5F97\u30A8\u30E9\u30FC ${error51}`;
+}
+async function fetchSyncState(source) {
+  const res = await fetch(`/api/sync-state/${encodeURIComponent(source)}`);
+  const text = await res.text();
+  if (!res.ok) throw new Error(`\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F (${source}): ${text}`);
+  return JSON.parse(text);
+}
+async function postRematch() {
+  const res = await fetch("/api/rematch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`\u518D\u7167\u5408\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
+  return JSON.parse(text);
+}
+async function postManualListing(url2) {
+  const res = await fetch("/api/listings/manual", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url2 })
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`\u624B\u52D5\u767B\u9332\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
+}
+function errorMessage3(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+async function renderSync(root) {
+  root.replaceChildren(
+    el3("div", { className: "panel" }, [
+      el3("h2", { textContent: "\u540C\u671F" }),
+      el3("p", {
+        className: "muted",
+        textContent: "\u5404\u30BD\u30FC\u30B9\u306E\u6700\u7D42\u540C\u671F\u72B6\u614B\u3092\u8868\u793A\u3057\u3001\u518D\u7167\u5408\u3068\u624B\u52D5\u767B\u9332\u3092\u884C\u3044\u307E\u3059\u3002"
+      })
+    ])
+  );
+  const statusList = el3("ul", {
+    className: "sync-status-list",
+    "data-testid": "sync-status-list",
+    "aria-label": "\u540C\u671F\u72B6\u614B\u4E00\u89A7"
+  });
+  const statusRegion = el3("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "sync-status-region"
+  });
+  const rematchBtn = el3("button", {
+    className: "primary",
+    textContent: "\u518D\u7167\u5408\u3092\u5B9F\u884C",
+    "data-testid": "rematch-btn",
+    "aria-label": "\u518D\u7167\u5408\u3092\u5B9F\u884C"
+  });
+  const manualForm = el3("form", { className: "manual-form", "data-testid": "manual-form" });
+  const urlLabel = el3("label", { for: "manual-url", textContent: "\u5546\u54C1 URL" });
+  const urlInput = el3("input", {
+    id: "manual-url",
+    type: "url",
+    placeholder: "\u5BFE\u5FDC\u5E97\u8217\u306E\u5546\u54C1\u30DA\u30FC\u30B8 URL",
+    "data-testid": "manual-url",
+    "aria-label": "\u5546\u54C1 URL",
+    required: "true"
+  });
+  const manualBtn = el3("button", {
+    type: "submit",
+    className: "primary",
+    textContent: "\u624B\u52D5\u767B\u9332",
+    "data-testid": "manual-submit",
+    "aria-label": "\u624B\u52D5\u767B\u9332"
+  });
+  manualForm.append(urlLabel, urlInput, manualBtn);
+  const panel = el3("div", { className: "panel" }, [statusList, rematchBtn, manualForm]);
+  root.append(panel, statusRegion);
+  let pending = false;
+  function setPending(value) {
+    pending = value;
+    rematchBtn.disabled = value;
+    manualBtn.disabled = value;
+    urlInput.disabled = value;
+  }
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    const statusKind = kind === "partial" ? "error" : kind;
+    statusRegion.className = `status-region status-${statusKind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error" || kind === "partial") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  function renderRows(results) {
+    statusList.replaceChildren();
+    for (const result of results) {
+      const line = result.ok ? formatOutcome(result.source, result.state) : formatFetchError(result.source, result.error);
+      const item = el3("li", {
+        textContent: line,
+        "data-testid": `sync-row-${result.source}`,
+        "aria-label": line,
+        "data-load": result.ok ? "ok" : "error"
+      });
+      if (!result.ok) {
+        item.className = "sync-row-error";
+      }
+      statusList.append(item);
+    }
+  }
+  async function loadStates() {
+    const keys = [...SOURCES, "full_sync"];
+    const results = await Promise.all(
+      keys.map(async (source) => {
+        try {
+          const state = await fetchSyncState(source);
+          return { source, ok: true, state };
+        } catch (err) {
+          return { source, ok: false, error: errorMessage3(err) };
+        }
+      })
+    );
+    renderRows(results);
+    const failures = results.filter((r) => !r.ok).length;
+    if (failures === 0) return "ok";
+    if (failures === results.length) return "error";
+    return "partial";
+  }
+  async function refresh() {
+    setPending(true);
+    setStatus("\u540C\u671F\u72B6\u614B\u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026");
+    try {
+      const result = await loadStates();
+      if (result === "ok") {
+        setStatus("\u540C\u671F\u72B6\u614B\u3092\u66F4\u65B0\u3057\u307E\u3057\u305F", "success");
+      } else if (result === "partial") {
+        setStatus("\u4E00\u90E8\u306E\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F", "partial");
+      } else {
+        setStatus("\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F", "error");
+      }
+    } catch (err) {
+      setStatus(errorMessage3(err), "error");
+    } finally {
+      setPending(false);
+    }
+  }
+  rematchBtn.addEventListener("click", () => {
+    void (async () => {
+      if (pending) return;
+      setPending(true);
+      setStatus("\u518D\u7167\u5408\u3092\u5B9F\u884C\u4E2D\u2026");
+      try {
+        const result = await postRematch();
+        const loadResult = await loadStates();
+        if (loadResult === "ok") {
+          setStatus(
+            `\u518D\u7167\u5408\u5B8C\u4E86: ${result.rematched} \u4EF6\u518D\u5272\u5F53 / \u5019\u88DC ${result.candidates} \u4EF6`,
+            "success"
+          );
+        } else if (loadResult === "partial") {
+          setStatus(
+            `\u518D\u7167\u5408\u5B8C\u4E86: ${result.rematched} \u4EF6\u518D\u5272\u5F53 / \u5019\u88DC ${result.candidates} \u4EF6\uFF08\u4E00\u90E8\u72B6\u614B\u53D6\u5F97\u5931\u6557\uFF09`,
+            "partial"
+          );
+        } else {
+          setStatus(
+            `\u518D\u7167\u5408\u5B8C\u4E86: ${result.rematched} \u4EF6\u518D\u5272\u5F53 / \u5019\u88DC ${result.candidates} \u4EF6\uFF08\u72B6\u614B\u518D\u53D6\u5F97\u5931\u6557\uFF09`,
+            "error"
+          );
+        }
+      } catch (err) {
+        setStatus(errorMessage3(err), "error");
+      } finally {
+        setPending(false);
+      }
+    })();
+  });
+  manualForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void (async () => {
+      if (pending) return;
+      const url2 = urlInput.value.trim();
+      if (!url2) return;
+      setPending(true);
+      setStatus("\u624B\u52D5\u767B\u9332\u4E2D\u2026");
+      try {
+        await postManualListing(url2);
+        urlInput.value = "";
+        const loadResult = await loadStates();
+        if (loadResult === "ok") {
+          setStatus("\u624B\u52D5\u767B\u9332\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F", "success");
+        } else if (loadResult === "partial") {
+          setStatus("\u624B\u52D5\u767B\u9332\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F\uFF08\u4E00\u90E8\u72B6\u614B\u53D6\u5F97\u5931\u6557\uFF09", "partial");
+        } else {
+          setStatus("\u624B\u52D5\u767B\u9332\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F\uFF08\u72B6\u614B\u518D\u53D6\u5F97\u5931\u6557\uFF09", "error");
+        }
+      } catch (err) {
+        setStatus(errorMessage3(err), "error");
+      } finally {
+        setPending(false);
+      }
+    })();
+  });
+  await refresh();
+}
+
+// src/pages/settings/settings.ts
+function el4(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key2, value] of Object.entries(props)) {
+    if (key2 === "className") node.className = value;
+    else if (key2 === "textContent") node.textContent = value;
+    else node.setAttribute(key2, value);
+  }
+  for (const child of children) {
+    node.append(child instanceof Node ? child : document.createTextNode(child));
+  }
+  return node;
+}
+async function fetchSettings() {
+  const res = await fetch("/api/settings");
+  const text = await res.text();
+  if (!res.ok) throw new Error(`\u8A2D\u5B9A\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
+  return JSON.parse(text);
+}
+async function saveSettings(settings) {
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings)
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`\u8A2D\u5B9A\u306E\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
+  return JSON.parse(text);
+}
+function errorMessage4(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+async function renderSettings(root) {
+  root.replaceChildren(
+    el4("div", { className: "panel" }, [
+      el4("h2", { textContent: "\u8A2D\u5B9A" }),
+      el4("p", {
+        className: "muted",
+        textContent: "\u30B5\u30FC\u30D0\u30DD\u30FC\u30C8\u3068\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\u30D5\u30A9\u30EB\u30C0\u3092\u8A2D\u5B9A\u3057\u307E\u3059\u3002"
+      })
+    ])
+  );
+  const form = el4("form", { className: "settings-form", "data-testid": "settings-form" });
+  const portLabel = el4("label", { for: "settings-port", textContent: "\u30DD\u30FC\u30C8 (1\u201365535)" });
+  const portInput = el4("input", {
+    id: "settings-port",
+    type: "number",
+    min: "1",
+    max: "65535",
+    step: "1",
+    "data-testid": "settings-port",
+    "aria-label": "\u30DD\u30FC\u30C8",
+    required: "true"
+  });
+  const destLabel = el4("label", {
+    for: "settings-export-destination",
+    textContent: "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\uFF08\u7D76\u5BFE\u30D1\u30B9\uFF09"
+  });
+  const destInput = el4("input", {
+    id: "settings-export-destination",
+    type: "text",
+    placeholder: "/Users/you/Drive/adp-export",
+    "data-testid": "settings-export-destination",
+    "aria-label": "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148",
+    required: "true"
+  });
+  const saveBtn = el4("button", {
+    type: "submit",
+    className: "primary",
+    textContent: "\u4FDD\u5B58",
+    "data-testid": "settings-save",
+    "aria-label": "\u8A2D\u5B9A\u3092\u4FDD\u5B58"
+  });
+  form.append(portLabel, portInput, destLabel, destInput, saveBtn);
+  const statusRegion = el4("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "settings-status"
+  });
+  root.append(form, statusRegion);
+  let pending = false;
+  function setPending(value) {
+    pending = value;
+    saveBtn.disabled = value;
+    portInput.disabled = value;
+    destInput.disabled = value;
+  }
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  async function load() {
+    setPending(true);
+    setStatus("\u8A2D\u5B9A\u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026");
+    try {
+      const settings = await fetchSettings();
+      portInput.value = String(settings.port);
+      destInput.value = settings.exportDestination;
+      setStatus("\u8A2D\u5B9A\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F", "success");
+    } catch (err) {
+      setStatus(errorMessage4(err), "error");
+    } finally {
+      setPending(false);
+    }
+  }
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void (async () => {
+      if (pending) return;
+      const port = Number(portInput.value);
+      const exportDestination = destInput.value.trim();
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        setStatus("\u30DD\u30FC\u30C8\u306F 1 \u304B\u3089 65535 \u306E\u6574\u6570\u3067\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044", "error");
+        return;
+      }
+      if (!exportDestination.startsWith("/")) {
+        setStatus("\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\u306F\u7D76\u5BFE\u30D1\u30B9\u3067\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044", "error");
+        return;
+      }
+      setPending(true);
+      setStatus("\u4FDD\u5B58\u4E2D\u2026");
+      try {
+        const saved = await saveSettings({ port, exportDestination });
+        portInput.value = String(saved.port);
+        destInput.value = saved.exportDestination;
+        setStatus("\u8A2D\u5B9A\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F", "success");
+      } catch (err) {
+        setStatus(errorMessage4(err), "error");
+      } finally {
+        setPending(false);
+      }
+    })();
+  });
+  await load();
+}
+
 // src/router.ts
 var routes = {
   library: renderLibrary,
-  candidates: renderCandidates
+  candidates: renderCandidates,
+  sync: renderSync,
+  settings: renderSettings
 };
 function parseRoute(pathname) {
   if (pathname.startsWith("/candidates")) return "candidates";
+  if (pathname.startsWith("/sync")) return "sync";
+  if (pathname.startsWith("/settings")) return "settings";
   return "library";
 }
 function routePath(route) {
-  return route === "candidates" ? "/candidates" : "/";
+  switch (route) {
+    case "candidates":
+      return "/candidates";
+    case "sync":
+      return "/sync";
+    case "settings":
+      return "/settings";
+    default:
+      return "/";
+  }
 }
 async function renderRoute(route, root) {
   await routes[route](root);
 }
 function allRoutes() {
-  return ["library", "candidates"];
+  return ["library", "candidates", "sync", "settings"];
 }
 
 // src/main.ts
@@ -15150,13 +15567,19 @@ var main = document.createElement("main");
 app.append(header, main);
 var links = {
   library: document.createElement("a"),
-  candidates: document.createElement("a")
+  candidates: document.createElement("a"),
+  sync: document.createElement("a"),
+  settings: document.createElement("a")
 };
 links.library.href = routePath("library");
 links.library.textContent = "\u30E9\u30A4\u30D6\u30E9\u30EA";
 links.candidates.href = routePath("candidates");
 links.candidates.textContent = "\u5019\u88DC\u30AD\u30E5\u30FC";
-nav.append(links.library, links.candidates);
+links.sync.href = routePath("sync");
+links.sync.textContent = "\u540C\u671F";
+links.settings.href = routePath("settings");
+links.settings.textContent = "\u8A2D\u5B9A";
+nav.append(links.library, links.candidates, links.sync, links.settings);
 function setActive(route) {
   for (const key2 of allRoutes()) {
     links[key2].classList.toggle("active", key2 === route);
