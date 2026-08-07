@@ -91,6 +91,6 @@ jobs:
             "${RUNNER_TEMP}/adp-candidate/avoid-duplicate-purchases-${RELEASE_TAG}.zip" \
             "${RUNNER_TEMP}/adp-candidate/SHA256SUMS" \
             "${RUNNER_TEMP}/adp-candidate/RELEASE.json" \
-            --verify-tag "$RELEASE_TAG" \
+            --verify-tag \
             --title "AvoidDuplicatePurchases ${RELEASE_TAG#v}" \
             --notes-file "${RUNNER_TEMP}/release-notes.md"
