@@ -51,10 +51,34 @@ describe("fanza four-source sync", () => {
     const globalWithChrome = globalThis as typeof globalThis & { chrome?: unknown };
     const previousChrome = globalWithChrome.chrome;
     let pageRequest: { input: string; init?: RequestInit } | undefined;
+    let pageReady = false;
+    let removedTab = false;
 
     globalWithChrome.chrome = {
       tabs: {
-        query: async () => [{ id: 17, url: "https://video.dmm.co.jp/av/mylibrary/" }],
+        query: async () => [],
+        create: async () => ({
+          id: 17,
+          url: "https://video.dmm.co.jp/av/mylibrary/",
+          status: "loading",
+        }),
+        get: async () => ({
+          id: 17,
+          status: pageReady ? "complete" : "loading",
+        }),
+        remove: async (tabId: number) => {
+          assert.equal(tabId, 17);
+          removedTab = true;
+        },
+        onUpdated: {
+          addListener: (listener: (tabId: number, changeInfo: { status?: string }) => void) => {
+            queueMicrotask(() => {
+              pageReady = true;
+              listener(17, { status: "complete" });
+            });
+          },
+          removeListener: () => {},
+        },
       },
       scripting: {
         executeScript: async (details: {
@@ -65,6 +89,7 @@ describe("fanza four-source sync", () => {
         }) => {
           assert.equal(details.target.tabId, 17);
           assert.equal(details.world, "MAIN");
+          assert.equal(pageReady, true);
 
           const pageFetch = globalThis.fetch;
           globalThis.fetch = async (input, init) => {
@@ -109,6 +134,7 @@ describe("fanza four-source sync", () => {
       assert.equal(outcome.fetched, 1);
       assert.equal(pageRequest?.input, "https://api.video.dmm.co.jp/graphql");
       assert.equal(pageRequest?.init?.credentials, "include");
+      assert.equal(removedTab, true);
     } finally {
       globalThis.fetch = previousFetch;
       if (previousChrome === undefined) delete globalWithChrome.chrome;

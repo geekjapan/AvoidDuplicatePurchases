@@ -36,6 +36,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<
 
 const VIDEO_PAGE_MATCH = "https://video.dmm.co.jp/*";
 const VIDEO_PAGE_URL = "https://video.dmm.co.jp/av/mylibrary/";
+const VIDEO_PAGE_READY_TIMEOUT_MS = 10_000;
 
 type VideoPageRequest = {
   method: string;
@@ -62,6 +63,42 @@ async function fetchVideoJsonInPage(
   };
 }
 
+async function waitForVideoPage(tabId: number): Promise<void> {
+  const current = await chrome.tabs.get(tabId);
+  if (current.status === "complete") return;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    let listener: (updatedTabId: number, changeInfo: { status?: string }) => void;
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(listener);
+      if (error) reject(error);
+      else resolve();
+    };
+
+    listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") finish();
+    };
+
+    timeout = setTimeout(
+      () => finish(new Error("video_page_timeout")),
+      VIDEO_PAGE_READY_TIMEOUT_MS,
+    );
+    chrome.tabs.onUpdated.addListener(listener);
+    void chrome.tabs
+      .get(tabId)
+      .then((tab) => {
+        if (tab.status === "complete") finish();
+      })
+      .catch(() => finish(new Error("video_page_unavailable")));
+  });
+}
+
 async function fetchVideoJson(
   url: string,
   init: RequestInit,
@@ -80,6 +117,7 @@ async function fetchVideoJson(
     if (tab.id === undefined) return { ok: false, error: "video_page_unavailable" };
 
     try {
+      await waitForVideoPage(tab.id);
       const [injected] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
