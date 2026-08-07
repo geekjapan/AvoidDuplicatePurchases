@@ -12,6 +12,8 @@ export interface LookupHit {
   /** Present when same-store owned and listing.purchased_at is available. */
   purchasedAt?: string | null;
   other: LookupOtherHit[];
+  /** Fuzzy same-maker candidates; never treated as purchased. */
+  possible?: LookupOtherHit[];
 }
 
 export interface PageIdentity {

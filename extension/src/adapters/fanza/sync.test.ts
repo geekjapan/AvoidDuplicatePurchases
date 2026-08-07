@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { runAllFanzaSyncs } from "./sync.ts";
+import {
+  runAllFanzaSyncs,
+  runFanzaBooksSync,
+  runFanzaVideoSync,
+} from "./sync.ts";
 import { renderSyncStatus } from "../../popup/sync-status.ts";
 
 function json(data: unknown, status = 200): Response {
@@ -15,11 +19,16 @@ describe("fanza four-source sync", () => {
   it("declares only the approved Video and Dlsoft history hosts", () => {
     const manifest = JSON.parse(
       readFileSync(new URL("../../../manifest.json", import.meta.url), "utf8"),
-    ) as { host_permissions: string[] };
+    ) as { host_permissions: string[]; permissions: string[] };
+    assert.ok(manifest.permissions.includes("scripting"));
     const newHistoryHosts = manifest.host_permissions.filter(
-      (host) => host.includes("api.video.dmm.co.jp") || host.includes("dlsoft.dmm.co.jp"),
+      (host) =>
+        host.includes("video.dmm.co.jp") ||
+        host.includes("api.video.dmm.co.jp") ||
+        host.includes("dlsoft.dmm.co.jp"),
     );
     assert.deepEqual(newHistoryHosts, [
+      "https://video.dmm.co.jp/*",
       "https://api.video.dmm.co.jp/*",
       "https://dlsoft.dmm.co.jp/*",
     ]);
@@ -35,6 +44,102 @@ describe("fanza four-source sync", () => {
     assert.doesNotMatch(source, /videoPageHasNext/);
     assert.doesNotMatch(source, /dlsoftPageHasNext/);
     assert.doesNotMatch(source, /dlsoftPageInfo/);
+  });
+
+  it("accepts authenticated Video requests from the video page origin", async () => {
+    const previousFetch = globalThis.fetch;
+    const globalWithChrome = globalThis as typeof globalThis & { chrome?: unknown };
+    const previousChrome = globalWithChrome.chrome;
+    let pageRequest: { input: string; init?: RequestInit } | undefined;
+    let pageReady = false;
+    let removedTab = false;
+
+    globalWithChrome.chrome = {
+      tabs: {
+        query: async () => [],
+        create: async () => ({
+          id: 17,
+          url: "https://video.dmm.co.jp/av/mylibrary/",
+          status: "loading",
+        }),
+        get: async () => ({
+          id: 17,
+          status: pageReady ? "complete" : "loading",
+        }),
+        remove: async (tabId: number) => {
+          assert.equal(tabId, 17);
+          removedTab = true;
+        },
+        onUpdated: {
+          addListener: (listener: (tabId: number, changeInfo: { status?: string }) => void) => {
+            queueMicrotask(() => {
+              pageReady = true;
+              listener(17, { status: "complete" });
+            });
+          },
+          removeListener: () => {},
+        },
+      },
+      scripting: {
+        executeScript: async (details: {
+          target: { tabId: number };
+          world: string;
+          func: (...args: unknown[]) => Promise<unknown>;
+          args?: unknown[];
+        }) => {
+          assert.equal(details.target.tabId, 17);
+          assert.equal(details.world, "MAIN");
+          assert.equal(pageReady, true);
+
+          const pageFetch = globalThis.fetch;
+          globalThis.fetch = async (input, init) => {
+            pageRequest = { input: String(input), init };
+            return json({
+              data: {
+                user: {
+                  ppvLibrary: {
+                    contentViewingRightsSummaryList: {
+                      pageInfo: { hasNext: false, totalCount: 1 },
+                      items: [{ content: { id: "video-1", title: "synthetic" } }],
+                    },
+                  },
+                },
+              },
+            });
+          };
+          try {
+            const result = await details.func(...(details.args ?? []));
+            return [{ result }];
+          } finally {
+            globalThis.fetch = pageFetch;
+          }
+        },
+      },
+    };
+
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.startsWith("http://127.0.0.1:41321/api/import/fanza_video")) {
+        return json({ inserted: 1, updated: 0, itemCount: 1, totalCount: 1, hasNext: false });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/fanza_video")) {
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      return json({}, 403);
+    };
+
+    try {
+      const outcome = await runFanzaVideoSync();
+      assert.equal(outcome.ok, true);
+      assert.equal(outcome.fetched, 1);
+      assert.equal(pageRequest?.input, "https://api.video.dmm.co.jp/graphql");
+      assert.equal(pageRequest?.init?.credentials, "include");
+      assert.equal(removedTab, true);
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousChrome === undefined) delete globalWithChrome.chrome;
+      else globalWithChrome.chrome = previousChrome;
+    }
   });
 
   it("fetches, imports, and paginates all four sources sequentially", async () => {
@@ -178,6 +283,72 @@ describe("fanza four-source sync", () => {
         "fanza_dlsoft",
         "fanza_dlsoft",
       ]);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("uses the accepted Books contents shop before importing purchased volumes", async () => {
+    const previousFetch = globalThis.fetch;
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("../../../../shared/test/fixtures/fanza-books-import.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { payload: unknown };
+    const contentsShops: string[] = [];
+    let volumeImportCalls = 0;
+    let markedBooks = false;
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("book.dmm.co.jp/ajax/bff/library/")) {
+        return json({
+          series_books: [{ series_id: "synthetic-series" }],
+          pager: { page: 1, per_page: 20, total_count: 1 },
+        });
+      }
+      if (url.includes("book.dmm.co.jp/ajax/bff/contents/")) {
+        const shop = new URL(url).searchParams.get("shop_name") ?? "";
+        contentsShops.push(shop);
+        return shop === "adult" ? json(fixture.payload) : json({ error: "invalid_shop" }, 400);
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/import/fanza_books")) {
+        const body = JSON.parse(String(init?.body));
+        if ("series_books" in body) {
+          return json({
+            inserted: 0,
+            updated: 0,
+            series: [{
+              seriesId: "synthetic-series",
+              author: "synthetic-author",
+              seriesRaw: { series_id: "synthetic-series" },
+            }],
+            itemCount: 1,
+            totalCount: 1,
+            hasNext: false,
+          });
+        }
+        volumeImportCalls += 1;
+        return json({ inserted: 1, updated: 0, itemCount: 1, totalCount: 1, hasNext: false });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/fanza_books")) {
+        markedBooks = true;
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    try {
+      const outcome = await runFanzaBooksSync();
+      assert.deepEqual(contentsShops, ["adult"]);
+      assert.equal(volumeImportCalls, 1);
+      assert.equal(markedBooks, true);
+      assert.deepEqual(outcome, {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+        fetched: 2,
+      });
     } finally {
       globalThis.fetch = previousFetch;
     }

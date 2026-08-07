@@ -8,7 +8,7 @@ export function booksLibraryUrl(page: number, shop: BooksShop = "all"): string {
 export function booksContentsUrl(
   seriesId: string,
   page = 1,
-  shop: BooksShop = "all",
+  shop: BooksShop = "adult",
 ): string {
   return `https://book.dmm.co.jp/ajax/bff/contents/?shop_name=${shop}&series_id=${encodeURIComponent(
     seriesId,
