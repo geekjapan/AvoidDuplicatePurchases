@@ -412,6 +412,7 @@ export function exportSnapshot(
   let vacuumIdentity: PathIdentity | undefined;
   let stagedFile: string | undefined;
   let stagedIdentity: PathIdentity | undefined;
+  let existingTargetFd: number | null = null;
   let primaryError: unknown;
   let completed = false;
 
@@ -429,6 +430,18 @@ export function exportSnapshot(
       throw new Error("export target must be a regular file");
     }
     const expectedTargetIdentity: PathIdentity | null = existingTarget;
+
+    // Hold an open fd on the existing target so the OS cannot recycle its inode
+    // while we write. Without this pin, a POSIX filesystem may immediately reuse
+    // the inode number once the file is unlinked, making a subsequent lstat
+    // identity check indistinguishable from the original file.
+    if (existingTarget !== null && process.platform !== "win32") {
+      existingTargetFd = openSync(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      const pinnedStats = fstatSync(existingTargetFd);
+      if (pinnedStats.dev !== existingTarget.dev || pinnedStats.ino !== existingTarget.ino) {
+        throw new Error("export target replaced between identity check and pin");
+      }
+    }
 
     tempDir = mkdtempSync(join(operationDestination, TEMP_DIR_PREFIX));
     // Immutable creation-time pin — never reassigned from later revalidation.
@@ -526,6 +539,7 @@ export function exportSnapshot(
   } catch (error) {
     primaryError = error;
   } finally {
+    if (existingTargetFd !== null) closeSync(existingTargetFd);
     if (pin.fd !== null) closeSync(pin.fd);
   }
 
