@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extensionIdFromConfig, isValidExtensionId, updateEnvFile } from "./runtime.mjs";
+import {
+  extensionIdFromConfig,
+  isValidExtensionId,
+  isValidRuntimeId,
+  parseProcessRecord,
+  serializeProcessRecord,
+  updateEnvFile,
+} from "./runtime.mjs";
 
 test("validates Chrome extension IDs", () => {
   assert.equal(isValidExtensionId("a".repeat(32)), true);
@@ -22,4 +29,13 @@ test("updates only the extension origin in reusable config", () => {
   assert.match(updated, /ADP_DB_PATH=\/tmp\/keep-this\.sqlite/);
   assert.equal(extensionIdFromConfig(updated), id);
   assert.equal((updated.match(/ADP_EXTENSION_ORIGIN=/g) ?? []).length, 1);
+});
+
+test("stores a validated runtime identity with the managed PID", () => {
+  const runtimeId = "a".repeat(64);
+  const contents = serializeProcessRecord({ pid: 1234, runtimeId });
+  assert.equal(isValidRuntimeId(runtimeId), true);
+  assert.deepEqual(parseProcessRecord(contents), { pid: 1234, runtimeId });
+  assert.equal(parseProcessRecord("1234\n"), null);
+  assert.equal(parseProcessRecord(JSON.stringify({ pid: 1234, runtimeId: "wrong" })), null);
 });

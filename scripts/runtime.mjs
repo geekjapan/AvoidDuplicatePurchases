@@ -1,6 +1,7 @@
 /* global AbortSignal, console, fetch, process, setTimeout */
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -25,6 +26,9 @@ const SERVER_ENTRY = join(ROOT, "server", "dist", "static.js");
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 41321;
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
+const RUNTIME_ID_PATH = "/__adp/runtime";
+const RUNTIME_ID_HEADER = "X-ADP-Runtime-Id";
+const RUNTIME_ID_PATTERN = /^[a-f0-9]{64}$/;
 
 const delay = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
@@ -47,6 +51,34 @@ export function extensionIdFromConfig(contents) {
   const origin = readEnvValue(contents, "ADP_EXTENSION_ORIGIN");
   const match = /^chrome-extension:\/\/([a-p]{32})$/.exec(origin);
   return match?.[1] ?? "";
+}
+
+export function isValidRuntimeId(value) {
+  return RUNTIME_ID_PATTERN.test(value);
+}
+
+export function parseProcessRecord(contents) {
+  try {
+    const record = JSON.parse(contents);
+    if (
+      !record ||
+      !Number.isSafeInteger(record.pid) ||
+      record.pid <= 1 ||
+      !isValidRuntimeId(record.runtimeId)
+    ) {
+      return null;
+    }
+    return { pid: record.pid, runtimeId: record.runtimeId };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeProcessRecord(record) {
+  if (!Number.isSafeInteger(record.pid) || record.pid <= 1 || !isValidRuntimeId(record.runtimeId)) {
+    throw new Error("invalid managed process record");
+  }
+  return `${JSON.stringify(record)}\n`;
 }
 
 export function updateEnvFile(contents, key, value) {
@@ -109,10 +141,18 @@ function installRuntimeDependencies() {
   return true;
 }
 
-function readPid() {
+function readProcessRecord() {
   if (!existsSync(PID_PATH)) return null;
-  const value = Number(readFileSync(PID_PATH, "utf8").trim());
-  return Number.isSafeInteger(value) && value > 1 ? value : null;
+  try {
+    return parseProcessRecord(readFileSync(PID_PATH, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeProcessRecord(record) {
+  writeFileSync(PID_PATH, serializeProcessRecord(record), { mode: 0o600 });
+  chmodSync(PID_PATH, 0o600);
 }
 
 function removePid() {
@@ -133,8 +173,8 @@ function configuredPort(config) {
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT;
 }
 
-function runtimeEnv(config) {
-  const env = { ...process.env };
+function runtimeEnv(config, runtimeId) {
+  const env = { ...process.env, ADP_RUNTIME_ID: runtimeId };
   for (const key of ["ADP_EXTENSION_ORIGIN", "ADP_DB_PATH", "ADP_PORT", "ADP_READONLY"]) {
     const value = readEnvValue(config, key);
     if (value) env[key] = value;
@@ -150,6 +190,17 @@ async function request(url, headers = {}) {
   } catch {
     return { ok: false, status: null };
   }
+}
+
+async function isManagedProcess(record) {
+  if (!record || !isProcessAlive(record.pid)) return false;
+  const config = readConfig();
+  const port = configuredPort(config);
+  const result = await request(`http://${HOST}:${port}${RUNTIME_ID_PATH}`, {
+    Origin: `http://${HOST}:${port}`,
+    [RUNTIME_ID_HEADER]: record.runtimeId,
+  });
+  return result.status === 204;
 }
 
 async function probeServer() {
@@ -188,10 +239,11 @@ function runtimeIsReady() {
   return false;
 }
 
-async function waitForServer(pid) {
+async function waitForServer(record) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await delay(250);
-    if (!isProcessAlive(pid)) return false;
+    if (!isProcessAlive(record.pid)) return false;
+    if (!(await isManagedProcess(record))) continue;
     if ((await probeServer()).admin.ok) return true;
   }
   return false;
@@ -204,39 +256,54 @@ async function startServer({ announce = true } = {}) {
     return 1;
   }
 
-  const existingPid = readPid();
-  if (existingPid && isProcessAlive(existingPid)) {
+  const existing = readProcessRecord();
+  if (existsSync(PID_PATH) && !existing) {
+    removePid();
+    console.error("server.pidを読み取れません。プロセスは停止していません。手動で確認してください。");
+    return 1;
+  }
+  if (existing && isProcessAlive(existing.pid)) {
+    if (!(await isManagedProcess(existing))) {
+      removePid();
+      console.error(`serverのPID ${existing.pid} の所有権を確認できません。プロセスは停止していません。手動で確認してください。`);
+      return 1;
+    }
     const probe = await probeServer();
     if (!probe.admin.ok) {
-      console.error(`serverのPID ${existingPid} は動作中ですが、localhost serverに接続できません。npm run restart を試してください。`);
+      console.error(`serverのPID ${existing.pid} は動作中ですが、localhost serverに接続できません。npm run restart を試してください。`);
       return 1;
     }
     if (announce) {
-      console.log(`serverはすでに起動しています (PID ${existingPid})。`);
+      console.log(`serverはすでに起動しています (PID ${existing.pid})。`);
       printProbe(probe);
     }
     return 0;
   }
-  if (existingPid) removePid();
+  if (existing) removePid();
 
   mkdirSync(RUNTIME_DIR, { recursive: true });
   let logFd;
   try {
+    const runtimeId = randomBytes(32).toString("hex");
     logFd = openSync(LOG_PATH, "a");
     const child = spawn(process.execPath, ["--env-file", CONFIG_PATH, SERVER_ENTRY], {
       cwd: ROOT,
       detached: true,
-      env: runtimeEnv(readConfig()),
+      env: runtimeEnv(readConfig(), runtimeId),
       stdio: ["ignore", logFd, logFd],
     });
     closeSync(logFd);
     logFd = undefined;
     if (!child.pid) throw new Error("server process did not return a PID");
-    writeFileSync(PID_PATH, `${child.pid}\n`, { mode: 0o600 });
-    chmodSync(PID_PATH, 0o600);
+    const processRecord = { pid: child.pid, runtimeId };
+    writeProcessRecord(processRecord);
 
-    if (!(await waitForServer(child.pid))) {
-      if (isProcessAlive(child.pid)) process.kill(child.pid, "SIGTERM");
+    if (!(await waitForServer(processRecord))) {
+      if (await isManagedProcess(processRecord)) {
+        process.kill(processRecord.pid, "SIGTERM");
+      } else if (isProcessAlive(processRecord.pid)) {
+        console.error(`serverのPID ${processRecord.pid} の所有権を確認できないため停止していません。手動で確認してください。`);
+      }
       removePid();
       console.error("localhost serverを起動できませんでした。server.logの末尾:");
       console.error(logTail());
@@ -259,16 +326,27 @@ async function startServer({ announce = true } = {}) {
 
 async function stopServer({ announce = true } = {}) {
   if (!nodeIsSupported()) return 1;
-  const pid = readPid();
-  if (!pid) {
-    if (existsSync(PID_PATH)) removePid();
+  const hasPidFile = existsSync(PID_PATH);
+  const record = readProcessRecord();
+  if (!record) {
+    if (hasPidFile) {
+      removePid();
+      console.error("server.pidを読み取れません。プロセスは停止していません。手動で確認してください。");
+      return 1;
+    }
     if (announce) console.log("管理対象のlocalhost serverは停止しています。DBは変更していません。");
     return 0;
   }
+  const pid = record.pid;
   if (!isProcessAlive(pid)) {
     removePid();
     if (announce) console.log("serverはすでに停止していました。DBは変更していません。");
     return 0;
+  }
+  if (!(await isManagedProcess(record))) {
+    removePid();
+    console.error(`serverのPID ${pid} の所有権を確認できません。プロセスは停止していません。手動で確認してください。`);
+    return 1;
   }
   try {
     process.kill(pid, "SIGTERM");
@@ -291,14 +369,23 @@ async function stopServer({ announce = true } = {}) {
 async function statusServer() {
   if (!nodeIsSupported()) return 1;
   const config = readConfig();
-  const pid = readPid();
-  const running = pid ? isProcessAlive(pid) : false;
-  if (pid && !running) removePid();
+  const hasPidFile = existsSync(PID_PATH);
+  const record = readProcessRecord();
+  const running = record ? await isManagedProcess(record) : false;
+  if (!record && hasPidFile) {
+    removePid();
+    console.error("server.pidを読み取れません。プロセスは停止していません。手動で確認してください。");
+  }
+  if (record && !running && !isProcessAlive(record.pid)) removePid();
+  if (record && !running && isProcessAlive(record.pid)) {
+    removePid();
+    console.error(`serverのPID ${record.pid} の所有権を確認できません。プロセスは停止していません。手動で確認してください。`);
+  }
   const probe = await probeServer();
   console.log(`設定: ${config ? "済み" : "未設定 (npm run setup)"}`);
-  console.log(`管理対象プロセス: ${running ? `起動中 (PID ${pid})` : "停止中"}`);
+  console.log(`管理対象プロセス: ${running ? `起動中 (PID ${record.pid})` : "停止中"}`);
   printProbe(probe);
-  return probe.admin.ok && probe.extension.ok ? 0 : 1;
+  return probe.admin.ok && probe.extension.ok && running ? 0 : 1;
 }
 
 async function setup() {
@@ -323,8 +410,8 @@ async function setup() {
 
   saveExtensionId(id);
   console.log("extensionの許可オリジンを .adp/config.env に保存しました（秘密情報ではありません）。");
-  const existingPid = readPid();
-  if (existingPid && isProcessAlive(existingPid)) {
+  const existing = readProcessRecord();
+  if (existing && isProcessAlive(existing.pid)) {
     const stopCode = await stopServer({ announce: false });
     if (stopCode !== 0) return stopCode;
   }
