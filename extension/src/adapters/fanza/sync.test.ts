@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { runAllFanzaSyncs } from "./sync.ts";
+import { runAllFanzaSyncs, runFanzaBooksSync } from "./sync.ts";
 import { renderSyncStatus } from "../../popup/sync-status.ts";
 
 function json(data: unknown, status = 200): Response {
@@ -178,6 +178,72 @@ describe("fanza four-source sync", () => {
         "fanza_dlsoft",
         "fanza_dlsoft",
       ]);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("uses the accepted Books contents shop before importing purchased volumes", async () => {
+    const previousFetch = globalThis.fetch;
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("../../../../shared/test/fixtures/fanza-books-import.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { payload: unknown };
+    const contentsShops: string[] = [];
+    let volumeImportCalls = 0;
+    let markedBooks = false;
+
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("book.dmm.co.jp/ajax/bff/library/")) {
+        return json({
+          series_books: [{ series_id: "synthetic-series" }],
+          pager: { page: 1, per_page: 20, total_count: 1 },
+        });
+      }
+      if (url.includes("book.dmm.co.jp/ajax/bff/contents/")) {
+        const shop = new URL(url).searchParams.get("shop_name") ?? "";
+        contentsShops.push(shop);
+        return shop === "adult" ? json(fixture.payload) : json({ error: "invalid_shop" }, 400);
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/import/fanza_books")) {
+        const body = JSON.parse(String(init?.body));
+        if ("series_books" in body) {
+          return json({
+            inserted: 0,
+            updated: 0,
+            series: [{
+              seriesId: "synthetic-series",
+              author: "synthetic-author",
+              seriesRaw: { series_id: "synthetic-series" },
+            }],
+            itemCount: 1,
+            totalCount: 1,
+            hasNext: false,
+          });
+        }
+        volumeImportCalls += 1;
+        return json({ inserted: 1, updated: 0, itemCount: 1, totalCount: 1, hasNext: false });
+      }
+      if (url.startsWith("http://127.0.0.1:41321/api/sync-state/fanza_books")) {
+        markedBooks = true;
+        return json({ cursor: null, lastSyncedAt: "2026-01-01T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    try {
+      const outcome = await runFanzaBooksSync();
+      assert.deepEqual(contentsShops, ["adult"]);
+      assert.equal(volumeImportCalls, 1);
+      assert.equal(markedBooks, true);
+      assert.deepEqual(outcome, {
+        ok: true,
+        counts: { inserted: 1, updated: 0 },
+        fetched: 2,
+      });
     } finally {
       globalThis.fetch = previousFetch;
     }
