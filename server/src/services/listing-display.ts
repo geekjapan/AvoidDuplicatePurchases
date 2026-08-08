@@ -22,6 +22,11 @@ export function sanitizeProductImageUrl(value: unknown): string | null {
   }
 }
 
+export function sanitizeProductUrl(value: unknown): string | null {
+  const url = sanitizeProductImageUrl(value);
+  return url && new URL(url).protocol === "https:" ? url : null;
+}
+
 function imageProvenanceFor(
   source: Source,
 ): ImageProvenance | null {
@@ -48,7 +53,7 @@ export function listingDisplayMetadata(input: ListingDisplayInput): {
 } {
   const imageUrl = sanitizeProductImageUrl(input.imageUrl);
   const imageProvenance = imageUrl ? imageProvenanceFor(input.source) : null;
-  const productUrl = sanitizeProductImageUrl(
+  const productUrl = sanitizeProductUrl(
     productUrlForSource(input.source, input.cid, {
       seriesId: input.seriesId,
       videoFloor:

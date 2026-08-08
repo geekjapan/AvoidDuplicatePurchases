@@ -13,6 +13,7 @@ import { parseBooksImportPayload } from "@adp/shared/adapters/fanza_books";
 import { parseVideoGraphqlPayload } from "@adp/shared/adapters/fanza_video";
 import { parseDlsoftLibraryPayload } from "@adp/shared/adapters/fanza_dlsoft";
 import type { DatabaseSync } from "node:sqlite";
+import { sanitizeProductUrl } from "../src/services/listing-display.js";
 import "../src/routes/listings.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -116,6 +117,12 @@ describe("library listing display metadata", () => {
   after(() => {
     server.close();
     db.close();
+  });
+
+  it("accepts only HTTPS product URLs", () => {
+    assert.equal(sanitizeProductUrl("https://store.example/item"), "https://store.example/item");
+    assert.equal(sanitizeProductUrl("http://store.example/item"), null);
+    assert.equal(sanitizeProductUrl("https://user:password@store.example/item"), null);
   });
 
   it("returns flat rows with source-safe nullable display metadata", async () => {

@@ -207,6 +207,21 @@ describe("shared API endpoint schemas", () => {
     });
     assert.equal(listing.cid, "RJ000001");
 
+    assert.throws(() =>
+      ListingSchema.parse({
+        ...listing,
+        imageUrl: "https://user:password@img.example/display.jpg",
+        imageProvenance: "store_product_metadata",
+      }),
+    );
+    assert.throws(() =>
+      ListingSchema.parse({
+        ...listing,
+        productUrl: "http://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+        productUrlProvenance: "verified_derived",
+      }),
+    );
+
     const res = ListingsResponseSchema.parse({
       listings: [listing],
       total: 1,
