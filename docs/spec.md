@@ -125,6 +125,7 @@ CREATE INDEX match_key_lookup ON match_key(kind, key);
 
 - **同一サイトで購入済み**(`(source, cid)` が DB にある): 「✓ 購入済み(2023-12-30)」
 - **他サイトで購入済み**(タイトル+メーカーの正規化キーが他 source の listing に完全一致): 「⚠ 他サイトで購入済み: DLsite『(タイトル)』」— 当該商品ページへのリンク付き。**完全一致のみ**で出す(候補レベルでは出さない。§5 の誤報基準と同じ)。
+- DLsite 商品ページでは、正規化サークル名一致を先に確認し、製品名が dice ≥ 0.7 の候補を「同一作品の可能性あり」として別表示する。これは購入済みの断定・カート重複扱いにせず、サークル名不一致のタイトル候補は表示しない。
 
 ### 一覧・検索ページ
 
@@ -149,7 +150,7 @@ JSON/HTTP。パスは `/api/` 配下。境界での入力検証(zod 等 1 つ)�
 
 | エンドポイント | 用途 |
 |---|---|
-| `POST /api/lookup` | `{items: [{source?, cid?, title?, maker?}]}` → 各項目の判定 `{owned, other: [{source, cid, title, url}]}`。cid 照合とタイトル横断照合を 1 本で受ける |
+| `POST /api/lookup` | `{items: [{source?, cid?, title?, maker?}]}` → 各項目の判定 `{owned, other: [{source, cid, title, url}], possible: [{source, cid, title, url}]}`。`possible` は同一サークル・dice ≥ 0.7 の未確定候補で、購入済みを意味しない。cid 照合とタイトル横断照合を 1 本で受ける |
 | `POST /api/import/:source` | 拡張が取得した生レスポンス(ページ単位)を受け取り、パース→upsert→match_key 再計算。戻りは `{inserted, updated}` |
 | `GET /api/sync-state/:source` | 差分同期用カーソル(DLsite `last=` 等)と前回同期時刻 |
 | `GET /api/candidates` / `POST /api/candidates/:id` | 候補キューの取得 / ○× 確定 |

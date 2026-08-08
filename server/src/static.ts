@@ -22,6 +22,8 @@ import "./export/route.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = join(__dirname, "..");
 const ADMIN_DIST = join(SERVER_ROOT, "..", "admin", "dist");
+const RUNTIME_IDENTITY_PATH = "/__adp/runtime";
+const RUNTIME_IDENTITY_HEADER = "x-adp-runtime-id";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -180,6 +182,7 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
 
   const runtime = {
     port: resolveListenPort(config, db, env, options.port),
+    identity: env.ADP_RUNTIME_ID?.trim() ?? "",
   };
   const host = options.host ?? config.host;
   const productFetcher = createProductionProductFetcher(
@@ -205,6 +208,16 @@ export function startServer(options: StartServerOptions = {}): StartedServer {
       }
 
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+      if (url.pathname === RUNTIME_IDENTITY_PATH) {
+        if (!runtime.identity || req.headers[RUNTIME_IDENTITY_HEADER] !== runtime.identity) {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(204);
+        res.end();
+        return;
+      }
       const apiHandled = await apiHandler(req, res, {
         db,
         port,

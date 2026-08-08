@@ -41,6 +41,8 @@ export const LookupResultSchema = z.object({
   /** ISO8601 / date string from listing.purchased_at when owned; null/omitted when unavailable. */
   purchasedAt: z.string().nullable().optional(),
   other: z.array(LookupOtherSchema),
+  /** Same normalized maker, but only a fuzzy title match; never an ownership assertion. */
+  possible: z.array(LookupOtherSchema).default([]),
 });
 
 export const LookupResponseSchema = z.object({
@@ -123,6 +125,43 @@ export const RematchResponseSchema = z.object({
   candidates: z.number().int().nonnegative(),
 });
 
+const AbsoluteHttpUrl = z.string().url().refine(
+  (value) => {
+    try {
+      const url = new URL(value);
+      return (
+        (url.protocol === "http:" || url.protocol === "https:") &&
+        url.hostname.length > 0 &&
+        url.username === "" &&
+        url.password === ""
+      );
+    } catch {
+      return false;
+    }
+  },
+  { message: "must be an absolute http(s) URL without credentials" },
+);
+
+const AbsoluteHttpsUrl = AbsoluteHttpUrl.refine(
+  (value) => {
+    try {
+      return new URL(value).protocol === "https:";
+    } catch {
+      return false;
+    }
+  },
+  { message: "must be an absolute https URL" },
+);
+
+const ImageProvenanceSchema = z.enum([
+  "store_product_metadata",
+  "store_library_metadata",
+]);
+
+const ProductUrlProvenanceSchema = z.enum(["store_canonical", "verified_derived"]);
+
+const PurchasedAtPrecisionSchema = z.enum(["second", "day", "unknown"]);
+
 /** Query for `GET /api/listings` (library search / list). */
 export const ListingsQuerySchema = z.object({
   q: z.string().optional(),
@@ -138,12 +177,18 @@ export const ListingSchema = z.object({
   source: SourceSchema,
   cid: NonEmptyString,
   workId: z.number().int().positive(),
-  workIdLocked: z.boolean().optional(),
+  workIdLocked: z.boolean(),
   title: NonEmptyString,
-  maker: z.string().nullable().optional(),
-  seriesId: z.string().nullable().optional(),
-  imageUrl: z.string().url().nullable().optional(),
-  purchasedAt: z.string().nullable().optional(),
+  maker: z.string().nullable(),
+  seriesId: z.string().nullable(),
+  imageUrl: AbsoluteHttpUrl.nullable(),
+  imageProvenance: ImageProvenanceSchema.nullable(),
+  productUrl: AbsoluteHttpsUrl.nullable(),
+  productUrlProvenance: ProductUrlProvenanceSchema.nullable(),
+  purchasedAt: z.string().nullable(),
+  purchasedAtPrecision: PurchasedAtPrecisionSchema,
+  purchasePrice: z.null(),
+  currentPrice: z.null(),
 });
 
 export const ListingsResponseSchema = z.object({

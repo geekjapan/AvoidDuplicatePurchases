@@ -32,6 +32,7 @@ export interface LookupReply {
   results?: Array<{
     owned: boolean;
     other: Array<{ source: string; cid: string; title: string; url: string }>;
+    possible?: Array<{ source: string; cid: string; title: string; url: string }>;
   }>;
 }
 

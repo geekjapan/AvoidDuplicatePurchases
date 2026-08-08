@@ -73,7 +73,7 @@ export function approvedStoreHttpsUrl(raw: string, source: string): string | nul
   }
 }
 
-/** First exact-match other hit whose URL is safe to render as a warning link. */
+/** First cross-store hit whose URL is safe to render as a product link. */
 export function selectRenderableOther(
   others: LookupOtherHit[],
 ): { other: LookupOtherHit; safeUrl: string } | null {
@@ -94,14 +94,18 @@ export function renderProductBanner(doc: Document, hit: LookupHit): HTMLElement 
   }
 
   const selected = selectRenderableOther(hit.other);
-  if (!selected) return null;
-  const { other, safeUrl } = selected;
+  const possible = selected ? null : selectRenderableOther(hit.possible ?? []);
+  if (!selected && !possible) return null;
+  const isPossible = !selected;
+  const { other, safeUrl } = selected ?? possible!;
 
   const banner = doc.createElement("div");
   banner.id = ADP_BANNER_ID;
-  banner.className = "adp-purchased-banner adp-purchased-banner--other";
+  banner.className = `adp-purchased-banner adp-purchased-banner--${isPossible ? "possible" : "other"}`;
 
-  banner.appendChild(doc.createTextNode("⚠ 他サイトで購入済み: "));
+  banner.appendChild(
+    doc.createTextNode(isPossible ? "? 同一作品の可能性あり: " : "⚠ 他サイトで購入済み: "),
+  );
   const link = doc.createElement("a");
   link.href = safeUrl;
   link.target = "_blank";

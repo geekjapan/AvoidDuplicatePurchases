@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Avoid Duplicate Purchases",
   "description": "DLsite / FANZA 重複購入回避",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "background": {
     "service_worker": "dist/background/index.js",
     "type": "module"
@@ -16,12 +16,13 @@
     "https://www.dlsite.com/*",
     "https://www.dmm.co.jp/*",
     "https://book.dmm.co.jp/*",
+    "https://video.dmm.co.jp/*",
     "https://api.video.dmm.co.jp/*",
     "https://dlsoft.dmm.co.jp/*",
     "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll*",
     "http://127.0.0.1:41321/*"
   ],
-  "permissions": ["alarms"],
+  "permissions": ["alarms", "scripting"],
   "content_scripts": [
     {
       "matches": ["https://www.dlsite.com/maniax/*"],

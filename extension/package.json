@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && npm run build:sw && npm run build:content && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
+    "build": "tsc -p tsconfig.json && npm run build:sw && npm run build:content && npm run build:popup && mkdir -p dist/popup && cp src/popup/popup.html src/popup/popup.css dist/popup/",
     "build:sw": "esbuild src/background/index.ts --bundle --format=esm --platform=browser --target=chrome109 --outfile=dist/background/index.js --legal-comments=none",
     "build:content": "esbuild src/content/dlsite.ts src/content/fanza-doujin.ts src/content/fanza-books.ts src/content/amazon-books.ts --bundle --format=iife --platform=browser --target=chrome109 --outdir=dist/content --legal-comments=none",
+    "build:popup": "esbuild src/popup/popup.ts --bundle --format=esm --platform=browser --target=chrome109 --outfile=dist/popup/popup.js --legal-comments=none",
     "test": "node --import tsx --test 'src/**/*.test.ts' scripts/cart-verify-harness/test/harness.test.ts",
     "test:e2e": "node --import tsx --test 'src/**/*.e2e.test.ts'"
   },

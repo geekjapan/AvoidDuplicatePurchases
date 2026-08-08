@@ -14551,7 +14551,9 @@ var LookupResultSchema = external_exports.object({
   owned: external_exports.boolean(),
   /** ISO8601 / date string from listing.purchased_at when owned; null/omitted when unavailable. */
   purchasedAt: external_exports.string().nullable().optional(),
-  other: external_exports.array(LookupOtherSchema)
+  other: external_exports.array(LookupOtherSchema),
+  /** Same normalized maker, but only a fuzzy title match; never an ownership assertion. */
+  possible: external_exports.array(LookupOtherSchema).default([])
 });
 var LookupResponseSchema = external_exports.object({
   results: external_exports.array(LookupResultSchema)
@@ -14602,6 +14604,27 @@ var RematchResponseSchema = external_exports.object({
   rematched: external_exports.number().int().nonnegative(),
   candidates: external_exports.number().int().nonnegative()
 });
+var AbsoluteHttpUrl = external_exports.string().url().refine((value) => {
+  try {
+    const url2 = new URL(value);
+    return (url2.protocol === "http:" || url2.protocol === "https:") && url2.hostname.length > 0 && url2.username === "" && url2.password === "";
+  } catch {
+    return false;
+  }
+}, { message: "must be an absolute http(s) URL without credentials" });
+var AbsoluteHttpsUrl = AbsoluteHttpUrl.refine((value) => {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}, { message: "must be an absolute https URL" });
+var ImageProvenanceSchema = external_exports.enum([
+  "store_product_metadata",
+  "store_library_metadata"
+]);
+var ProductUrlProvenanceSchema = external_exports.enum(["store_canonical", "verified_derived"]);
+var PurchasedAtPrecisionSchema = external_exports.enum(["second", "day", "unknown"]);
 var ListingsQuerySchema = external_exports.object({
   q: external_exports.string().optional(),
   source: SourceSchema.optional(),
@@ -14614,12 +14637,18 @@ var ListingSchema = external_exports.object({
   source: SourceSchema,
   cid: NonEmptyString,
   workId: external_exports.number().int().positive(),
-  workIdLocked: external_exports.boolean().optional(),
+  workIdLocked: external_exports.boolean(),
   title: NonEmptyString,
-  maker: external_exports.string().nullable().optional(),
-  seriesId: external_exports.string().nullable().optional(),
-  imageUrl: external_exports.string().url().nullable().optional(),
-  purchasedAt: external_exports.string().nullable().optional()
+  maker: external_exports.string().nullable(),
+  seriesId: external_exports.string().nullable(),
+  imageUrl: AbsoluteHttpUrl.nullable(),
+  imageProvenance: ImageProvenanceSchema.nullable(),
+  productUrl: AbsoluteHttpsUrl.nullable(),
+  productUrlProvenance: ProductUrlProvenanceSchema.nullable(),
+  purchasedAt: external_exports.string().nullable(),
+  purchasedAtPrecision: PurchasedAtPrecisionSchema,
+  purchasePrice: external_exports.null(),
+  currentPrice: external_exports.null()
 });
 var ListingsResponseSchema = external_exports.object({
   listings: external_exports.array(ListingSchema),
@@ -14881,6 +14910,41 @@ function groupByWork(listings) {
 function errorMessage2(err) {
   return err instanceof Error ? err.message : String(err);
 }
+function purchasedAtLabel(listing) {
+  if (!listing.purchasedAt) return "\u672A\u53D6\u5F97";
+  if (listing.purchasedAtPrecision === "day") return listing.purchasedAt;
+  if (listing.purchasedAtPrecision === "second") {
+    const date5 = new Date(listing.purchasedAt);
+    if (!Number.isNaN(date5.getTime())) return date5.toLocaleString();
+  }
+  return listing.purchasedAt;
+}
+function imageForListing(listing) {
+  const host = el2("div", { className: "listing-image" });
+  const placeholder = () => el2("span", { className: "image-placeholder", textContent: "\u672A\u53D6\u5F97" });
+  if (!listing.imageUrl) {
+    host.append(placeholder());
+    return host;
+  }
+  const image = el2("img", {
+    src: listing.imageUrl,
+    alt: listing.title,
+    loading: "lazy",
+    referrerpolicy: "no-referrer"
+  });
+  image.addEventListener("error", () => host.replaceChildren(placeholder()));
+  host.append(image);
+  return host;
+}
+function productLinkForListing(listing) {
+  if (!listing.productUrl) return el2("span", { className: "muted", textContent: "\u672A\u53D6\u5F97" });
+  return el2("a", {
+    href: listing.productUrl,
+    target: "_blank",
+    rel: "noreferrer noopener",
+    textContent: "\u5546\u54C1\u30DA\u30FC\u30B8"
+  });
+}
 async function renderLibrary(root) {
   root.replaceChildren(el2("div", { className: "panel" }, [
     el2("h2", { textContent: "\u30E9\u30A4\u30D6\u30E9\u30EA" }),
@@ -15050,7 +15114,7 @@ async function renderLibrary(root) {
         "data-work-id": String(workId)
       });
       group.append(
-        el2("header", { textContent: `work #${workId}\uFF08${items.length} \u4EF6\uFF09` })
+        el2("header", { textContent: `\u4F5C\u54C1\u30B0\u30EB\u30FC\u30D7\uFF08${items.length} \u4EF6\uFF09` })
       );
       for (const listing of items) {
         const accessibleName = `\u9078\u629E: ${listing.title}\uFF08${listing.source} / ${listing.cid}\uFF09`;
@@ -15098,10 +15162,21 @@ async function renderLibrary(root) {
         });
         row.append(
           checkbox,
-          el2("div", {}, [
-            el2("strong", { textContent: listing.title }),
-            el2("div", { className: "muted", textContent: `${listing.source} / ${listing.cid}` }),
-            listing.maker ? el2("div", { className: "muted", textContent: listing.maker }) : document.createComment("")
+          el2("div", { className: "listing-content" }, [
+            imageForListing(listing),
+            el2("div", { className: "listing-details" }, [
+              el2("strong", { textContent: listing.title }),
+              el2("div", { className: "muted", textContent: `${listing.source} / ${listing.cid}` }),
+              el2("div", { className: "muted", textContent: listing.maker ?? "\u672A\u53D6\u5F97" }),
+              el2("div", { className: "muted", textContent: `\u8CFC\u5165\u65E5: ${purchasedAtLabel(listing)}` }),
+              el2("div", { className: "muted" }, [
+                "\u8CFC\u5165\u4FA1\u683C: \u672A\u53D6\u5F97 / \u73FE\u5728\u4FA1\u683C: \u672A\u53D6\u5F97"
+              ]),
+              el2("div", { className: "muted listing-product-link" }, [
+                "\u5546\u54C1: ",
+                productLinkForListing(listing)
+              ])
+            ])
           ]),
           listing.workIdLocked ? el2("span", { className: "muted", textContent: "locked" }) : document.createComment(""),
           splitBtn

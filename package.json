@@ -11,7 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "start": "node server/dist/static.js",
-    "test": "npm test --workspaces --if-present",
+    "test": "node --test scripts/runtime.test.mjs && npm test --workspaces --if-present",
     "lint": "eslint ."
   },
   "devDependencies": {

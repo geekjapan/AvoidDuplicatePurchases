@@ -15,7 +15,13 @@ import { registerApiRouteMount } from "../route-mounts.js";
 import type { ApiContext } from "../http.js";
 import { upsertFanzaListing } from "../import/fanza/common.js";
 import { recomputeMatchKeys } from "../services/lookup.js";
+import {
+  listingDisplayMetadata,
+  sanitizeProductImageUrl,
+} from "../services/listing-display.js";
 import type { ProductFetcher } from "../services/import.js";
+
+export { sanitizeProductImageUrl } from "../services/listing-display.js";
 
 export interface ParsedProductUrl {
   source: Source;
@@ -203,23 +209,6 @@ function validationError(res: ServerResponse): void {
   json(res, 400, { error: "invalid_request" });
 }
 
-/** Optional product image URL trust boundary: http(s) absolute only, else null. */
-export function sanitizeProductImageUrl(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  try {
-    const u = new URL(trimmed);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    // ListingSchema uses z.string().url(); reject credentials / empty host.
-    if (u.username || u.password) return null;
-    if (!u.hostname) return null;
-    return trimmed;
-  } catch {
-    return null;
-  }
-}
-
 function sanitizeOptionalText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -278,10 +267,13 @@ function listingRow(
   series_id: string | null;
   image_url: string | null;
   purchased_at: string | null;
+  purchased_at_precision: "second" | "day" | "unknown";
+  raw_json: string;
 } | undefined {
   return db
     .prepare(
-      `SELECT id, source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url, purchased_at
+      `SELECT id, source, cid, work_id, work_id_locked, title, maker_name, series_id, image_url,
+              purchased_at, purchased_at_precision, raw_json
        FROM listing WHERE source = ? AND cid = ?`,
     )
     .get(source, cid) as
@@ -296,6 +288,8 @@ function listingRow(
         series_id: string | null;
         image_url: string | null;
         purchased_at: string | null;
+        purchased_at_precision: "second" | "day" | "unknown";
+        raw_json: string;
       }
     | undefined;
 }
@@ -390,6 +384,14 @@ async function handleManualRoute(
       throw new Error("listing missing after match_key");
     }
 
+    const display = listingDisplayMetadata({
+      source: finalRow.source,
+      cid: finalRow.cid,
+      seriesId: finalRow.series_id,
+      imageUrl: finalRow.image_url,
+      rawJson: finalRow.raw_json,
+    });
+
     // Validate response shape before commit so invalid optional metadata cannot
     // leave a partial commit and then 500.
     responseBody = ManualListingResponseSchema.parse({
@@ -402,8 +404,11 @@ async function handleManualRoute(
         title: finalRow.title,
         maker: finalRow.maker_name,
         seriesId: finalRow.series_id,
-        imageUrl: finalRow.image_url,
+        ...display,
         purchasedAt: finalRow.purchased_at,
+        purchasedAtPrecision: finalRow.purchased_at_precision,
+        purchasePrice: null,
+        currentPrice: null,
       }),
     });
     ctx.db.exec("COMMIT");

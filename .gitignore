@@ -8,6 +8,7 @@ node_modules/
 .codegraph/
 release-candidate/
 .env
+.adp/
 .DS_Store
 .orca/
 extension/dist/

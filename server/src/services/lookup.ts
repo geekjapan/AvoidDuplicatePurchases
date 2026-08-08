@@ -13,6 +13,8 @@ import {
 } from "@adp/shared/adapters/dlsite";
 import type { DatabaseSync } from "node:sqlite";
 
+const MATCH_CANDIDATE_THRESHOLD = 0.7;
+
 export interface ListingRow {
   id: number;
   source: Source;
@@ -74,6 +76,9 @@ function findVideoFloorEvidence(obj: Record<string, unknown>): string | null {
   if (typeof obj.floor === "string" && normalizeFanzaVideoFloor(obj.floor)) {
     return obj.floor;
   }
+  if (typeof obj.videoFloor === "string" && normalizeFanzaVideoFloor(obj.videoFloor)) {
+    return obj.videoFloor;
+  }
   if (obj.content && typeof obj.content === "object" && !Array.isArray(obj.content)) {
     const content = obj.content as Record<string, unknown>;
     if (typeof content.floor === "string" && normalizeFanzaVideoFloor(content.floor)) {
@@ -102,19 +107,20 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
   }
 
   const other: LookupResult["other"] = [];
-  // Other-site ownership: exact normalized title + maker, and different source.
+  const possible: LookupResult["possible"] = [];
+  // Cross-site matching is gated by normalized maker before comparing product names.
   if (item.title && item.maker) {
-    const titleKey = titleMatchKey(item.title);
     const makerKey = makerMatchKey(item.maker);
-    if (titleKey && makerKey) {
+    const titleKey = titleMatchKey(item.title);
+    if (makerKey && titleKey) {
       const rows = db
         .prepare(
           `SELECT l.id, l.source, l.cid, l.title, l.maker_name, l.series_id, l.raw_json
            FROM match_key mk
            JOIN listing l ON l.id = mk.listing_id
-           WHERE mk.kind = 'title' AND mk.key = ?`,
+           WHERE mk.kind = 'maker' AND mk.key = ?`,
         )
-        .all(titleKey) as Array<{
+        .all(makerKey) as Array<{
         id: number;
         source: Source;
         cid: string;
@@ -126,8 +132,13 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
 
       for (const row of rows) {
         if (item.source && row.source === item.source) continue;
-        const rowMakerKey = makerMatchKey(row.maker_name);
-        if (!rowMakerKey || rowMakerKey !== makerKey) continue;
+        const rowTitleKey = titleMatchKey(row.title);
+        const exact = rowTitleKey === titleKey;
+        const fuzzy =
+          item.source === "dlsite" &&
+          rowTitleKey.length > 0 &&
+          dice(titleKey, rowTitleKey) >= MATCH_CANDIDATE_THRESHOLD;
+        if (!exact && !fuzzy) continue;
 
         const videoFloor =
           row.source === "fanza_video"
@@ -140,17 +151,18 @@ function lookupOne(db: DatabaseSync, item: LookupItem): LookupResult {
         // Omit candidates that lack a verified canonical product URL.
         if (!url) continue;
 
-        other.push({
+        const hit = {
           source: row.source,
           cid: row.cid,
           title: row.title,
           url,
-        });
+        };
+        (exact ? other : possible).push(hit);
       }
     }
   }
 
-  return { owned, purchasedAt, other };
+  return { owned, purchasedAt, other, possible };
 }
 
 export function recomputeMatchKeys(db: DatabaseSync, listingId: number): void {
@@ -264,7 +276,7 @@ export function runRematch(db: DatabaseSync): { rematched: number; candidates: n
       const titleB = titleMatchKey(b.title);
       if (titleA === titleB) continue;
       const score = dice(titleA, titleB);
-      if (score < 0.7) continue;
+      if (score < MATCH_CANDIDATE_THRESHOLD) continue;
       db.prepare(
         "INSERT OR IGNORE INTO candidate (listing_a_id, listing_b_id, dice) VALUES (?, ?, ?)",
       ).run(a.id, b.id, score);
