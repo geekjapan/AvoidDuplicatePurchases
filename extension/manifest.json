@@ -18,6 +18,7 @@
     "https://book.dmm.co.jp/*",
     "https://api.video.dmm.co.jp/*",
     "https://dlsoft.dmm.co.jp/*",
+    "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll*",
     "http://127.0.0.1:41321/*"
   ],
   "permissions": ["alarms"],
@@ -35,6 +36,13 @@
     {
       "matches": ["https://book.dmm.co.jp/*"],
       "js": ["dist/content/fanza-books.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll*"
+      ],
+      "js": ["dist/content/amazon-books.js"],
       "run_at": "document_idle"
     }
   ]

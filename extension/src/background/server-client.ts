@@ -1,3 +1,5 @@
+import type { AmazonBooksPageReply } from "../messages.js";
+
 export const DEFAULT_SERVER_PORT = 41321;
 export const SERVER_BASE = `http://127.0.0.1:${DEFAULT_SERVER_PORT}`;
 
@@ -16,6 +18,13 @@ export interface LookupResult {
 export interface ImportCounts {
   inserted: number;
   updated: number;
+}
+
+export interface AmazonImportCounts {
+  observed: number;
+  stored: number;
+  acquiredOrUnknown: number;
+  rentals: number;
 }
 
 export interface SyncState {
@@ -73,6 +82,18 @@ export async function importDlsiteOnServer(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, counts: res.data };
+}
+
+export async function importAmazonOnServer(
+  page: Extract<AmazonBooksPageReply, { ok: true }>,
+): Promise<{ ok: true; counts: AmazonImportCounts } | { ok: false; error: string }> {
+  const res = await serverFetch<AmazonImportCounts>("/api/import/amazon", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pageUrl: page.pageUrl, items: page.items }),
   });
   if (!res.ok) return { ok: false, error: res.error };
   return { ok: true, counts: res.data };

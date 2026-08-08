@@ -123,7 +123,7 @@ describe("server API", () => {
 
   it("applies migrations and owns SQLite ownership model", () => {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-    assert.equal(version.user_version, 1);
+    assert.equal(version.user_version, 2);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all() as Array<{ name: string }>;
@@ -131,6 +131,64 @@ describe("server API", () => {
     assert.ok(names.includes("work"));
     assert.ok(names.includes("listing"));
     assert.ok(names.includes("match_key"));
+    assert.ok(names.includes("amazon_observation"));
+  });
+
+  it("stores Amazon DOM observations without creating owned listings", async () => {
+    const before = (
+      db.prepare("SELECT COUNT(*) AS c FROM listing").get() as { c: number }
+    ).c;
+    const res = await request(
+      port,
+      "POST",
+      "/api/import/amazon",
+      {
+        pageUrl:
+          "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/dateDsc?pageNumber=1",
+        items: [
+          {
+            asin: "SYNTHETI01",
+            title: "Synthetic book",
+            author: "Synthetic author",
+            acquiredLabel: "取得日: 2026年8月8日",
+            isRental: false,
+            isRead: false,
+          },
+          {
+            asin: "SYNTHETI02",
+            title: "Synthetic rental",
+            author: "Synthetic author",
+            acquiredLabel: "レンタル日: 2026年8月8日",
+            isRental: true,
+            isRead: true,
+          },
+        ],
+      },
+      { Origin: TEST_EXTENSION_ORIGIN },
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json, {
+      observed: 2,
+      stored: 2,
+      acquiredOrUnknown: 1,
+      rentals: 1,
+    });
+    assert.equal(
+      (
+        db.prepare("SELECT COUNT(*) AS c FROM listing").get() as { c: number }
+      ).c,
+      before,
+    );
+    const observations = db
+      .prepare("SELECT asin, state, is_read FROM amazon_observation ORDER BY asin")
+      .all() as Array<{ asin: string; state: string; is_read: number }>;
+    assert.deepEqual(
+      observations.map((observation) => ({ ...observation })),
+      [
+        { asin: "SYNTHETI01", state: "acquired_or_unknown", is_read: 0 },
+        { asin: "SYNTHETI02", state: "rental", is_read: 1 },
+      ],
+    );
   });
 
   it("imports DLsite fixture by upsert without deleting prior ownership", async () => {

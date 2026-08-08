@@ -78,7 +78,7 @@ describe("MV3 content script browser bundles", () => {
       content_scripts?: Array<{ js?: string[]; type?: string }>;
     };
     const scripts = manifest.content_scripts ?? [];
-    assert.equal(scripts.length, 3);
+    assert.equal(scripts.length, 4);
     for (const entry of scripts) {
       assert.equal(entry.type, undefined, "MV3 content_scripts must not set type: module");
       assert.ok(entry.js?.[0]?.startsWith("dist/content/"));

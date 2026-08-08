@@ -1,10 +1,11 @@
-import { MSG_SERVER_STATUS, MSG_SYNC } from "../messages.js";
+import { MSG_AMAZON_SYNC, MSG_SERVER_STATUS, MSG_SYNC } from "../messages.js";
 import { refreshSyncStatus, renderSyncStatus } from "./sync-status.js";
 import type { FullSyncOutcome } from "../alarms.js";
 
 const statusEl = document.getElementById("server-status");
 const resultEl = document.getElementById("sync-result");
 const syncBtn = document.getElementById("sync-btn") as HTMLButtonElement | null;
+const amazonSyncBtn = document.getElementById("amazon-sync-btn") as HTMLButtonElement | null;
 
 async function refreshStatus(): Promise<void> {
   if (!statusEl) return;
@@ -48,6 +49,37 @@ if (syncBtn) {
       }
     } finally {
       syncBtn.disabled = false;
+      await refreshStatus();
+    }
+  });
+}
+
+if (amazonSyncBtn) {
+  amazonSyncBtn.addEventListener("click", async () => {
+    if (resultEl) resultEl.textContent = "Amazon Books読み込み中…";
+    amazonSyncBtn.disabled = true;
+    try {
+      const reply = (await chrome.runtime.sendMessage({ type: MSG_AMAZON_SYNC })) as {
+        ok?: boolean;
+        outcome?: {
+          ok: boolean;
+          observed?: number;
+          acquiredOrUnknown?: number;
+          rentals?: number;
+          error?: string;
+        };
+      };
+      if (!resultEl) return;
+      const outcome = reply?.outcome;
+      if (outcome?.ok) {
+        resultEl.textContent =
+          `Amazon Books: ${outcome.observed ?? 0}件読み込み` +
+          `（購入判定保留 ${outcome.acquiredOrUnknown ?? 0}件、レンタル ${outcome.rentals ?? 0}件）`;
+      } else {
+        resultEl.textContent = `Amazon Books: ${outcome?.error ?? "読み込みに失敗しました"}`;
+      }
+    } finally {
+      amazonSyncBtn.disabled = false;
       await refreshStatus();
     }
   });

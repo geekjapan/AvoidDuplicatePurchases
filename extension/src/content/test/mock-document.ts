@@ -72,7 +72,14 @@ export class MockElement {
   }
 
   private matchesSimpleSelector(selector: string): boolean {
-    // tag[attr="value"] / tag[attr*="value"] / [attr=...]
+    // tag[attr="value"] / tag[attr*="value"] / tag[attr^="value"] / [attr=...]
+    const attrPrefix = /^([a-zA-Z][\w-]*)?\[([^^\]]+)\^="([^"]+)"\]$/.exec(selector);
+    if (attrPrefix) {
+      const tag = attrPrefix[1];
+      if (tag && this.tagName !== tag.toUpperCase()) return false;
+      const value = this.getAttribute(attrPrefix[2]!) ?? this.href;
+      return value.startsWith(attrPrefix[3]!);
+    }
     const attrExact = /^([a-zA-Z][\w-]*)?\[([^=\]]+)="([^"]+)"\]$/.exec(selector);
     if (attrExact) {
       const tag = attrExact[1];
@@ -86,7 +93,13 @@ export class MockElement {
       const value = this.getAttribute(attrContains[2]!) ?? this.href;
       return value.includes(attrContains[3]!);
     }
-    if (selector.startsWith("#")) return this.id === selector.slice(1);
+    const idAndClass = /^#([\w-]+)(?:\.([\w-]+))?$/.exec(selector);
+    if (idAndClass) {
+      return (
+        this.id === idAndClass[1] &&
+        (idAndClass[2] === undefined || this.className.split(/\s+/).includes(idAndClass[2]))
+      );
+    }
     if (selector.startsWith(".")) {
       return this.className.split(/\s+/).includes(selector.slice(1));
     }
