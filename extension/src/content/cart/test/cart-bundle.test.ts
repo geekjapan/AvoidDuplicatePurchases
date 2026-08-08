@@ -99,7 +99,7 @@ describe("MV3 cart behavior inside existing content IIFEs", () => {
       content_scripts?: Array<{ matches?: string[]; js?: string[]; type?: string }>;
     };
     const scripts = manifest.content_scripts ?? [];
-    assert.equal(scripts.length, 3, "manifest must remain three content_scripts entries");
+    assert.equal(scripts.length, 4, "manifest must include the Amazon Books reader");
     for (const entry of scripts) {
       assert.equal(entry.type, undefined, "MV3 content_scripts must not set type: module");
       assert.ok(entry.js?.[0]?.startsWith("dist/content/"));
@@ -111,6 +111,7 @@ describe("MV3 cart behavior inside existing content IIFEs", () => {
       "dist/content/dlsite.js",
       "dist/content/fanza-doujin.js",
       "dist/content/fanza-books.js",
+      "dist/content/amazon-books.js",
     ]);
   });
 

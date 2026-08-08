@@ -2,6 +2,7 @@
 
 - 対象: [GitHub Issue #43](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/43)
 - 調査日: 2026-08-07
+- 前提更新日: 2026-08-08
 - 調査範囲: Amazon / Kindle の公式ヘルプ、公式開発者ドキュメント、公式利用規約・プライバシー規約のみ
 - 目的: 実装前に、Kindle の対象範囲、地域・アカウント前提、取得経路、利用権の状態、識別子、規約・プライバシー制約を確定する
 
@@ -13,6 +14,16 @@
 4. **公式 UI は取得候補だが、第三者による自動抽出が許可されているとは扱わない。** Amazon の公式ヘルプが案内する「コンテンツと端末の管理」は利用者が Kindle コンテンツを管理する正規の画面である。一方、Amazon の利用規約は、明示的な書面許可なしのデータマイニング、ロボット、類似のデータ収集・抽出を制限している。したがって、利用者のクリックを起点にした DOM 読み取りも、クリックだけで規約上許可されたことにはならない。
 5. **購入済みと確認できない行は購入済みにしない。** 購入、無料取得、サンプル、貸出・レンタル、Kindle Unlimited、Prime Reading、判定不能を別状態に保存する。
 6. **照合キーは `(marketplace, ASIN, format=kindle_book)` を基本にする。** ASIN 単独、タイトル単独、ISBN 単独、注文番号単独を購入済み判定のキーにしない。
+
+## 追加で確定したユーザー前提
+
+Issue #43 の追加回答により、調査・実装検討の入力を次のように固定する。
+
+- マーケットプレイスは **Amazon.co.jp のみ**、対象アカウントは **単一アカウント**とする。
+- 取得経路は、Amazon の規約・仕様が許す範囲で、利用者起点の手動操作・公式 UI・公式 API / エクスポートを候補にする。利用者が「可能な限りすべて」を許可しても、Amazon 側の規約や明示的な許可を置き換えるものではない。
+- 所有扱いは、公式の購入履歴として確認できる Kindle 本の購入と **0 円購入**。レンタル、貸出、Kindle Unlimited、Prime Reading、返品・返金済みは所有扱いにしない。
+- 利用者が指定した入口は [Amazon.co.jp の「コンテンツと端末の管理」Books 一覧](https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/) である。この URL は認証済みの利用者向け UI の入口であり、公式 API、エクスポート、DOM、内部 JSON の仕様を示す資料ではない。
+- データが公開されないことを条件に、非公開クラウドホスティングを許容する。ただし、リポジトリの既存方針（`docs/spec.md` のローカル限定）とは差分があるため、実装前にプロジェクト方針を明示的に整合させる。今回の研究では `docs/spec.md` を変更しない。
 
 ## 1. Kindle-only scope
 
@@ -51,7 +62,7 @@ Kindle Unlimited の対象国・地域もマーケットプレイス単位で列
 
 Amazon の公式ヘルプは、サインインした利用者が「Manage Your Content and Devices / コンテンツと端末の管理」で Books を表示し、端末への配信や削除を行う手順を案内している。同じ画面で、Digital Orders の支払い完了状態も確認するよう案内している。[Troubleshoot Kindle Content Not Appearing in Your Library](https://digprjsurvey.amazon.co.uk/csad/help/node/TsdpGRrbNmNohmj2Q9)
 
-これは **利用者が自分の Amazon アカウントを操作する公式 UI** である。ただし、公式ヘルプが第三者アプリに対してその画面の一覧を抽出する許可を与えているわけではない。
+これは **利用者が自分の Amazon アカウントを操作する公式 UI** である。今回の指定 URL はその Amazon.co.jp 側の入口である。ただし、公式ヘルプが第三者アプリに対してその画面の一覧を抽出する許可を与えているわけではなく、認証後の画面構造・項目名・ページング・エクスポートは今回の公開一次資料では確認できない。
 
 ### 公式 API について
 
@@ -84,7 +95,10 @@ Amazon の Kindle Store Terms of Use は、Kindle Content を「販売」では�
 | 保存する状態 | 判定条件 | 重複購入判定 |
 |---|---|---|
 | `purchased` | Digital Order が完了し、Kindle 電子書籍としてライブラリにあることを公式表示から確認できる | 購入済みとして扱う。ただし返金・削除・利用停止の状態は別途保持する。 |
-| `free` | 無料キャンペーン等による無料取得が、注文またはライブラリの状態として確認できる | 無料取得として記録する。現在の商品価格が 0 円というだけでは、過去の取得状態を推測しない。Amazon は無料キャンペーンと「free Kindle eBooks」を公式に区別して説明している。[本の販促](https://kdp.amazon.co.jp/ja_JP/help/topic/G201723090)、[Amazon UK Associates Commission Income](https://affiliate-program.amazon.co.uk/help/node/topic/GRXPHT8U84RAYDXZ) |
+| `free` | 0 円の注文・購入履歴として確認できる。現在の商品価格が 0 円というだけでは判定しない | ユーザー要件上、購入済み照合の対象に含める。Amazon は無料キャンペーンを公式に説明している。[本の販促](https://kdp.amazon.co.jp/ja_JP/help/topic/G201723090)、[Amazon UK Associates Commission Income](https://affiliate-program.amazon.co.uk/help/node/topic/GRXPHT8U84RAYDXZ) |
+| `returned` | Kindle 本の注文が返品・返金済みで、公式の注文またはコンテンツ管理状態から確認できる | **所有扱いにしない。** Amazon は返品・返金後は本へのアクセスがなくなると説明している。[Return a Kindle Book Order](https://digprjsurvey.amazon.co.uk/csad/help/node/G937D322PWZ6L9BL?theme=light) |
+| `free` | 0 円の注文・購入履歴として確認できる。現在の商品価格が 0 円というだけでは判定しない | ユーザー要件上、購入済み照合の対象に含める。Amazon は無料キャンペーンを公式に説明している。[本の販促](https://kdp.amazon.co.jp/ja_JP/help/topic/G201723090)、[Amazon UK Associates Commission Income](https://affiliate-program.amazon.co.uk/help/node/topic/GRXPHT8U84RAYDXZ) |
+| `returned` | Kindle 本の注文が返品・返金済みで、公式の注文またはコンテンツ管理状態から確認できる | **所有扱いにしない。** Amazon は返品・返金後は本へのアクセスがなくなると説明している。[Return a Kindle Book Order](https://digprjsurvey.amazon.co.uk/csad/help/node/G937D322PWZ6L9BL?theme=light) |
 | `sample` | 「Read sample / Look Inside」などのプレビューだけ | **購入済みとして扱わない。** Amazon はサンプルを購入前のプレビューと説明し、eBook のサンプル量も別に定義している。[Read Sample](https://kdp.amazon.com/en_US/help/topic/G200644250) |
 | `loan` / `rental` | 一定期間だけ借りている、または貸出中であることが表示される | **購入済みとして扱わない。** Kindle 本の貸出機能は購入者が他人へ貸す機能で、14 日間、1 タイトル 1 回、購入数には算入されない。公式資料では Amazon.com 購入本のみで、日本ではサポートされないと記載されている。[本の貸し出し](https://kdp.amazon.co.jp/ja_JP/help/topic/G200652240)、[本の販促](https://kdp.amazon.co.jp/ja_JP/help/topic/G201723090) |
 | `kindle_unlimited` | Kindle Unlimited バッジ、フィルター、または返却可能な KU 利用権として確認できる | **購入済みとして扱わない。** KU は最大 20 タイトルを借りられ、アクティブな会員資格の間だけ利用する Subscription Content である。[Learn About Kindle Unlimited](https://digprjsurvey.amazon.co.uk/csad/help/node/GTQEND3RFAFNLKU5)、[Kindle Store Terms of Use](https://digprjsurvey.amazon.co.uk/csad/help/node/201014950) |
@@ -121,8 +135,9 @@ Amazon のプライバシー通知は、購入履歴、コンテンツ・デバ�
 実装する場合の最低限の制約は次のとおり。
 
 - Amazon のパスワード、Cookie、セッション、MFA コードを収集・保存しない
-- Amazon のページ内容、メールアドレス、注文番号、住所、決済情報を外部サーバーへ送信しない
-- 本プロジェクトの既存方針どおり、購入・利用権データはローカルに限定し、実アカウント情報や実データをリポジトリへ入れない
+- 公開サイトへ Amazon のページ内容、メールアドレス、注文番号、住所、決済情報を送信しない。非公開クラウドを採用する場合も、アクセス制御・暗号化・保存期間・削除手順を別途定義する
+- 非公開クラウド可という今回のユーザー要件は、`docs/spec.md` のローカル限定方針と異なる。研究段階では後者を変更せず、実装前にどちらを採用するか決める
+- 実アカウント情報や実データをリポジトリへ入れない
 - Kindle 本のファイル、サンプル本文、DRM 情報を取得・保存・再配布しない。Kindle の規約は DRM の回避を禁じ、DRM フリー本の EPUB/PDF ダウンロードも認証済み購入者に限り、Kindle Unlimited 等の利用者には提供しないと説明している。[Digital Rights Management](https://kdp.amazon.co.jp/ja_JP/help/topic/GDDXGH9VR22ACM8U)
 - 非公開 API の逆解析、ログイン自動化、バックグラウンドの巡回、規約で許可されないデータ抽出を行わない
 - Amazon の規約、API、画面表示は変更され得る。公式 Kindle Terms はカタログが常に変化すると説明しており、実装前に対象マーケットプレイスの最新規約を再確認する。[Kindle Store Terms of Use](https://digprjsurvey.amazon.co.uk/csad/help/node/201014950)
@@ -132,8 +147,9 @@ Creators API をメタデータ補完に使う案も、現時点では採用候�
 ## 残る限界と実装ゲート
 
 - 公式資料で確認できたのは、利用者向けの Kindle ライブラリ UI と商品カタログ API である。**個人の Kindle 購入履歴・ライブラリを第三者アプリへ返す公式 API または公式 CSV/JSON エクスポートは確認できない。** 「存在しない」とは断定しない。
+- 指定された Amazon.co.jp の Books 一覧 URL は利用者向けの公式入口として記録できるが、認証後の画面項目・状態値・安定した DOM / 内部 ID / エクスポートの公開仕様は確認できない。URL の提示だけでは自動取得の許可も確認できない。
 - Manage Your Content and Devices の DOM、内部 JSON、内部 ID、ページング仕様は、今回の一次資料では安定仕様として確認できない。実地観測で補う場合も、規約上の許可を先に確認する。
 - Kindle 本の貸出機能は公式資料上 Amazon.com のみで、日本ではサポートされない。Amazon.co.jp を初期対象にする場合、`loan` / `rental` は通常の購入経路として扱わず、表示された場合だけ非購入状態として保存する。
 - 公式規約にはマーケットプレイスごとの差がある。ここでは Amazon.co.jp の地域・ASIN・貸出資料と、参照可能だった Amazon の英語圏消費者規約を併用した。Amazon.co.jp の実装を公開する前に、日本向けの最新 Kindle Terms と Conditions of Use の確認を実施する。
 
-**実装着手条件:** Amazon が個人ライブラリ取得を明示的に許可する公式 API / エクスポート、または Amazon の明示的な許可が確認できること。そこまでは、Issue #43 は研究結果をもって取得経路未確定と扱い、購入済み推測を伴うコードを追加しない。
+**実装着手条件:** Amazon が個人ライブラリ取得を明示的に許可する公式 API / エクスポート、または Amazon の明示的な許可が確認できること。利用者自身の許可と非公開クラウドの選択だけではこの条件を満たさない。そこまでは、Issue #43 は研究結果をもって取得経路未確定と扱い、購入済み推測を伴うコードを追加しない。

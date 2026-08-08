@@ -1,7 +1,14 @@
 import { lookupOnServer, type ServerLookupItem } from "./server-client.js";
 import { runFullSync, type FullSyncOutcome } from "../alarms.js";
 import { checkServerHealth } from "./server-client.js";
-import { isAdminMessage, MSG_LOOKUP, MSG_SYNC, MSG_SERVER_STATUS } from "../messages.js";
+import { runAmazonManualSync, type AmazonSyncOutcome } from "./amazon-sync.js";
+import {
+  isAdminMessage,
+  MSG_AMAZON_SYNC,
+  MSG_LOOKUP,
+  MSG_SYNC,
+  MSG_SERVER_STATUS,
+} from "../messages.js";
 
 export type MessageHandler = (
   message: { type?: string },
@@ -42,6 +49,15 @@ export interface ServerStatusReply {
   connected: boolean;
 }
 
+export interface AmazonSyncMessage {
+  type: typeof MSG_AMAZON_SYNC;
+}
+
+export interface AmazonSyncReply {
+  ok: boolean;
+  outcome?: AmazonSyncOutcome;
+}
+
 /**
  * Silent-failure lookup contract (D3): when server is down, return ok:false
  * without throwing so content scripts add no DOM.
@@ -73,6 +89,24 @@ export function registerMessaging(): void {
           sendResponse({
             ok: false,
             outcome: { ok: false, sources: {}, error: String(err) },
+          }),
+        );
+      return true;
+    }
+    if (message?.type === MSG_AMAZON_SYNC) {
+      runAmazonManualSync()
+        .then((outcome) => sendResponse({ ok: outcome.ok, outcome }))
+        .catch((err: unknown) =>
+          sendResponse({
+            ok: false,
+            outcome: {
+              ok: false,
+              observed: 0,
+              stored: 0,
+              acquiredOrUnknown: 0,
+              rentals: 0,
+              error: String(err),
+            },
           }),
         );
       return true;

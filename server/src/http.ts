@@ -24,6 +24,7 @@ import { runRematch } from "./services/lookup.js";
 import { dispatchRouteMounts } from "./route-mounts.js";
 import { getLatestSyncOutcome, persistSyncOutcome } from "./import/fanza/common.js";
 import "./import/fanza/index.js";
+import "./routes/amazon.js";
 
 /**
  * Reserved outcome source for full-sync global results (not a marketplace source).
@@ -181,6 +182,12 @@ export async function handleApi(
     } catch {
       validationError(res);
     }
+    return true;
+  }
+
+  if (method === "POST" && url.pathname === "/api/import/amazon") {
+    if (await dispatchRouteMounts(req, res, ctx, url)) return true;
+    notFound(res);
     return true;
   }
 
