@@ -192,10 +192,18 @@ describe("shared API endpoint schemas", () => {
       source: "dlsite",
       cid: "RJ000001",
       workId: 10,
+      workIdLocked: false,
       title: "作品",
       maker: null,
+      seriesId: null,
       imageUrl: null,
+      imageProvenance: null,
+      productUrl: null,
+      productUrlProvenance: null,
       purchasedAt: null,
+      purchasedAtPrecision: "unknown",
+      purchasePrice: null,
+      currentPrice: null,
     });
     assert.equal(listing.cid, "RJ000001");
 
@@ -224,7 +232,18 @@ describe("shared API endpoint schemas", () => {
         source: "dlsite",
         cid: "RJ000001",
         workId: 9,
+        workIdLocked: false,
         title: "manual",
+        maker: null,
+        seriesId: null,
+        imageUrl: null,
+        imageProvenance: null,
+        productUrl: null,
+        productUrlProvenance: null,
+        purchasedAt: null,
+        purchasedAtPrecision: "unknown",
+        purchasePrice: null,
+        currentPrice: null,
       },
     });
 

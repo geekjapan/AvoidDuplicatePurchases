@@ -234,12 +234,28 @@ export declare const ListingSchema: z.ZodObject<{
     }>;
     cid: z.ZodString;
     workId: z.ZodNumber;
-    workIdLocked: z.ZodOptional<z.ZodBoolean>;
+    workIdLocked: z.ZodBoolean;
     title: z.ZodString;
-    maker: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    seriesId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    imageUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    purchasedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    maker: z.ZodNullable<z.ZodString>;
+    seriesId: z.ZodNullable<z.ZodString>;
+    imageUrl: z.ZodNullable<z.ZodString>;
+    imageProvenance: z.ZodNullable<z.ZodEnum<{
+        store_product_metadata: "store_product_metadata";
+        store_library_metadata: "store_library_metadata";
+    }>>;
+    productUrl: z.ZodNullable<z.ZodString>;
+    productUrlProvenance: z.ZodNullable<z.ZodEnum<{
+        store_canonical: "store_canonical";
+        verified_derived: "verified_derived";
+    }>>;
+    purchasedAt: z.ZodNullable<z.ZodString>;
+    purchasedAtPrecision: z.ZodEnum<{
+        unknown: "unknown";
+        second: "second";
+        day: "day";
+    }>;
+    purchasePrice: z.ZodNull;
+    currentPrice: z.ZodNull;
 }, z.core.$strip>;
 export declare const ListingsResponseSchema: z.ZodObject<{
     listings: z.ZodArray<z.ZodObject<{
@@ -253,12 +269,28 @@ export declare const ListingsResponseSchema: z.ZodObject<{
         }>;
         cid: z.ZodString;
         workId: z.ZodNumber;
-        workIdLocked: z.ZodOptional<z.ZodBoolean>;
+        workIdLocked: z.ZodBoolean;
         title: z.ZodString;
-        maker: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        seriesId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        imageUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        purchasedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        maker: z.ZodNullable<z.ZodString>;
+        seriesId: z.ZodNullable<z.ZodString>;
+        imageUrl: z.ZodNullable<z.ZodString>;
+        imageProvenance: z.ZodNullable<z.ZodEnum<{
+            store_product_metadata: "store_product_metadata";
+            store_library_metadata: "store_library_metadata";
+        }>>;
+        productUrl: z.ZodNullable<z.ZodString>;
+        productUrlProvenance: z.ZodNullable<z.ZodEnum<{
+            store_canonical: "store_canonical";
+            verified_derived: "verified_derived";
+        }>>;
+        purchasedAt: z.ZodNullable<z.ZodString>;
+        purchasedAtPrecision: z.ZodEnum<{
+            unknown: "unknown";
+            second: "second";
+            day: "day";
+        }>;
+        purchasePrice: z.ZodNull;
+        currentPrice: z.ZodNull;
     }, z.core.$strip>>;
     total: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
@@ -277,12 +309,28 @@ export declare const ManualListingResponseSchema: z.ZodObject<{
         }>;
         cid: z.ZodString;
         workId: z.ZodNumber;
-        workIdLocked: z.ZodOptional<z.ZodBoolean>;
+        workIdLocked: z.ZodBoolean;
         title: z.ZodString;
-        maker: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        seriesId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        imageUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        purchasedAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        maker: z.ZodNullable<z.ZodString>;
+        seriesId: z.ZodNullable<z.ZodString>;
+        imageUrl: z.ZodNullable<z.ZodString>;
+        imageProvenance: z.ZodNullable<z.ZodEnum<{
+            store_product_metadata: "store_product_metadata";
+            store_library_metadata: "store_library_metadata";
+        }>>;
+        productUrl: z.ZodNullable<z.ZodString>;
+        productUrlProvenance: z.ZodNullable<z.ZodEnum<{
+            store_canonical: "store_canonical";
+            verified_derived: "verified_derived";
+        }>>;
+        purchasedAt: z.ZodNullable<z.ZodString>;
+        purchasedAtPrecision: z.ZodEnum<{
+            unknown: "unknown";
+            second: "second";
+            day: "day";
+        }>;
+        purchasePrice: z.ZodNull;
+        currentPrice: z.ZodNull;
     }, z.core.$strip>;
 }, z.core.$strip>;
 /** Path params for `POST /api/listings/:source/:cid/work`. */

@@ -76,6 +76,9 @@ function findVideoFloorEvidence(obj: Record<string, unknown>): string | null {
   if (typeof obj.floor === "string" && normalizeFanzaVideoFloor(obj.floor)) {
     return obj.floor;
   }
+  if (typeof obj.videoFloor === "string" && normalizeFanzaVideoFloor(obj.videoFloor)) {
+    return obj.videoFloor;
+  }
   if (obj.content && typeof obj.content === "object" && !Array.isArray(obj.content)) {
     const content = obj.content as Record<string, unknown>;
     if (typeof content.floor === "string" && normalizeFanzaVideoFloor(content.floor)) {
