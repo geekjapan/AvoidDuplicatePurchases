@@ -18,7 +18,13 @@ type ListingPayload = {
     maker: string | null;
     seriesId: string | null;
     imageUrl: string | null;
+    imageProvenance: string | null;
+    productUrl: string | null;
+    productUrlProvenance: string | null;
     purchasedAt: string | null;
+    purchasedAtPrecision: "second" | "day" | "unknown";
+    purchasePrice: null;
+    currentPrice: null;
   }>;
   total: number;
 };
@@ -35,7 +41,13 @@ const SAMPLE: ListingPayload = {
       maker: "Async Maker",
       seriesId: null,
       imageUrl: null,
+      imageProvenance: null,
+      productUrl: null,
+      productUrlProvenance: null,
       purchasedAt: null,
+      purchasedAtPrecision: "unknown",
+      purchasePrice: null,
+      currentPrice: null,
     },
     {
       id: 2,
@@ -47,7 +59,13 @@ const SAMPLE: ListingPayload = {
       maker: "Async Maker",
       seriesId: null,
       imageUrl: null,
+      imageProvenance: null,
+      productUrl: null,
+      productUrlProvenance: null,
       purchasedAt: null,
+      purchasedAtPrecision: "unknown",
+      purchasePrice: null,
+      currentPrice: null,
     },
   ],
   total: 2,

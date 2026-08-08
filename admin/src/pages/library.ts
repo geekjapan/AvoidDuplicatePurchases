@@ -36,6 +36,44 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function purchasedAtLabel(listing: Listing): string {
+  if (!listing.purchasedAt) return "未取得";
+  if (listing.purchasedAtPrecision === "day") return listing.purchasedAt;
+  if (listing.purchasedAtPrecision === "second") {
+    const date = new Date(listing.purchasedAt);
+    if (!Number.isNaN(date.getTime())) return date.toLocaleString();
+  }
+  return listing.purchasedAt;
+}
+
+function imageForListing(listing: Listing): HTMLElement {
+  const host = el("div", { className: "listing-image" });
+  const placeholder = () => el("span", { className: "image-placeholder", textContent: "未取得" });
+  if (!listing.imageUrl) {
+    host.append(placeholder());
+    return host;
+  }
+  const image = el("img", {
+    src: listing.imageUrl,
+    alt: listing.title,
+    loading: "lazy",
+    referrerpolicy: "no-referrer",
+  });
+  image.addEventListener("error", () => host.replaceChildren(placeholder()));
+  host.append(image);
+  return host;
+}
+
+function productLinkForListing(listing: Listing): Node {
+  if (!listing.productUrl) return el("span", { className: "muted", textContent: "未取得" });
+  return el("a", {
+    href: listing.productUrl,
+    target: "_blank",
+    rel: "noreferrer noopener",
+    textContent: "商品ページ",
+  });
+}
+
 export async function renderLibrary(root: HTMLElement): Promise<void> {
   root.replaceChildren(el("div", { className: "panel" }, [
     el("h2", { textContent: "ライブラリ" }),
@@ -232,7 +270,7 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
         "data-work-id": String(workId),
       });
       group.append(
-        el("header", { textContent: `work #${workId}（${items.length} 件）` }),
+        el("header", { textContent: `作品グループ（${items.length} 件）` }),
       );
       for (const listing of items) {
         const accessibleName = `選択: ${listing.title}（${listing.source} / ${listing.cid}）`;
@@ -281,12 +319,21 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
         });
         row.append(
           checkbox,
-          el("div", {}, [
-            el("strong", { textContent: listing.title }),
-            el("div", { className: "muted", textContent: `${listing.source} / ${listing.cid}` }),
-            listing.maker
-              ? el("div", { className: "muted", textContent: listing.maker })
-              : document.createComment(""),
+          el("div", { className: "listing-content" }, [
+            imageForListing(listing),
+            el("div", { className: "listing-details" }, [
+              el("strong", { textContent: listing.title }),
+              el("div", { className: "muted", textContent: `${listing.source} / ${listing.cid}` }),
+              el("div", { className: "muted", textContent: listing.maker ?? "未取得" }),
+              el("div", { className: "muted", textContent: `購入日: ${purchasedAtLabel(listing)}` }),
+              el("div", { className: "muted" }, [
+                "購入価格: 未取得 / 現在価格: 未取得",
+              ]),
+              el("div", { className: "muted listing-product-link" }, [
+                "商品: ",
+                productLinkForListing(listing),
+              ]),
+            ]),
           ]),
           listing.workIdLocked
             ? el("span", { className: "muted", textContent: "locked" })
