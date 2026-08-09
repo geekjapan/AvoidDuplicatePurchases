@@ -128,7 +128,7 @@ export function loadPriceObservationsByListingIds(
                 observed_at
          FROM price_observation WHERE listing_id IN (${placeholders})`,
       )
-      .all(...ids) as Array<PriceObservationRow & { listing_id: number }>;
+      .all(...ids) as unknown as Array<PriceObservationRow & { listing_id: number }>;
     for (const row of rows) {
       map.set(row.listing_id, rowToPriceObservation(row));
     }
