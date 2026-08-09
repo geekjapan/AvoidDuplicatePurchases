@@ -14,6 +14,7 @@ app.append(header, main);
 
 const links: Record<AdminRoute, HTMLAnchorElement> = {
   library: document.createElement("a"),
+  related: document.createElement("a"),
   candidates: document.createElement("a"),
   sync: document.createElement("a"),
   settings: document.createElement("a"),
@@ -21,13 +22,21 @@ const links: Record<AdminRoute, HTMLAnchorElement> = {
 
 links.library.href = routePath("library");
 links.library.textContent = "ライブラリ";
+links.related.href = routePath("related");
+links.related.textContent = "関連比較";
 links.candidates.href = routePath("candidates");
 links.candidates.textContent = "候補キュー";
 links.sync.href = routePath("sync");
 links.sync.textContent = "同期";
 links.settings.href = routePath("settings");
 links.settings.textContent = "設定";
-nav.append(links.library, links.candidates, links.sync, links.settings);
+nav.append(
+  links.library,
+  links.related,
+  links.candidates,
+  links.sync,
+  links.settings,
+);
 
 function setActive(route: AdminRoute): void {
   for (const key of allRoutes()) {

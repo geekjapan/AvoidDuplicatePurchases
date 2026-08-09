@@ -27,6 +27,7 @@ import "./import/fanza/index.js";
 import "./routes/amazon.js";
 import "./routes/library.js";
 import "./routes/price-observation.js";
+import "./routes/related-products.js";
 
 /**
  * Reserved outcome source for full-sync global results (not a marketplace source).
@@ -300,9 +301,9 @@ export async function handleApi(
 
   const importMatch = url.pathname.match(/^\/api\/import\/([^/]+)$/);
   if (method === "POST" && importMatch) {
-    // The generic library-sync endpoint is not a Source path; route it before
-    // SourcePathSchema validation so "library" is not rejected as a source.
-    if (importMatch[1] === "library") {
+    // Non-Source import endpoints: route before SourcePathSchema validation so
+    // "library" / "related" are not rejected as marketplace sources.
+    if (importMatch[1] === "library" || importMatch[1] === "related") {
       if (await dispatchRouteMounts(req, res, ctx, url)) return true;
       notFound(res);
       return true;

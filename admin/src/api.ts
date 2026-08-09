@@ -1,11 +1,15 @@
 import {
   CandidatesResponseSchema,
   ListingsResponseSchema,
+  RelatedProductsResponseSchema,
   WorkAssignmentResponseSchema,
   type ListingsResponse,
+  type RelatedProductsResponse,
+  type Source,
 } from "@adp/shared";
 
 export type Listing = ListingsResponse["listings"][number];
+export type RelatedProducts = RelatedProductsResponse;
 
 async function apiFetch<T>(
   path: string,
@@ -135,3 +139,38 @@ export async function assignWork(
     },
   );
 }
+
+/**
+ * Fetch related products for an owned listing anchor (issue #47).
+ * Related market offers are never written into the owned library table.
+ */
+export async function fetchRelatedProducts(params: {
+  anchorSource: string;
+  anchorCid: string;
+  owned?: "exclude" | "mark";
+  sort?:
+    | "relevance"
+    | "price_asc"
+    | "discount_desc"
+    | "sale_ends_asc"
+    | "title_asc";
+  currency?: string;
+  source?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<RelatedProductsResponse> {
+  const search = new URLSearchParams();
+  search.set("anchorSource", params.anchorSource);
+  search.set("anchorCid", params.anchorCid);
+  if (params.owned) search.set("owned", params.owned);
+  if (params.sort) search.set("sort", params.sort);
+  if (params.currency) search.set("currency", params.currency);
+  if (params.source) search.set("source", params.source);
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  return apiFetch(`/api/related-products?${search.toString()}`, {
+    parse: (v) => RelatedProductsResponseSchema.parse(v),
+  });
+}
+
+export type RelatedAnchorSource = Source;

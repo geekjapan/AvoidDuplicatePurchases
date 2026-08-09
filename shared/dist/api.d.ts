@@ -870,6 +870,587 @@ export declare const ExportRequestSchema: z.ZodObject<{
 export declare const ExportResponseSchema: z.ZodObject<{
     path: z.ZodString;
 }, z.core.$strip>;
+/**
+ * Allowed relation evidence kinds. Title-similarity-only is intentionally
+ * excluded from this union; do not add fuzzy title match here.
+ */
+export declare const RelationEvidenceKindSchema: z.ZodEnum<{
+    maker: "maker";
+    author: "author";
+    series: "series";
+    store_related: "store_related";
+}>;
+export declare const RelationEvidenceOriginSchema: z.ZodEnum<{
+    derived: "derived";
+    store: "store";
+}>;
+export declare const RelationEvidenceSchema: z.ZodObject<{
+    kind: z.ZodEnum<{
+        maker: "maker";
+        author: "author";
+        series: "series";
+        store_related: "store_related";
+    }>;
+    origin: z.ZodEnum<{
+        derived: "derived";
+        store: "store";
+    }>;
+    anchorValue: z.ZodNullable<z.ZodString>;
+    productValue: z.ZodNullable<z.ZodString>;
+}, z.core.$strict>;
+/** Unowned related product metadata. Never carries listing ownership fields. */
+export declare const RelatedProductSchema: z.ZodObject<{
+    source: z.ZodEnum<{
+        dlsite: "dlsite";
+        fanza_doujin: "fanza_doujin";
+        fanza_books: "fanza_books";
+        fanza_video: "fanza_video";
+        fanza_dlsoft: "fanza_dlsoft";
+        amazon: "amazon";
+        ebookjapan: "ebookjapan";
+        kobo: "kobo";
+    }>;
+    cid: z.ZodString;
+    title: z.ZodString;
+    maker: z.ZodNullable<z.ZodString>;
+    seriesId: z.ZodNullable<z.ZodString>;
+    imageUrl: z.ZodNullable<z.ZodString>;
+    productUrl: z.ZodNullable<z.ZodString>;
+}, z.core.$strict>;
+export declare const OwnershipStatusSchema: z.ZodEnum<{
+    owned: "owned";
+    possible_duplicate: "possible_duplicate";
+    not_confirmed: "not_confirmed";
+}>;
+export declare const OwnershipMatchedBySchema: z.ZodEnum<{
+    source_cid: "source_cid";
+    title_maker: "title_maker";
+}>;
+export declare const ProductIdentitySchema: z.ZodObject<{
+    source: z.ZodEnum<{
+        dlsite: "dlsite";
+        fanza_doujin: "fanza_doujin";
+        fanza_books: "fanza_books";
+        fanza_video: "fanza_video";
+        fanza_dlsoft: "fanza_dlsoft";
+        amazon: "amazon";
+        ebookjapan: "ebookjapan";
+        kobo: "kobo";
+    }>;
+    cid: z.ZodString;
+}, z.core.$strict>;
+export declare const RelatedOwnershipSchema: z.ZodObject<{
+    status: z.ZodEnum<{
+        owned: "owned";
+        possible_duplicate: "possible_duplicate";
+        not_confirmed: "not_confirmed";
+    }>;
+    matchedBy: z.ZodNullable<z.ZodEnum<{
+        source_cid: "source_cid";
+        title_maker: "title_maker";
+    }>>;
+    ownedBy: z.ZodArray<z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        cid: z.ZodString;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+/**
+ * Market-offer price snapshot for a related (not necessarily owned) product.
+ * Reuses #45 Money (`taxStatus`) — not a parallel Money shape.
+ * Freshness is a display state, not a store guarantee.
+ */
+export declare const MarketOfferPriceSchema: z.ZodObject<{
+    current: z.ZodNullable<z.ZodObject<{
+        amountMinor: z.ZodNumber;
+        currency: z.ZodString;
+        taxStatus: z.ZodEnum<{
+            unknown: "unknown";
+            included: "included";
+            excluded: "excluded";
+        }>;
+    }, z.core.$strict>>;
+    regular: z.ZodNullable<z.ZodObject<{
+        amountMinor: z.ZodNumber;
+        currency: z.ZodString;
+        taxStatus: z.ZodEnum<{
+            unknown: "unknown";
+            included: "included";
+            excluded: "excluded";
+        }>;
+    }, z.core.$strict>>;
+    discountPercent: z.ZodNullable<z.ZodNumber>;
+    saleEndsAt: z.ZodNullable<z.ZodString>;
+    observedAt: z.ZodNullable<z.ZodString>;
+    freshness: z.ZodEnum<{
+        fresh: "fresh";
+        stale: "stale";
+        unavailable: "unavailable";
+    }>;
+}, z.core.$strict>;
+export declare const RelatedProductsSortSchema: z.ZodEnum<{
+    title_asc: "title_asc";
+    relevance: "relevance";
+    price_asc: "price_asc";
+    discount_desc: "discount_desc";
+    sale_ends_asc: "sale_ends_asc";
+}>;
+export declare const RelatedProductsOwnedModeSchema: z.ZodEnum<{
+    exclude: "exclude";
+    mark: "mark";
+}>;
+/**
+ * Query for `GET /api/related-products`.
+ * Anchor is always an owned listing identity (source+cid), never workId.
+ */
+export declare const RelatedProductsQuerySchema: z.ZodObject<{
+    anchorSource: z.ZodEnum<{
+        dlsite: "dlsite";
+        fanza_doujin: "fanza_doujin";
+        fanza_books: "fanza_books";
+        fanza_video: "fanza_video";
+        fanza_dlsoft: "fanza_dlsoft";
+        amazon: "amazon";
+        ebookjapan: "ebookjapan";
+        kobo: "kobo";
+    }>;
+    anchorCid: z.ZodString;
+    owned: z.ZodOptional<z.ZodEnum<{
+        exclude: "exclude";
+        mark: "mark";
+    }>>;
+    sort: z.ZodOptional<z.ZodEnum<{
+        title_asc: "title_asc";
+        relevance: "relevance";
+        price_asc: "price_asc";
+        discount_desc: "discount_desc";
+        sale_ends_asc: "sale_ends_asc";
+    }>>;
+    currency: z.ZodOptional<z.ZodString>;
+    source: z.ZodOptional<z.ZodEnum<{
+        dlsite: "dlsite";
+        fanza_doujin: "fanza_doujin";
+        fanza_books: "fanza_books";
+        fanza_video: "fanza_video";
+        fanza_dlsoft: "fanza_dlsoft";
+        amazon: "amazon";
+        ebookjapan: "ebookjapan";
+        kobo: "kobo";
+    }>>;
+    limit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+    offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
+}, z.core.$strict>;
+export declare const RelatedProductsItemSchema: z.ZodObject<{
+    product: z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        cid: z.ZodString;
+        title: z.ZodString;
+        maker: z.ZodNullable<z.ZodString>;
+        seriesId: z.ZodNullable<z.ZodString>;
+        imageUrl: z.ZodNullable<z.ZodString>;
+        productUrl: z.ZodNullable<z.ZodString>;
+    }, z.core.$strict>;
+    relation: z.ZodObject<{
+        evidence: z.ZodArray<z.ZodObject<{
+            kind: z.ZodEnum<{
+                maker: "maker";
+                author: "author";
+                series: "series";
+                store_related: "store_related";
+            }>;
+            origin: z.ZodEnum<{
+                derived: "derived";
+                store: "store";
+            }>;
+            anchorValue: z.ZodNullable<z.ZodString>;
+            productValue: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>>;
+    }, z.core.$strict>;
+    ownership: z.ZodObject<{
+        status: z.ZodEnum<{
+            owned: "owned";
+            possible_duplicate: "possible_duplicate";
+            not_confirmed: "not_confirmed";
+        }>;
+        matchedBy: z.ZodNullable<z.ZodEnum<{
+            source_cid: "source_cid";
+            title_maker: "title_maker";
+        }>>;
+        ownedBy: z.ZodArray<z.ZodObject<{
+            source: z.ZodEnum<{
+                dlsite: "dlsite";
+                fanza_doujin: "fanza_doujin";
+                fanza_books: "fanza_books";
+                fanza_video: "fanza_video";
+                fanza_dlsoft: "fanza_dlsoft";
+                amazon: "amazon";
+                ebookjapan: "ebookjapan";
+                kobo: "kobo";
+            }>;
+            cid: z.ZodString;
+        }, z.core.$strict>>;
+    }, z.core.$strict>;
+    price: z.ZodObject<{
+        current: z.ZodNullable<z.ZodObject<{
+            amountMinor: z.ZodNumber;
+            currency: z.ZodString;
+            taxStatus: z.ZodEnum<{
+                unknown: "unknown";
+                included: "included";
+                excluded: "excluded";
+            }>;
+        }, z.core.$strict>>;
+        regular: z.ZodNullable<z.ZodObject<{
+            amountMinor: z.ZodNumber;
+            currency: z.ZodString;
+            taxStatus: z.ZodEnum<{
+                unknown: "unknown";
+                included: "included";
+                excluded: "excluded";
+            }>;
+        }, z.core.$strict>>;
+        discountPercent: z.ZodNullable<z.ZodNumber>;
+        saleEndsAt: z.ZodNullable<z.ZodString>;
+        observedAt: z.ZodNullable<z.ZodString>;
+        freshness: z.ZodEnum<{
+            fresh: "fresh";
+            stale: "stale";
+            unavailable: "unavailable";
+        }>;
+    }, z.core.$strict>;
+}, z.core.$strict>;
+export declare const RelatedProductsWarningSchema: z.ZodObject<{
+    source: z.ZodEnum<{
+        dlsite: "dlsite";
+        fanza_doujin: "fanza_doujin";
+        fanza_books: "fanza_books";
+        fanza_video: "fanza_video";
+        fanza_dlsoft: "fanza_dlsoft";
+        amazon: "amazon";
+        ebookjapan: "ebookjapan";
+        kobo: "kobo";
+    }>;
+    code: z.ZodEnum<{
+        stale: "stale";
+        unavailable: "unavailable";
+        unsupported: "unsupported";
+    }>;
+}, z.core.$strict>;
+export declare const RelatedProductsResponseSchema: z.ZodObject<{
+    anchor: z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        cid: z.ZodString;
+    }, z.core.$strict>;
+    generatedAt: z.ZodString;
+    items: z.ZodArray<z.ZodObject<{
+        product: z.ZodObject<{
+            source: z.ZodEnum<{
+                dlsite: "dlsite";
+                fanza_doujin: "fanza_doujin";
+                fanza_books: "fanza_books";
+                fanza_video: "fanza_video";
+                fanza_dlsoft: "fanza_dlsoft";
+                amazon: "amazon";
+                ebookjapan: "ebookjapan";
+                kobo: "kobo";
+            }>;
+            cid: z.ZodString;
+            title: z.ZodString;
+            maker: z.ZodNullable<z.ZodString>;
+            seriesId: z.ZodNullable<z.ZodString>;
+            imageUrl: z.ZodNullable<z.ZodString>;
+            productUrl: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>;
+        relation: z.ZodObject<{
+            evidence: z.ZodArray<z.ZodObject<{
+                kind: z.ZodEnum<{
+                    maker: "maker";
+                    author: "author";
+                    series: "series";
+                    store_related: "store_related";
+                }>;
+                origin: z.ZodEnum<{
+                    derived: "derived";
+                    store: "store";
+                }>;
+                anchorValue: z.ZodNullable<z.ZodString>;
+                productValue: z.ZodNullable<z.ZodString>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>;
+        ownership: z.ZodObject<{
+            status: z.ZodEnum<{
+                owned: "owned";
+                possible_duplicate: "possible_duplicate";
+                not_confirmed: "not_confirmed";
+            }>;
+            matchedBy: z.ZodNullable<z.ZodEnum<{
+                source_cid: "source_cid";
+                title_maker: "title_maker";
+            }>>;
+            ownedBy: z.ZodArray<z.ZodObject<{
+                source: z.ZodEnum<{
+                    dlsite: "dlsite";
+                    fanza_doujin: "fanza_doujin";
+                    fanza_books: "fanza_books";
+                    fanza_video: "fanza_video";
+                    fanza_dlsoft: "fanza_dlsoft";
+                    amazon: "amazon";
+                    ebookjapan: "ebookjapan";
+                    kobo: "kobo";
+                }>;
+                cid: z.ZodString;
+            }, z.core.$strict>>;
+        }, z.core.$strict>;
+        price: z.ZodObject<{
+            current: z.ZodNullable<z.ZodObject<{
+                amountMinor: z.ZodNumber;
+                currency: z.ZodString;
+                taxStatus: z.ZodEnum<{
+                    unknown: "unknown";
+                    included: "included";
+                    excluded: "excluded";
+                }>;
+            }, z.core.$strict>>;
+            regular: z.ZodNullable<z.ZodObject<{
+                amountMinor: z.ZodNumber;
+                currency: z.ZodString;
+                taxStatus: z.ZodEnum<{
+                    unknown: "unknown";
+                    included: "included";
+                    excluded: "excluded";
+                }>;
+            }, z.core.$strict>>;
+            discountPercent: z.ZodNullable<z.ZodNumber>;
+            saleEndsAt: z.ZodNullable<z.ZodString>;
+            observedAt: z.ZodNullable<z.ZodString>;
+            freshness: z.ZodEnum<{
+                fresh: "fresh";
+                stale: "stale";
+                unavailable: "unavailable";
+            }>;
+        }, z.core.$strict>;
+    }, z.core.$strict>>;
+    total: z.ZodNumber;
+    warnings: z.ZodArray<z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        code: z.ZodEnum<{
+            stale: "stale";
+            unavailable: "unavailable";
+            unsupported: "unsupported";
+        }>;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+/**
+ * Synthetic fixture-backed import contract for related edges + market offers.
+ *
+ * This is intentionally NOT a store raw payload shape. Provider relation
+ * payloads are not verified for current sources; real store adapters remain a
+ * human gate. Callers (tests / future verified adapters) must normalize into
+ * this contract before POST.
+ *
+ * Path: `POST /api/import/related`
+ */
+export declare const RelatedImportPriceInputSchema: z.ZodObject<{
+    current: z.ZodNullable<z.ZodObject<{
+        amountMinor: z.ZodNumber;
+        currency: z.ZodString;
+        taxStatus: z.ZodEnum<{
+            unknown: "unknown";
+            included: "included";
+            excluded: "excluded";
+        }>;
+    }, z.core.$strict>>;
+    regular: z.ZodNullable<z.ZodObject<{
+        amountMinor: z.ZodNumber;
+        currency: z.ZodString;
+        taxStatus: z.ZodEnum<{
+            unknown: "unknown";
+            included: "included";
+            excluded: "excluded";
+        }>;
+    }, z.core.$strict>>;
+    discountPercent: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    saleEndsAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+}, z.core.$strict>;
+export declare const RelatedImportItemSchema: z.ZodObject<{
+    product: z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        cid: z.ZodString;
+        title: z.ZodString;
+        maker: z.ZodNullable<z.ZodString>;
+        seriesId: z.ZodNullable<z.ZodString>;
+        imageUrl: z.ZodNullable<z.ZodString>;
+        productUrl: z.ZodNullable<z.ZodString>;
+    }, z.core.$strict>;
+    evidence: z.ZodArray<z.ZodObject<{
+        kind: z.ZodEnum<{
+            maker: "maker";
+            author: "author";
+            series: "series";
+            store_related: "store_related";
+        }>;
+        origin: z.ZodEnum<{
+            derived: "derived";
+            store: "store";
+        }>;
+        anchorValue: z.ZodNullable<z.ZodString>;
+        productValue: z.ZodNullable<z.ZodString>;
+    }, z.core.$strict>>;
+    price: z.ZodObject<{
+        current: z.ZodNullable<z.ZodObject<{
+            amountMinor: z.ZodNumber;
+            currency: z.ZodString;
+            taxStatus: z.ZodEnum<{
+                unknown: "unknown";
+                included: "included";
+                excluded: "excluded";
+            }>;
+        }, z.core.$strict>>;
+        regular: z.ZodNullable<z.ZodObject<{
+            amountMinor: z.ZodNumber;
+            currency: z.ZodString;
+            taxStatus: z.ZodEnum<{
+                unknown: "unknown";
+                included: "included";
+                excluded: "excluded";
+            }>;
+        }, z.core.$strict>>;
+        discountPercent: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        saleEndsAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    }, z.core.$strict>;
+    availability: z.ZodEnum<{
+        unknown: "unknown";
+        unavailable: "unavailable";
+        available: "available";
+    }>;
+}, z.core.$strict>;
+export declare const RelatedImportRequestSchema: z.ZodObject<{
+    contract: z.ZodLiteral<"synthetic_related_v1">;
+    anchor: z.ZodObject<{
+        source: z.ZodEnum<{
+            dlsite: "dlsite";
+            fanza_doujin: "fanza_doujin";
+            fanza_books: "fanza_books";
+            fanza_video: "fanza_video";
+            fanza_dlsoft: "fanza_dlsoft";
+            amazon: "amazon";
+            ebookjapan: "ebookjapan";
+            kobo: "kobo";
+        }>;
+        cid: z.ZodString;
+    }, z.core.$strict>;
+    complete: z.ZodBoolean;
+    items: z.ZodArray<z.ZodObject<{
+        product: z.ZodObject<{
+            source: z.ZodEnum<{
+                dlsite: "dlsite";
+                fanza_doujin: "fanza_doujin";
+                fanza_books: "fanza_books";
+                fanza_video: "fanza_video";
+                fanza_dlsoft: "fanza_dlsoft";
+                amazon: "amazon";
+                ebookjapan: "ebookjapan";
+                kobo: "kobo";
+            }>;
+            cid: z.ZodString;
+            title: z.ZodString;
+            maker: z.ZodNullable<z.ZodString>;
+            seriesId: z.ZodNullable<z.ZodString>;
+            imageUrl: z.ZodNullable<z.ZodString>;
+            productUrl: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>;
+        evidence: z.ZodArray<z.ZodObject<{
+            kind: z.ZodEnum<{
+                maker: "maker";
+                author: "author";
+                series: "series";
+                store_related: "store_related";
+            }>;
+            origin: z.ZodEnum<{
+                derived: "derived";
+                store: "store";
+            }>;
+            anchorValue: z.ZodNullable<z.ZodString>;
+            productValue: z.ZodNullable<z.ZodString>;
+        }, z.core.$strict>>;
+        price: z.ZodObject<{
+            current: z.ZodNullable<z.ZodObject<{
+                amountMinor: z.ZodNumber;
+                currency: z.ZodString;
+                taxStatus: z.ZodEnum<{
+                    unknown: "unknown";
+                    included: "included";
+                    excluded: "excluded";
+                }>;
+            }, z.core.$strict>>;
+            regular: z.ZodNullable<z.ZodObject<{
+                amountMinor: z.ZodNumber;
+                currency: z.ZodString;
+                taxStatus: z.ZodEnum<{
+                    unknown: "unknown";
+                    included: "included";
+                    excluded: "excluded";
+                }>;
+            }, z.core.$strict>>;
+            discountPercent: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            saleEndsAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        }, z.core.$strict>;
+        availability: z.ZodEnum<{
+            unknown: "unknown";
+            unavailable: "unavailable";
+            available: "available";
+        }>;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+export declare const RelatedImportResponseSchema: z.ZodObject<{
+    edgesUpserted: z.ZodNumber;
+    edgesRemoved: z.ZodNumber;
+    offersUpserted: z.ZodNumber;
+}, z.core.$strict>;
 export type LookupItem = z.infer<typeof LookupItemSchema>;
 export type LookupRequest = z.infer<typeof LookupRequestSchema>;
 export type LookupResult = z.infer<typeof LookupResultSchema>;
@@ -888,4 +1469,13 @@ export type PriceObservationRequest = z.infer<typeof PriceObservationRequestSche
 export type PriceObservationResponse = z.infer<typeof PriceObservationResponseSchema>;
 export type ListingsQuery = z.infer<typeof ListingsQuerySchema>;
 export type ListingsResponse = z.infer<typeof ListingsResponseSchema>;
+export type RelationEvidence = z.infer<typeof RelationEvidenceSchema>;
+export type RelatedProduct = z.infer<typeof RelatedProductSchema>;
+export type RelatedOwnership = z.infer<typeof RelatedOwnershipSchema>;
+export type MarketOfferPrice = z.infer<typeof MarketOfferPriceSchema>;
+export type RelatedProductsQuery = z.infer<typeof RelatedProductsQuerySchema>;
+export type RelatedProductsItem = z.infer<typeof RelatedProductsItemSchema>;
+export type RelatedProductsResponse = z.infer<typeof RelatedProductsResponseSchema>;
+export type RelatedImportRequest = z.infer<typeof RelatedImportRequestSchema>;
+export type RelatedImportResponse = z.infer<typeof RelatedImportResponseSchema>;
 //# sourceMappingURL=api.d.ts.map

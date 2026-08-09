@@ -56,6 +56,46 @@ main {
   margin-bottom: 1rem;
 }
 
+.related-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.related-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.related-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.related-table th,
+.related-table td {
+  border-top: 1px solid #e4e4e7;
+  padding: 0.5rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.related-thumb {
+  display: block;
+  max-width: 72px;
+  max-height: 72px;
+  margin-top: 0.35rem;
+  border-radius: 4px;
+}
+
+.related-owned-card {
+  padding: 0.5rem 0;
+}
+
 .filters input,
 .filters select,
 button {

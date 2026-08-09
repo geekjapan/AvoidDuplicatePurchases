@@ -1,0 +1,137 @@
+{
+  "contract": "synthetic_related_v1",
+  "anchor": { "source": "dlsite", "cid": "RJ000001" },
+  "complete": true,
+  "items": [
+    {
+      "product": {
+        "source": "dlsite",
+        "cid": "RJ900101",
+        "title": "合成・同メーカー関連作品",
+        "maker": "合成サークル",
+        "seriesId": null,
+        "imageUrl": null,
+        "productUrl": "https://www.dlsite.com/maniax/work/=/product_id/RJ900101.html"
+      },
+      "evidence": [
+        {
+          "kind": "maker",
+          "origin": "derived",
+          "anchorValue": "合成サークル",
+          "productValue": "合成サークル"
+        }
+      ],
+      "price": {
+        "current": {
+          "amountMinor": 880,
+          "currency": "JPY",
+          "taxStatus": "included"
+        },
+        "regular": {
+          "amountMinor": 1100,
+          "currency": "JPY",
+          "taxStatus": "included"
+        },
+        "discountPercent": 20,
+        "saleEndsAt": "2026-08-20T15:00:00.000Z"
+      },
+      "availability": "available"
+    },
+    {
+      "product": {
+        "source": "fanza_doujin",
+        "cid": "d_rel_sale_1",
+        "title": "合成・ストア関連セール作品",
+        "maker": "別サークル",
+        "seriesId": null,
+        "imageUrl": "https://img.example/related-sale.jpg",
+        "productUrl": "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_rel_sale_1/"
+      },
+      "evidence": [
+        {
+          "kind": "store_related",
+          "origin": "store",
+          "anchorValue": null,
+          "productValue": "この作品を見た人はこちらも"
+        }
+      ],
+      "price": {
+        "current": {
+          "amountMinor": 550,
+          "currency": "JPY",
+          "taxStatus": "unknown"
+        },
+        "regular": {
+          "amountMinor": 1100,
+          "currency": "JPY",
+          "taxStatus": "unknown"
+        },
+        "discountPercent": null,
+        "saleEndsAt": null
+      },
+      "availability": "available"
+    },
+    {
+      "product": {
+        "source": "fanza_books",
+        "cid": "b_rel_stale_1",
+        "title": "合成・シリーズ関連 stale",
+        "maker": "合成著者",
+        "seriesId": "series_syn_1",
+        "imageUrl": null,
+        "productUrl": "https://book.dmm.co.jp/product/123/b_rel_stale_1/"
+      },
+      "evidence": [
+        {
+          "kind": "series",
+          "origin": "store",
+          "anchorValue": "series_syn_1",
+          "productValue": "series_syn_1"
+        },
+        {
+          "kind": "author",
+          "origin": "derived",
+          "anchorValue": "合成著者",
+          "productValue": "合成著者"
+        }
+      ],
+      "price": {
+        "current": {
+          "amountMinor": 990,
+          "currency": "JPY",
+          "taxStatus": "excluded"
+        },
+        "regular": null,
+        "discountPercent": null,
+        "saleEndsAt": null
+      },
+      "availability": "available"
+    },
+    {
+      "product": {
+        "source": "dlsite",
+        "cid": "RJ900404",
+        "title": "合成・価格なし関連",
+        "maker": "合成サークル",
+        "seriesId": null,
+        "imageUrl": null,
+        "productUrl": null
+      },
+      "evidence": [
+        {
+          "kind": "maker",
+          "origin": "derived",
+          "anchorValue": "合成サークル",
+          "productValue": "合成サークル"
+        }
+      ],
+      "price": {
+        "current": null,
+        "regular": null,
+        "discountPercent": null,
+        "saleEndsAt": null
+      },
+      "availability": "unknown"
+    }
+  ]
+}

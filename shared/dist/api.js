@@ -413,4 +413,203 @@ export const ExportRequestSchema = z.object({
 export const ExportResponseSchema = z.object({
     path: NonEmptyString,
 });
+// ---------------------------------------------------------------------------
+// Issue #47: related products / market offer comparison (synthetic contract)
+// ---------------------------------------------------------------------------
+/**
+ * Allowed relation evidence kinds. Title-similarity-only is intentionally
+ * excluded from this union; do not add fuzzy title match here.
+ */
+export const RelationEvidenceKindSchema = z.enum([
+    "maker",
+    "author",
+    "series",
+    "store_related",
+]);
+export const RelationEvidenceOriginSchema = z.enum(["derived", "store"]);
+export const RelationEvidenceSchema = z
+    .object({
+    kind: RelationEvidenceKindSchema,
+    origin: RelationEvidenceOriginSchema,
+    /** Unnormalized display value from the anchor side (nullable when unknown). */
+    anchorValue: z.string().nullable(),
+    /** Unnormalized display value from the candidate side (nullable when unknown). */
+    productValue: z.string().nullable(),
+})
+    .strict()
+    .superRefine((evidence, ctx) => {
+    if (evidence.kind === "store_related" && evidence.origin !== "store") {
+        ctx.addIssue({
+            code: "custom",
+            path: ["origin"],
+            message: "store_related evidence must use origin=store",
+        });
+    }
+    if ((evidence.kind === "maker" ||
+        evidence.kind === "author" ||
+        evidence.kind === "series") &&
+        evidence.origin === "store") {
+        // Store may also surface maker/author/series labels; derived remains default
+        // but store origin is allowed only when the store explicitly asserts the link.
+        // No extra issue — both origins are valid for structured identity fields.
+    }
+});
+/** Unowned related product metadata. Never carries listing ownership fields. */
+export const RelatedProductSchema = z
+    .object({
+    source: SourceSchema,
+    cid: NonEmptyString,
+    title: NonEmptyString,
+    maker: z.string().nullable(),
+    seriesId: z.string().nullable(),
+    imageUrl: AbsoluteHttpUrl.nullable(),
+    productUrl: AbsoluteHttpsUrl.nullable(),
+})
+    .strict();
+export const OwnershipStatusSchema = z.enum([
+    "owned",
+    "possible_duplicate",
+    "not_confirmed",
+]);
+export const OwnershipMatchedBySchema = z.enum(["source_cid", "title_maker"]);
+export const ProductIdentitySchema = z
+    .object({
+    source: SourceSchema,
+    cid: NonEmptyString,
+})
+    .strict();
+export const RelatedOwnershipSchema = z
+    .object({
+    status: OwnershipStatusSchema,
+    matchedBy: OwnershipMatchedBySchema.nullable(),
+    ownedBy: z.array(ProductIdentitySchema),
+})
+    .strict();
+/**
+ * Market-offer price snapshot for a related (not necessarily owned) product.
+ * Reuses #45 Money (`taxStatus`) — not a parallel Money shape.
+ * Freshness is a display state, not a store guarantee.
+ */
+export const MarketOfferPriceSchema = z
+    .object({
+    current: MoneySchema.nullable(),
+    regular: MoneySchema.nullable(),
+    /** 0..100 with at most 2 decimal places; null when not evidenced. */
+    discountPercent: z
+        .number()
+        .min(0)
+        .max(100)
+        .refine((n) => Number.isFinite(n) && Math.round(n * 100) === n * 100, { message: "discountPercent must have at most 2 decimal places" })
+        .nullable(),
+    /** Source-explicit sale end only; never inferred from observedAt/TTL. */
+    saleEndsAt: z.string().datetime().nullable(),
+    /** Server receipt time of the successful price facts snapshot. */
+    observedAt: z.string().datetime().nullable(),
+    freshness: z.enum(["fresh", "stale", "unavailable"]),
+})
+    .strict();
+export const RelatedProductsSortSchema = z.enum([
+    "relevance",
+    "price_asc",
+    "discount_desc",
+    "sale_ends_asc",
+    "title_asc",
+]);
+export const RelatedProductsOwnedModeSchema = z.enum(["exclude", "mark"]);
+/**
+ * Query for `GET /api/related-products`.
+ * Anchor is always an owned listing identity (source+cid), never workId.
+ */
+export const RelatedProductsQuerySchema = z
+    .object({
+    anchorSource: SourceSchema,
+    anchorCid: NonEmptyString,
+    owned: RelatedProductsOwnedModeSchema.optional(),
+    sort: RelatedProductsSortSchema.optional(),
+    currency: z
+        .string()
+        .regex(/^[A-Z]{3}$/)
+        .optional(),
+    source: SourceSchema.optional(),
+    limit: z.coerce.number().int().positive().max(500).optional(),
+    offset: z.coerce.number().int().nonnegative().optional(),
+})
+    .strict();
+export const RelatedProductsItemSchema = z
+    .object({
+    product: RelatedProductSchema,
+    relation: z
+        .object({
+        evidence: z.array(RelationEvidenceSchema).min(1),
+    })
+        .strict(),
+    ownership: RelatedOwnershipSchema,
+    price: MarketOfferPriceSchema,
+})
+    .strict();
+export const RelatedProductsWarningSchema = z
+    .object({
+    source: SourceSchema,
+    code: z.enum(["unsupported", "stale", "unavailable"]),
+})
+    .strict();
+export const RelatedProductsResponseSchema = z
+    .object({
+    anchor: ProductIdentitySchema,
+    generatedAt: z.string().datetime(),
+    items: z.array(RelatedProductsItemSchema),
+    total: z.number().int().nonnegative(),
+    warnings: z.array(RelatedProductsWarningSchema),
+})
+    .strict();
+/**
+ * Synthetic fixture-backed import contract for related edges + market offers.
+ *
+ * This is intentionally NOT a store raw payload shape. Provider relation
+ * payloads are not verified for current sources; real store adapters remain a
+ * human gate. Callers (tests / future verified adapters) must normalize into
+ * this contract before POST.
+ *
+ * Path: `POST /api/import/related`
+ */
+export const RelatedImportPriceInputSchema = z
+    .object({
+    current: MoneySchema.nullable(),
+    regular: MoneySchema.nullable(),
+    /** Only when the source explicitly states a discount; otherwise omit/null. */
+    discountPercent: z
+        .number()
+        .min(0)
+        .max(100)
+        .refine((n) => Number.isFinite(n) && Math.round(n * 100) === n * 100, { message: "discountPercent must have at most 2 decimal places" })
+        .nullable()
+        .optional(),
+    /** Only when the source explicitly states a sale end instant. */
+    saleEndsAt: z.string().datetime().nullable().optional(),
+})
+    .strict();
+export const RelatedImportItemSchema = z
+    .object({
+    product: RelatedProductSchema,
+    evidence: z.array(RelationEvidenceSchema).min(1),
+    price: RelatedImportPriceInputSchema,
+    availability: z.enum(["available", "unavailable", "unknown"]),
+})
+    .strict();
+export const RelatedImportRequestSchema = z
+    .object({
+    /** Fixed marker so this contract is never mistaken for a store raw payload. */
+    contract: z.literal("synthetic_related_v1"),
+    anchor: ProductIdentitySchema,
+    complete: z.boolean(),
+    items: z.array(RelatedImportItemSchema).max(500),
+})
+    .strict();
+export const RelatedImportResponseSchema = z
+    .object({
+    edgesUpserted: z.number().int().nonnegative(),
+    edgesRemoved: z.number().int().nonnegative(),
+    offersUpserted: z.number().int().nonnegative(),
+})
+    .strict();
 //# sourceMappingURL=api.js.map
