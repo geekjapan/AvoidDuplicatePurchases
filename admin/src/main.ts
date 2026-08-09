@@ -15,6 +15,7 @@ app.append(header, main);
 const links: Record<AdminRoute, HTMLAnchorElement> = {
   library: document.createElement("a"),
   related: document.createElement("a"),
+  "price-comparison": document.createElement("a"),
   candidates: document.createElement("a"),
   sync: document.createElement("a"),
   settings: document.createElement("a"),
@@ -24,6 +25,8 @@ links.library.href = routePath("library");
 links.library.textContent = "ライブラリ";
 links.related.href = routePath("related");
 links.related.textContent = "関連比較";
+links["price-comparison"].href = routePath("price-comparison");
+links["price-comparison"].textContent = "価格比較";
 links.candidates.href = routePath("candidates");
 links.candidates.textContent = "候補キュー";
 links.sync.href = routePath("sync");
@@ -33,6 +36,7 @@ links.settings.textContent = "設定";
 nav.append(
   links.library,
   links.related,
+  links["price-comparison"],
   links.candidates,
   links.sync,
   links.settings,

@@ -96,6 +96,54 @@ main {
   padding: 0.5rem 0;
 }
 
+.price-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.price-comparison-table th,
+.price-comparison-table td {
+  border-top: 1px solid #e4e4e7;
+  padding: 0.5rem;
+  vertical-align: top;
+  text-align: left;
+}
+
+.price-comparison-store {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #3f3f46;
+  margin-bottom: 0.15rem;
+}
+
+.price-comparison-summaries {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  background: #fafafa;
+  border-top: 1px solid #e4e4e7;
+  font-size: 0.9rem;
+}
+
+.price-comparison-tier-summary.status-lowest {
+  color: #15803d;
+}
+
+.price-comparison-tier-summary.status-incomparable {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.price-comparison-tier-summary.status-insufficient {
+  color: #71717a;
+}
+
+.price-comparison-work header {
+  background: #f4f4f5;
+  color: #18181b;
+}
+
 .filters input,
 .filters select,
 button {
