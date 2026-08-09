@@ -1,5 +1,8 @@
 import { boot as bootCart } from "./cart/doujin-cart.js";
+import { isCartInterventionPage } from "./cart/page-kind.js";
+import { fetchDoujinCartCids } from "./cart/parse-doujin.js";
 import { classifyDisplayPage } from "./page-kind.js";
+import { isPurchaseProgressPage, runPurchaseProgressPage } from "./purchase-gate/index.js";
 import { runListingPage } from "./listing-page.js";
 import { runProductPage } from "./product-page.js";
 
@@ -13,8 +16,17 @@ export function boot(pathname: string = window.location.pathname): void {
     void runListingPage("fanza_doujin");
     return;
   }
-  // basket: T-CART; library / history / unrecognized: no-op
-  bootCart(pathname);
+  if (isCartInterventionPage("fanza_doujin", pathname)) {
+    bootCart(pathname);
+    return;
+  }
+  if (isPurchaseProgressPage("fanza_doujin", pathname)) {
+    void runPurchaseProgressPage("fanza_doujin", document, {
+      loadCartCids: () => fetchDoujinCartCids(),
+    });
+    return;
+  }
+  // library / history / unrecognized: no-op
 }
 
 if (document.readyState === "loading") {

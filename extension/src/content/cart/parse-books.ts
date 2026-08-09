@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CartRow } from "./types.js";
+import type { CartCidLoadResult, CartRow } from "./types.js";
 
 const PRODUCT_IDS_URL = "https://book.dmm.co.jp/ajax/bff/basket_product_ids/";
 
@@ -79,5 +79,32 @@ export async function fetchBooksCartRows(
   } catch {
     // Network rejection or unexpected throw: silent empty (no banner / no rethrow).
     return [];
+  }
+}
+
+/**
+ * Cids only (no DOM host matching). Used on purchase-progression pages where
+ * basket row hosts may be absent.
+ */
+export async function fetchBooksCartCids(
+  fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<CartCidLoadResult> {
+  try {
+    const response = await fetchFn(PRODUCT_IDS_URL, {
+      credentials: "include",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return { status: "unavailable" };
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { status: "unavailable" };
+    }
+    const parsed = BooksProductIdsPayloadSchema.safeParse(payload);
+    if (!parsed.success) return { status: "unavailable" };
+    return parsed.data.product_ids.map((id) => id.trim()).filter(Boolean);
+  } catch {
+    return { status: "unavailable" };
   }
 }

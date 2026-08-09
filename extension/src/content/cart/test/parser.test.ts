@@ -7,10 +7,12 @@ import { describe, it } from "node:test";
 import { buildCartFixtureDocument } from "./build-cart-fixture.js";
 import { parseDlsiteCartRows } from "../parse-dlsite.js";
 import {
+  fetchDoujinCartCids,
   fetchDoujinCartRows,
   parseDoujinCartRowsFromPayload,
 } from "../parse-doujin.js";
 import {
+  fetchBooksCartCids,
   fetchBooksCartRows,
   parseBooksCartRowsFromPayload,
 } from "../parse-books.js";
@@ -399,5 +401,22 @@ describe("cart row parsers", () => {
         }) as unknown as Response,
     );
     assert.deepEqual(badSchema, []);
+  });
+
+  it("distinguishes unavailable live baskets from valid empty baskets", async () => {
+    const unavailable = async () => {
+      throw new Error("network down");
+    };
+    assert.deepEqual(await fetchDoujinCartCids(unavailable), { status: "unavailable" });
+    assert.deepEqual(await fetchBooksCartCids(unavailable), { status: "unavailable" });
+
+    const emptyDoujin = await fetchDoujinCartCids(
+      async () => ({ ok: true, json: async () => ({ data: [] }) }) as Response,
+    );
+    const emptyBooks = await fetchBooksCartCids(
+      async () => ({ ok: true, json: async () => ({ product_ids: [] }) }) as Response,
+    );
+    assert.deepEqual(emptyDoujin, []);
+    assert.deepEqual(emptyBooks, []);
   });
 });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CartRow } from "./types.js";
+import type { CartCidLoadResult, CartRow } from "./types.js";
 
 const BASKETS_URL = "https://www.dmm.co.jp/dc/doujin/api/baskets/";
 
@@ -114,5 +114,32 @@ export async function fetchDoujinCartRows(
   } catch {
     // Network rejection or unexpected throw: silent empty (no banner / no rethrow).
     return [];
+  }
+}
+
+/**
+ * Cids only (no DOM host matching). Used on purchase-progression pages where
+ * basket row hosts may be absent.
+ */
+export async function fetchDoujinCartCids(
+  fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<CartCidLoadResult> {
+  try {
+    const response = await fetchFn(BASKETS_URL, {
+      credentials: "include",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return { status: "unavailable" };
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return { status: "unavailable" };
+    }
+    const parsed = DoujinBasketPayloadSchema.safeParse(payload);
+    if (!parsed.success) return { status: "unavailable" };
+    return parsed.data.data.map((item) => item.content_id);
+  } catch {
+    return { status: "unavailable" };
   }
 }

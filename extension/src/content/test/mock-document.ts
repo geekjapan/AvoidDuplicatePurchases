@@ -106,7 +106,18 @@ export class MockElement {
   }
 
   hasAttribute(name: string): boolean {
+    if (name === "disabled") return this.attributes.has("disabled");
+    if (name === "href") return Boolean(this.href) || this.attributes.has("href");
+    if (name === "class") return Boolean(this.className) || this.attributes.has("class");
+    if (name === "id") return Boolean(this.id) || this.attributes.has("id");
     return this.attributes.has(name);
+  }
+
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+    if (name === "href") this.href = "";
+    if (name === "class") this.className = "";
+    if (name === "id") this.id = "";
   }
 
   private adoptDocument(ownerDocument: MockDocument): void {
@@ -128,6 +139,52 @@ export class MockElement {
     element.parent = this;
     if (this.ownerDocument) element.adoptDocument(this.ownerDocument);
     return element;
+  }
+
+  removeChild(child: MockElement | MockTextNode): MockElement | MockTextNode {
+    this.children = this.children.filter((c) => c !== child);
+    this.childNodes = this.childNodes.filter((c) => c !== child);
+    if (child instanceof MockElement || child instanceof MockTextNode) {
+      child.parent = null;
+    }
+    return child;
+  }
+
+  remove(): void {
+    this.parent?.removeChild(this);
+  }
+
+  get disabled(): boolean {
+    return this.hasAttribute("disabled");
+  }
+
+  set disabled(value: boolean) {
+    if (value) this.setAttribute("disabled", "disabled");
+    else {
+      this.attributes.delete("disabled");
+    }
+  }
+
+  addEventListener(
+    _type: string,
+    _listener: EventListenerOrEventListenerObject,
+    _options?: boolean | AddEventListenerOptions,
+  ): void {
+    void _type;
+    void _listener;
+    void _options;
+    // Capture listeners are not fully simulated; onclick path is used in tests.
+  }
+
+  removeEventListener(
+    _type: string,
+    _listener: EventListenerOrEventListenerObject,
+    _options?: boolean | EventListenerOptions,
+  ): void {
+    void _type;
+    void _listener;
+    void _options;
+    // no-op
   }
 
   matchesSelector(selector: string): boolean {
@@ -381,12 +438,80 @@ export function parseFixtureDocument(html: string, pageUrl: string): MockDocumen
   if (html.includes('class="work_buy"')) {
     const buy = doc.createElement("div");
     buy.className = "work_buy";
+    // Prefer explicit buttons inside work_buy when present in fixture HTML.
+    const workBuyBlock =
+      /class="work_buy"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+    for (const btn of workBuyBlock.matchAll(
+      /<button([^>]*)>([^<]*)<\/button>/gi,
+    )) {
+      const button = doc.createElement("button");
+      button.setAttribute("type", "button");
+      const attrs = btn[1] ?? "";
+      const cta = /data-adp-purchase-cta="([^"]+)"/.exec(attrs)?.[1];
+      if (cta) button.setAttribute("data-adp-purchase-cta", cta);
+      button.textContent = (btn[2] ?? "").trim();
+      buy.appendChild(button);
+    }
+    if (buy.children.length === 0) {
+      const fallback = doc.createElement("button");
+      fallback.setAttribute("type", "button");
+      fallback.textContent = "カートに入れる";
+      buy.appendChild(fallback);
+    }
     doc.body.appendChild(buy);
   }
   if (html.includes('class="m-productPurchase"')) {
     const buy = doc.createElement("div");
     buy.className = "m-productPurchase";
+    const block =
+      /class="m-productPurchase"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? "";
+    for (const btn of block.matchAll(/<button([^>]*)>([^<]*)<\/button>/gi)) {
+      const button = doc.createElement("button");
+      button.setAttribute("type", "button");
+      const attrs = btn[1] ?? "";
+      const cta = /data-adp-purchase-cta="([^"]+)"/.exec(attrs)?.[1];
+      if (cta) button.setAttribute("data-adp-purchase-cta", cta);
+      button.textContent = (btn[2] ?? "").trim();
+      buy.appendChild(button);
+    }
+    if (buy.children.length === 0) {
+      const button = doc.createElement("button");
+      button.setAttribute("type", "button");
+      button.textContent = "購入する";
+      buy.appendChild(button);
+    }
     doc.body.appendChild(buy);
+  }
+
+  // Standalone purchase CTAs (cart progress / checkout) outside product blocks.
+  for (const match of html.matchAll(
+    /<(button|a)([^>]*data-adp-purchase-cta="([^"]+)"[^>]*)>([^<]*)<\/\1>/gi,
+  )) {
+    const tag = match[1]!.toLowerCase();
+    // Skip if already captured under work_buy / m-productPurchase via nested parse.
+    const already = doc.body.querySelectorAll(`[data-adp-purchase-cta="${match[3]}"]`);
+    // Always allow multiple CTAs of same role; only skip exact text+role dups later if needed.
+    void already;
+    const el = doc.createElement(tag);
+    if (tag === "button") el.setAttribute("type", "button");
+    el.setAttribute("data-adp-purchase-cta", match[3]!);
+    el.textContent = (match[4] ?? "").trim();
+    // Avoid double-appending buttons already nested under work_buy / purchase blocks.
+    const nestedInKnown =
+      /class="(?:work_buy|m-productPurchase)"[^>]*>[\s\S]*?data-adp-purchase-cta="/.test(
+        html,
+      ) &&
+      (match[3] === "immediate-buy" || match[3] === "cart-add");
+    if (nestedInKnown && (match[3] === "immediate-buy" || match[3] === "cart-add")) {
+      // If the CTA appears inside product blocks, the block parsers above own it.
+      const insideProduct =
+        html.includes('class="work_buy"') || html.includes('class="m-productPurchase"');
+      if (insideProduct && /work_buy|m-productPurchase/.test(html.slice(0, html.indexOf(match[0]!)))) {
+        // Heuristic: product fixtures — skip top-level re-append for product CTAs.
+        continue;
+      }
+    }
+    doc.body.appendChild(el);
   }
 
   // Preserve listing image/container hierarchy used by overlay host selection.
