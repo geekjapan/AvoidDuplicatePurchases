@@ -18,12 +18,20 @@ const LIBRARY_ERROR_MESSAGES: Record<string, string> = {
   library_login_required: "ログインが必要です（ライブラリ画面に到達できませんでした）",
   library_reader_unregistered: "ライブラリ読み取り機能が未登録です",
   library_batch_too_large: "1ページの件数が上限を超えました",
+  library_page_url_invalid: "ライブラリページのURLが不正です",
+  library_max_pages_exceeded: "ページ数が上限を超えました",
+  library_rematch_failed: "蔵書の再突合に失敗しました",
+  library_mark_synced_failed: "同期完了の記録に失敗しました",
+  protocol: "サーバー応答の形式が不正です",
   network: "ローカルサーバーに接続できません",
 };
 
+const GENERIC_LIBRARY_SYNC_FAILURE = "同期に失敗しました";
+
 export function librarySyncError(error: string | undefined): string {
-  if (!error) return "同期に失敗しました";
-  return LIBRARY_ERROR_MESSAGES[error] ?? error;
+  if (!error) return GENERIC_LIBRARY_SYNC_FAILURE;
+  // Fail-closed: never surface raw internal codes to the popup UI.
+  return LIBRARY_ERROR_MESSAGES[error] ?? GENERIC_LIBRARY_SYNC_FAILURE;
 }
 
 /** Map a thrown chrome.runtime transport failure to a local popup message. */
