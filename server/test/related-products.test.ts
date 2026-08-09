@@ -229,6 +229,53 @@ describe("related products import + query service", () => {
     assert.equal(result.error, "invalid_request");
   });
 
+  it("rejects DLsite case-variant owned cid as market offer", () => {
+    // Owned listing is RJ000001 (canonical upper). Import must normalize
+    // lowercase/variant cids before owned rejection so ownership separation holds.
+    const req = loadSyntheticImport();
+    req.items = [
+      {
+        product: {
+          source: "dlsite",
+          cid: "rj000001",
+          title: "アンカー自身（大小文字ゆれ）",
+          maker: "合成サークル",
+          seriesId: null,
+          imageUrl: null,
+          productUrl: null,
+        },
+        evidence: [
+          {
+            kind: "maker",
+            origin: "derived",
+            anchorValue: "合成サークル",
+            productValue: "合成サークル",
+          },
+        ],
+        price: { current: null, regular: null },
+        availability: "unknown",
+      },
+    ];
+    const result = importRelatedProducts(db, req);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.error, "invalid_request");
+
+    const nonCanonicalOffer = db
+      .prepare(
+        `SELECT 1 FROM market_offer WHERE source = 'dlsite' AND cid = 'rj000001'`,
+      )
+      .get();
+    assert.equal(nonCanonicalOffer, undefined);
+    const edges = db
+      .prepare(
+        `SELECT 1 FROM related_edge
+         WHERE product_source = 'dlsite' AND product_cid = 'rj000001'`,
+      )
+      .get();
+    assert.equal(edges, undefined);
+  });
+
   it("returns relation evidence, price states, and owned exclusion", () => {
     // Re-import with controlled observation times.
     const base = loadSyntheticImport();

@@ -16,7 +16,7 @@ or expand Amazon / ebookjapan / Kobo (#43/#44/#46).
 | Persistence | `related_edge` + `market_offer`; never writes unowned candidates into `listing` | `server/migrations/005_related_sales.sql` |
 | Import boundary | `POST /api/import/related` accepts **only** `contract: "synthetic_related_v1"` normalized items. Raw store payloads are rejected | `server/src/routes/related-products.ts`, `server/test/related-products.test.ts` |
 | Read API | `GET /api/related-products` with anchor source+cid, `owned=exclude\|mark`, sort/filter/paging | same |
-| Ownership | `owned` via `(source,cid)`; `possible_duplicate` via exact title+maker (lookup rule); default exclude | `server/src/services/related-products.ts` |
+| Ownership | `owned` via canonical `(source,cid)` (`normalizeCid` on import product cid before owned/self guards and market_offer writes); `possible_duplicate` via exact title+maker (lookup rule); default exclude | `server/src/services/related-products.ts` |
 | Price snapshot | `current` / `regular` nullable Money; `discountPercent` only explicit or same currency+taxStatus derivation; `saleEndsAt` only when explicit; freshness `fresh`/`stale`/`unavailable` (24h TTL) | helpers + tests |
 | Admin UI | Separate「関連比較」page; owned anchor card never mixed into related table; sale/stale/null display | `admin/src/pages/related.ts`, `admin/test/related-display.test.ts` |
 | #42/#45 integration | Existing listings + priceObservation surfaces unchanged | server test still hits `GET /api/listings` |

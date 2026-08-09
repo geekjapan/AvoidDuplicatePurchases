@@ -2,6 +2,7 @@ import {
   MarketOfferPriceSchema,
   MoneySchema,
   RelatedProductsResponseSchema,
+  RelationEvidenceSchema,
   makerMatchKey,
   normalizeCid,
   titleMatchKey,
@@ -262,16 +263,9 @@ function resolveOwnership(
 
 function parseEvidenceJson(raw: string): RelationEvidence | null {
   try {
-    const parsed = JSON.parse(raw) as RelationEvidence;
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      !("kind" in parsed) ||
-      !("origin" in parsed)
-    ) {
-      return null;
-    }
-    return parsed;
+    const parsed: unknown = JSON.parse(raw);
+    const result = RelationEvidenceSchema.safeParse(parsed);
+    return result.success ? result.data : null;
   } catch {
     return null;
   }
@@ -390,8 +384,18 @@ export function importRelatedProducts(
   const anchorSource = anchor.source;
   const anchorCid = anchor.cid;
 
+  // Canonicalize product cids at the import boundary so self/owned guards and
+  // related_edge/market_offer writes share listing identity conventions (DLsite upper).
+  const items = request.items.map((item) => ({
+    ...item,
+    product: {
+      ...item.product,
+      cid: normalizeCid(item.product.source, item.product.cid),
+    },
+  }));
+
   // Reject items that would re-register the anchor itself as a related offer.
-  for (const item of request.items) {
+  for (const item of items) {
     if (item.product.source === anchorSource && item.product.cid === anchorCid) {
       return { ok: false, error: "invalid_request" };
     }
@@ -428,7 +432,7 @@ export function importRelatedProducts(
       }>;
 
       const keep = new Set<string>();
-      for (const item of request.items) {
+      for (const item of items) {
         for (const evidence of item.evidence) {
           keep.add(
             productKey(item.product.source, item.product.cid) + "\0" + evidence.kind,
@@ -505,7 +509,7 @@ export function importRelatedProducts(
          imported_at = excluded.imported_at`,
     );
 
-    for (const item of request.items) {
+    for (const item of items) {
       for (const evidence of item.evidence) {
         upsertEdge.run(
           anchorSource,
