@@ -98,7 +98,7 @@ describe("DOM library-sync import", () => {
 
   it("migrates listing to accept the three new sources and adds library_observation", () => {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-    assert.equal(version.user_version, 4);
+    assert.equal(version.user_version, 5);
     const check = (
       db
         .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='listing'")

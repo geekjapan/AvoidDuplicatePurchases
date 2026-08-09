@@ -1362,7 +1362,7 @@ function issue(...args) {
 function cleanEnum(obj) {
   return Object.entries(obj).filter(([k, _]) => {
     return Number.isNaN(Number.parseInt(k, 10));
-  }).map((el5) => el5[1]);
+  }).map((el6) => el6[1]);
 }
 function base64ToUint8Array(base643) {
   const binaryString = atob(base643);
@@ -1456,15 +1456,15 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
           let curr = fieldErrors;
           let i = 0;
           while (i < fullpath.length) {
-            const el5 = fullpath[i];
+            const el6 = fullpath[i];
             const terminal = i === fullpath.length - 1;
             if (!terminal) {
-              curr[el5] = curr[el5] || { _errors: [] };
+              curr[el6] = curr[el6] || { _errors: [] };
             } else {
-              curr[el5] = curr[el5] || { _errors: [] };
-              curr[el5]._errors.push(mapper(issue2));
+              curr[el6] = curr[el6] || { _errors: [] };
+              curr[el6]._errors.push(mapper(issue2));
             }
-            curr = curr[el5];
+            curr = curr[el6];
             i++;
           }
         }
@@ -1494,16 +1494,16 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
         let curr = result;
         let i = 0;
         while (i < fullpath.length) {
-          const el5 = fullpath[i];
+          const el6 = fullpath[i];
           const terminal = i === fullpath.length - 1;
-          if (typeof el5 === "string") {
+          if (typeof el6 === "string") {
             curr.properties ?? (curr.properties = {});
-            (_a3 = curr.properties)[el5] ?? (_a3[el5] = { errors: [] });
-            curr = curr.properties[el5];
+            (_a3 = curr.properties)[el6] ?? (_a3[el6] = { errors: [] });
+            curr = curr.properties[el6];
           } else {
             curr.items ?? (curr.items = []);
-            (_b = curr.items)[el5] ?? (_b[el5] = { errors: [] });
-            curr = curr.items[el5];
+            (_b = curr.items)[el6] ?? (_b[el6] = { errors: [] });
+            curr = curr.items[el6];
           }
           if (terminal) {
             curr.errors.push(mapper(issue2));
@@ -3168,10 +3168,10 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const proms = [];
     const shape = value.shape;
     for (const key2 of value.keys) {
-      const el5 = shape[key2];
-      const isOptionalIn = el5._zod.optin === "optional";
-      const isOptionalOut = el5._zod.optout === "optional";
-      const r = el5._zod.run({ value: input[key2], issues: [] }, ctx);
+      const el6 = shape[key2];
+      const isOptionalIn = el6._zod.optin === "optional";
+      const isOptionalOut = el6._zod.optout === "optional";
+      const r = el6._zod.run({ value: input[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
         proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input, isOptionalIn, isOptionalOut)));
       } else {
@@ -3649,9 +3649,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     if (def.rest) {
       let i = items.length - 1;
       const rest = input.slice(items.length);
-      for (const el5 of rest) {
+      for (const el6 of rest) {
         i++;
-        const result = def.rest._zod.run({ value: el5, issues: [] }, ctx);
+        const result = def.rest._zod.run({ value: el6, issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((r) => handleTupleResult(r, payload, i)));
         } else {
@@ -14917,6 +14917,129 @@ var ExportRequestSchema = external_exports.object({
 var ExportResponseSchema = external_exports.object({
   path: NonEmptyString
 });
+var RelationEvidenceKindSchema = external_exports.enum([
+  "maker",
+  "author",
+  "series",
+  "store_related"
+]);
+var RelationEvidenceOriginSchema = external_exports.enum(["derived", "store"]);
+var RelationEvidenceSchema = external_exports.object({
+  kind: RelationEvidenceKindSchema,
+  origin: RelationEvidenceOriginSchema,
+  /** Unnormalized display value from the anchor side (nullable when unknown). */
+  anchorValue: external_exports.string().nullable(),
+  /** Unnormalized display value from the candidate side (nullable when unknown). */
+  productValue: external_exports.string().nullable()
+}).strict().superRefine((evidence, ctx) => {
+  if (evidence.kind === "store_related" && evidence.origin !== "store") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["origin"],
+      message: "store_related evidence must use origin=store"
+    });
+  }
+  if ((evidence.kind === "maker" || evidence.kind === "author" || evidence.kind === "series") && evidence.origin === "store") {
+  }
+});
+var RelatedProductSchema = external_exports.object({
+  source: SourceSchema,
+  cid: NonEmptyString,
+  title: NonEmptyString,
+  maker: external_exports.string().nullable(),
+  seriesId: external_exports.string().nullable(),
+  imageUrl: AbsoluteHttpUrl.nullable(),
+  productUrl: AbsoluteHttpsUrl.nullable()
+}).strict();
+var OwnershipStatusSchema = external_exports.enum([
+  "owned",
+  "possible_duplicate",
+  "not_confirmed"
+]);
+var OwnershipMatchedBySchema = external_exports.enum(["source_cid", "title_maker"]);
+var ProductIdentitySchema = external_exports.object({
+  source: SourceSchema,
+  cid: NonEmptyString
+}).strict();
+var RelatedOwnershipSchema = external_exports.object({
+  status: OwnershipStatusSchema,
+  matchedBy: OwnershipMatchedBySchema.nullable(),
+  ownedBy: external_exports.array(ProductIdentitySchema)
+}).strict();
+var MarketOfferPriceSchema = external_exports.object({
+  current: MoneySchema.nullable(),
+  regular: MoneySchema.nullable(),
+  /** 0..100 with at most 2 decimal places; null when not evidenced. */
+  discountPercent: external_exports.number().min(0).max(100).refine((n) => Number.isFinite(n) && Math.round(n * 100) === n * 100, { message: "discountPercent must have at most 2 decimal places" }).nullable(),
+  /** Source-explicit sale end only; never inferred from observedAt/TTL. */
+  saleEndsAt: external_exports.string().datetime().nullable(),
+  /** Server receipt time of the successful price facts snapshot. */
+  observedAt: external_exports.string().datetime().nullable(),
+  freshness: external_exports.enum(["fresh", "stale", "unavailable"])
+}).strict();
+var RelatedProductsSortSchema = external_exports.enum([
+  "relevance",
+  "price_asc",
+  "discount_desc",
+  "sale_ends_asc",
+  "title_asc"
+]);
+var RelatedProductsOwnedModeSchema = external_exports.enum(["exclude", "mark"]);
+var RelatedProductsQuerySchema = external_exports.object({
+  anchorSource: SourceSchema,
+  anchorCid: NonEmptyString,
+  owned: RelatedProductsOwnedModeSchema.optional(),
+  sort: RelatedProductsSortSchema.optional(),
+  currency: external_exports.string().regex(/^[A-Z]{3}$/).optional(),
+  source: SourceSchema.optional(),
+  limit: external_exports.coerce.number().int().positive().max(500).optional(),
+  offset: external_exports.coerce.number().int().nonnegative().optional()
+}).strict();
+var RelatedProductsItemSchema = external_exports.object({
+  product: RelatedProductSchema,
+  relation: external_exports.object({
+    evidence: external_exports.array(RelationEvidenceSchema).min(1)
+  }).strict(),
+  ownership: RelatedOwnershipSchema,
+  price: MarketOfferPriceSchema
+}).strict();
+var RelatedProductsWarningSchema = external_exports.object({
+  source: SourceSchema,
+  code: external_exports.enum(["unsupported", "stale", "unavailable"])
+}).strict();
+var RelatedProductsResponseSchema = external_exports.object({
+  anchor: ProductIdentitySchema,
+  generatedAt: external_exports.string().datetime(),
+  items: external_exports.array(RelatedProductsItemSchema),
+  total: external_exports.number().int().nonnegative(),
+  warnings: external_exports.array(RelatedProductsWarningSchema)
+}).strict();
+var RelatedImportPriceInputSchema = external_exports.object({
+  current: MoneySchema.nullable(),
+  regular: MoneySchema.nullable(),
+  /** Only when the source explicitly states a discount; otherwise omit/null. */
+  discountPercent: external_exports.number().min(0).max(100).refine((n) => Number.isFinite(n) && Math.round(n * 100) === n * 100, { message: "discountPercent must have at most 2 decimal places" }).nullable().optional(),
+  /** Only when the source explicitly states a sale end instant. */
+  saleEndsAt: external_exports.string().datetime().nullable().optional()
+}).strict();
+var RelatedImportItemSchema = external_exports.object({
+  product: RelatedProductSchema,
+  evidence: external_exports.array(RelationEvidenceSchema).min(1),
+  price: RelatedImportPriceInputSchema,
+  availability: external_exports.enum(["available", "unavailable", "unknown"])
+}).strict();
+var RelatedImportRequestSchema = external_exports.object({
+  /** Fixed marker so this contract is never mistaken for a store raw payload. */
+  contract: external_exports.literal("synthetic_related_v1"),
+  anchor: ProductIdentitySchema,
+  complete: external_exports.boolean(),
+  items: external_exports.array(RelatedImportItemSchema).max(500)
+}).strict();
+var RelatedImportResponseSchema = external_exports.object({
+  edgesUpserted: external_exports.number().int().nonnegative(),
+  edgesRemoved: external_exports.number().int().nonnegative(),
+  offersUpserted: external_exports.number().int().nonnegative()
+}).strict();
 
 // src/api.ts
 async function apiFetch(path, options = {}) {
@@ -14994,6 +15117,20 @@ async function assignWork(source, cid, options) {
       parse: (v) => WorkAssignmentResponseSchema.parse(v)
     }
   );
+}
+async function fetchRelatedProducts(params) {
+  const search = new URLSearchParams();
+  search.set("anchorSource", params.anchorSource);
+  search.set("anchorCid", params.anchorCid);
+  if (params.owned) search.set("owned", params.owned);
+  if (params.sort) search.set("sort", params.sort);
+  if (params.currency) search.set("currency", params.currency);
+  if (params.source) search.set("source", params.source);
+  if (params.limit !== void 0) search.set("limit", String(params.limit));
+  if (params.offset !== void 0) search.set("offset", String(params.offset));
+  return apiFetch(`/api/related-products?${search.toString()}`, {
+    parse: (v) => RelatedProductsResponseSchema.parse(v)
+  });
 }
 
 // src/pages/candidates.ts
@@ -15565,6 +15702,387 @@ async function renderLibrary(root) {
   await load();
 }
 
+// src/pages/related.ts
+function el3(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key2, value] of Object.entries(props)) {
+    if (key2 === "className") node.className = value;
+    else if (key2 === "textContent") node.textContent = value;
+    else node.setAttribute(key2, value);
+  }
+  for (const child of children) {
+    node.append(child instanceof Node ? child : document.createTextNode(child));
+  }
+  return node;
+}
+function errorMessage3(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function taxStatusLabel2(status) {
+  if (status === "included") return "\u7A0E\u8FBC";
+  if (status === "excluded") return "\u7A0E\u5225";
+  return "\u7A0E\u533A\u5206\u4E0D\u660E";
+}
+function moneyLabel2(money) {
+  if (!money) return "\u672A\u53D6\u5F97";
+  return `${money.currency} ${money.amountMinor}\uFF08${taxStatusLabel2(money.taxStatus)}\u30FB\u6700\u5C0F\u5358\u4F4D\uFF09`;
+}
+function freshnessLabel(freshness) {
+  if (freshness === "fresh") return "\u53D6\u5F97\u6E08\u307F\uFF0824h\u4EE5\u5185\uFF09";
+  if (freshness === "stale") return "\u53E4\u3044\u89B3\u6E2C";
+  return "\u4FA1\u683C\u306A\u3057";
+}
+function ownershipLabel(item) {
+  if (item.ownership.status === "owned") {
+    const ids = item.ownership.ownedBy.map((o) => `${o.source}/${o.cid}`).join(", ");
+    return `\u4FDD\u6709\u6E08\u307F\uFF08${ids || "source+cid"}\uFF09`;
+  }
+  if (item.ownership.status === "possible_duplicate") {
+    const ids = item.ownership.ownedBy.map((o) => `${o.source}/${o.cid}`).join(", ");
+    return `\u91CD\u8907\u306E\u53EF\u80FD\u6027\uFF08\u30BF\u30A4\u30C8\u30EB+\u30E1\u30FC\u30AB\u30FC\u4E00\u81F4: ${ids}\uFF09`;
+  }
+  return "\u672A\u78BA\u8A8D\uFF08\u672A\u6240\u6709\u3068\u306F\u65AD\u5B9A\u3057\u306A\u3044\uFF09";
+}
+function evidenceLabel(item) {
+  return item.relation.evidence.map((e) => {
+    const values = [e.anchorValue, e.productValue].filter(Boolean).join(" \u2192 ");
+    return `${e.kind}(${e.origin})${values ? `: ${values}` : ""}`;
+  }).join(" / ");
+}
+function priceBlock(item) {
+  const p = item.price;
+  const lines = [
+    `\u73FE\u5728: ${moneyLabel2(p.current)}`,
+    `\u901A\u5E38: ${moneyLabel2(p.regular)}`,
+    `\u5272\u5F15\u7387: ${p.discountPercent === null ? "\u672A\u53D6\u5F97" : `${p.discountPercent}%`}`,
+    `\u30BB\u30FC\u30EB\u7D42\u4E86: ${p.saleEndsAt ?? "\u672A\u53D6\u5F97\uFF08\u63A8\u6E2C\u3057\u306A\u3044\uFF09"}`,
+    `\u89B3\u6E2C\u6642\u523B: ${p.observedAt ?? "\u672A\u53D6\u5F97"}`,
+    `\u72B6\u614B: ${freshnessLabel(p.freshness)}`
+  ];
+  return el3("div", {
+    className: "related-price",
+    "data-testid": "related-price",
+    "data-freshness": p.freshness,
+    textContent: lines.join(" \xB7 ")
+  });
+}
+async function renderRelated(root) {
+  root.replaceChildren(
+    el3("div", { className: "panel" }, [
+      el3("h2", { textContent: "\u95A2\u9023\u88FD\u54C1\u30FB\u30BB\u30FC\u30EB\u6BD4\u8F03" }),
+      el3("p", {
+        className: "muted",
+        textContent: "\u4FDD\u6709 listing \u3092\u8D77\u70B9\u306B\u3001maker / author / series / store_related \u306E\u6839\u62E0\u304C\u3042\u308B\u95A2\u9023\u5019\u88DC\u3060\u3051\u3092\u6BD4\u8F03\u3057\u307E\u3059\u3002\u30BF\u30A4\u30C8\u30EB\u985E\u4F3C\u3060\u3051\u3067\u306F\u51FA\u3057\u307E\u305B\u3093\u3002\u672A\u4FDD\u6709\u306E market offer \u306F\u30E9\u30A4\u30D6\u30E9\u30EA\u884C\u3068\u6DF7\u305C\u307E\u305B\u3093\u3002"
+      })
+    ])
+  );
+  const controls = el3("div", {
+    className: "panel related-controls",
+    "data-testid": "related-controls"
+  });
+  const statusRegion = el3("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "related-status"
+  });
+  const ownedPanel = el3("div", {
+    className: "panel",
+    "data-testid": "related-owned-anchor"
+  });
+  const resultsHost = el3("div", {
+    className: "panel",
+    "data-testid": "related-results"
+  });
+  root.append(controls, statusRegion, ownedPanel, resultsHost);
+  const anchorSelect = el3("select", {
+    "data-testid": "related-anchor-select",
+    "aria-label": "\u6BD4\u8F03\u306E\u8D77\u70B9\uFF08\u4FDD\u6709 listing\uFF09"
+  });
+  const ownedModeSelect = el3("select", {
+    "data-testid": "related-owned-mode",
+    "aria-label": "\u4FDD\u6709\u6E08\u307F\u306E\u6271\u3044"
+  });
+  ownedModeSelect.append(
+    el3("option", { value: "exclude", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u9664\u5916\uFF08\u65E2\u5B9A\uFF09" }),
+    el3("option", { value: "mark", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u660E\u793A\u3057\u3066\u8868\u793A" })
+  );
+  const sortSelect = el3("select", {
+    "data-testid": "related-sort",
+    "aria-label": "\u4E26\u3073\u66FF\u3048"
+  });
+  for (const [value, label] of [
+    ["relevance", "\u95A2\u9023\u5EA6"],
+    ["price_asc", "\u4FA1\u683C\u6607\u9806"],
+    ["discount_desc", "\u5272\u5F15\u7387\u964D\u9806"],
+    ["sale_ends_asc", "\u30BB\u30FC\u30EB\u7D42\u4E86\u304C\u8FD1\u3044\u9806"],
+    ["title_asc", "\u30BF\u30A4\u30C8\u30EB\u6607\u9806"]
+  ]) {
+    sortSelect.append(el3("option", { value, textContent: label }));
+  }
+  const sourceSelect = el3("select", {
+    "data-testid": "related-source-filter",
+    "aria-label": "\u5019\u88DC\u30BD\u30FC\u30B9\u7D5E\u308A\u8FBC\u307F"
+  });
+  sourceSelect.append(el3("option", { value: "", textContent: "\u5168\u30BD\u30FC\u30B9" }));
+  for (const source of SOURCES) {
+    sourceSelect.append(el3("option", { value: source, textContent: source }));
+  }
+  const loadButton = el3("button", {
+    className: "primary",
+    type: "button",
+    "data-testid": "related-load",
+    textContent: "\u95A2\u9023\u5019\u88DC\u3092\u8AAD\u307F\u8FBC\u3080"
+  });
+  controls.append(
+    el3("label", {}, ["\u8D77\u70B9 listing ", anchorSelect]),
+    el3("label", {}, ["\u4FDD\u6709\u306E\u6271\u3044 ", ownedModeSelect]),
+    el3("label", {}, ["\u4E26\u3073\u66FF\u3048 ", sortSelect]),
+    el3("label", {}, ["\u30BD\u30FC\u30B9 ", sourceSelect]),
+    loadButton
+  );
+  let listings = [];
+  let pending = false;
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  function renderOwnedAnchor(listing) {
+    ownedPanel.replaceChildren(
+      el3("h3", { textContent: "\u8D77\u70B9\uFF08\u4FDD\u6709 listing\uFF09" })
+    );
+    if (!listing) {
+      ownedPanel.append(
+        el3("p", { className: "empty", textContent: "\u4FDD\u6709 listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002" })
+      );
+      return;
+    }
+    ownedPanel.append(
+      el3("div", {
+        className: "related-owned-card",
+        "data-testid": "related-owned-card",
+        "data-source": listing.source,
+        "data-cid": listing.cid
+      }, [
+        el3("strong", { textContent: listing.title }),
+        el3("div", {
+          className: "muted",
+          textContent: `${listing.source} / ${listing.cid}`
+        }),
+        el3("div", {
+          className: "muted",
+          textContent: `\u30E1\u30FC\u30AB\u30FC: ${listing.maker ?? "\u672A\u53D6\u5F97"}`
+        }),
+        el3("div", {
+          className: "muted",
+          textContent: "\u3053\u306E\u884C\u306F\u6240\u6709 listing \u3067\u3059\u3002\u4E0B\u306E\u95A2\u9023\u5019\u88DC\u30C6\u30FC\u30D6\u30EB\u306B\u306F\u6DF7\u305C\u307E\u305B\u3093\u3002"
+        })
+      ])
+    );
+  }
+  function renderResults(data) {
+    resultsHost.replaceChildren(
+      el3("h3", { textContent: "\u95A2\u9023\u5019\u88DC\uFF08market offer\uFF09" })
+    );
+    if (!data) {
+      resultsHost.append(
+        el3("p", {
+          className: "muted",
+          textContent: "\u8D77\u70B9\u3092\u9078\u3093\u3067\u8AAD\u307F\u8FBC\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
+        })
+      );
+      return;
+    }
+    resultsHost.append(
+      el3("p", {
+        className: "muted",
+        "data-testid": "related-meta",
+        textContent: `anchor ${data.anchor.source}/${data.anchor.cid} \xB7 \u751F\u6210 ${data.generatedAt} \xB7 \u4EF6\u6570 ${data.total}`
+      })
+    );
+    if (data.warnings.length > 0) {
+      resultsHost.append(
+        el3("p", {
+          className: "muted",
+          "data-testid": "related-warnings",
+          textContent: `warnings: ${data.warnings.map((w) => `${w.source}:${w.code}`).join(", ")}`
+        })
+      );
+    }
+    if (data.items.length === 0) {
+      resultsHost.append(
+        el3("p", {
+          className: "empty",
+          "data-testid": "related-empty",
+          textContent: "\u95A2\u9023\u5019\u88DC\u306F\u3042\u308A\u307E\u305B\u3093\u3002"
+        })
+      );
+      return;
+    }
+    const table = el3("table", {
+      className: "related-table",
+      "data-testid": "related-table"
+    });
+    table.append(
+      el3("thead", {}, [
+        el3("tr", {}, [
+          el3("th", { textContent: "\u5546\u54C1" }),
+          el3("th", { textContent: "\u95A2\u9023\u6839\u62E0" }),
+          el3("th", { textContent: "\u6240\u6709\u72B6\u614B" }),
+          el3("th", { textContent: "\u4FA1\u683C\u30B9\u30CA\u30C3\u30D7\u30B7\u30E7\u30C3\u30C8" })
+        ])
+      ])
+    );
+    const tbody = el3("tbody");
+    for (const item of data.items) {
+      const titleCell = el3("td", {}, [
+        el3("strong", { textContent: item.product.title }),
+        el3("div", {
+          className: "muted",
+          textContent: `${item.product.source} / ${item.product.cid}`
+        }),
+        el3("div", {
+          className: "muted",
+          textContent: `\u30E1\u30FC\u30AB\u30FC: ${item.product.maker ?? "\u672A\u53D6\u5F97"}`
+        })
+      ]);
+      if (item.product.productUrl) {
+        const link = el3("a", {
+          href: item.product.productUrl,
+          target: "_blank",
+          rel: "noreferrer noopener",
+          textContent: "\u5546\u54C1\u30DA\u30FC\u30B8"
+        });
+        titleCell.append(link);
+      } else {
+        titleCell.append(
+          el3("div", { className: "muted", textContent: "\u5546\u54C1\u30EA\u30F3\u30AF: \u672A\u53D6\u5F97" })
+        );
+      }
+      if (item.product.imageUrl) {
+        titleCell.append(
+          el3("img", {
+            src: item.product.imageUrl,
+            alt: "",
+            loading: "lazy",
+            referrerpolicy: "no-referrer",
+            className: "related-thumb"
+          })
+        );
+      }
+      const tr = el3("tr", {
+        "data-testid": "related-row",
+        "data-source": item.product.source,
+        "data-cid": item.product.cid,
+        "data-ownership": item.ownership.status,
+        "data-freshness": item.price.freshness
+      });
+      tr.append(
+        titleCell,
+        el3("td", {
+          "data-testid": "related-evidence",
+          textContent: evidenceLabel(item)
+        }),
+        el3("td", {
+          "data-testid": "related-ownership",
+          textContent: ownershipLabel(item)
+        }),
+        el3("td", {}, [priceBlock(item)])
+      );
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    resultsHost.append(table);
+  }
+  async function loadAnchors() {
+    setStatus("\u4FDD\u6709 listing \u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026");
+    try {
+      const data = await fetchListings({});
+      listings = data.listings;
+      anchorSelect.replaceChildren();
+      if (listings.length === 0) {
+        anchorSelect.append(
+          el3("option", { value: "", textContent: "\uFF08\u4FDD\u6709 listing \u306A\u3057\uFF09" })
+        );
+        renderOwnedAnchor(null);
+        renderResults(null);
+        setStatus("\u6BD4\u8F03\u3067\u304D\u308B\u4FDD\u6709 listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002", "info");
+        return;
+      }
+      for (const listing of listings) {
+        anchorSelect.append(
+          el3("option", {
+            value: `${listing.source}\0${listing.cid}`,
+            textContent: `${listing.title}\uFF08${listing.source}/${listing.cid}\uFF09`
+          })
+        );
+      }
+      renderOwnedAnchor(listings[0] ?? null);
+      renderResults(null);
+      setStatus(`\u4FDD\u6709 listing ${listings.length} \u4EF6\u3002\u8D77\u70B9\u3092\u9078\u3093\u3067\u95A2\u9023\u5019\u88DC\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u3059\u3002`);
+    } catch (err) {
+      setStatus(errorMessage3(err), "error");
+    }
+  }
+  async function loadRelated() {
+    if (pending) return;
+    const value = anchorSelect.value;
+    if (!value) {
+      setStatus("\u8D77\u70B9 listing \u3092\u9078\u629E\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "error");
+      return;
+    }
+    const [source, cid] = value.split("\0");
+    if (!source || !cid) {
+      setStatus("\u8D77\u70B9 listing \u304C\u4E0D\u6B63\u3067\u3059\u3002", "error");
+      return;
+    }
+    const listing = listings.find((l) => l.source === source && l.cid === cid) ?? null;
+    renderOwnedAnchor(listing);
+    pending = true;
+    loadButton.setAttribute("disabled", "true");
+    setStatus("\u95A2\u9023\u5019\u88DC\u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026");
+    try {
+      const owned = ownedModeSelect.value === "mark" ? "mark" : "exclude";
+      const sort = sortSelect.value;
+      const sourceFilter = sourceSelect.value || void 0;
+      const data = await fetchRelatedProducts({
+        anchorSource: source,
+        anchorCid: cid,
+        owned,
+        sort,
+        source: sourceFilter
+      });
+      renderResults(data);
+      setStatus(`\u95A2\u9023\u5019\u88DC ${data.total} \u4EF6\u3092\u8868\u793A\u3057\u3066\u3044\u307E\u3059\u3002`, "success");
+    } catch (err) {
+      renderResults(null);
+      setStatus(errorMessage3(err), "error");
+    } finally {
+      pending = false;
+      loadButton.removeAttribute("disabled");
+    }
+  }
+  loadButton.addEventListener("click", () => {
+    void loadRelated();
+  });
+  anchorSelect.addEventListener("change", () => {
+    const value = anchorSelect.value;
+    const [source, cid] = value.split("\0");
+    const listing = listings.find((l) => l.source === source && l.cid === cid) ?? null;
+    renderOwnedAnchor(listing);
+  });
+  await loadAnchors();
+}
+
 // src/pages/sync/sync.ts
 var SOURCE_LABELS = {
   dlsite: "DLsite",
@@ -15574,7 +16092,7 @@ var SOURCE_LABELS = {
   fanza_dlsoft: "FANZA PC\u30B2\u30FC\u30E0",
   full_sync: "\u5168\u4F53\u540C\u671F"
 };
-function el3(tag, props = {}, children = []) {
+function el4(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key2, value] of Object.entries(props)) {
     if (key2 === "className") node.className = value;
@@ -15640,40 +16158,40 @@ async function postManualListing(url2) {
   const text = await res.text();
   if (!res.ok) throw new Error(`\u624B\u52D5\u767B\u9332\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
 }
-function errorMessage3(err) {
+function errorMessage4(err) {
   return err instanceof Error ? err.message : String(err);
 }
 async function renderSync(root) {
   root.replaceChildren(
-    el3("div", { className: "panel" }, [
-      el3("h2", { textContent: "\u540C\u671F" }),
-      el3("p", {
+    el4("div", { className: "panel" }, [
+      el4("h2", { textContent: "\u540C\u671F" }),
+      el4("p", {
         className: "muted",
         textContent: "\u5404\u30BD\u30FC\u30B9\u306E\u6700\u7D42\u540C\u671F\u72B6\u614B\u3092\u8868\u793A\u3057\u3001\u518D\u7167\u5408\u3068\u624B\u52D5\u767B\u9332\u3092\u884C\u3044\u307E\u3059\u3002"
       })
     ])
   );
-  const statusList = el3("ul", {
+  const statusList = el4("ul", {
     className: "sync-status-list",
     "data-testid": "sync-status-list",
     "aria-label": "\u540C\u671F\u72B6\u614B\u4E00\u89A7"
   });
-  const statusRegion = el3("div", {
+  const statusRegion = el4("div", {
     className: "status-region",
     role: "status",
     "aria-live": "polite",
     "aria-atomic": "true",
     "data-testid": "sync-status-region"
   });
-  const rematchBtn = el3("button", {
+  const rematchBtn = el4("button", {
     className: "primary",
     textContent: "\u518D\u7167\u5408\u3092\u5B9F\u884C",
     "data-testid": "rematch-btn",
     "aria-label": "\u518D\u7167\u5408\u3092\u5B9F\u884C"
   });
-  const manualForm = el3("form", { className: "manual-form", "data-testid": "manual-form" });
-  const urlLabel = el3("label", { for: "manual-url", textContent: "\u5546\u54C1 URL" });
-  const urlInput = el3("input", {
+  const manualForm = el4("form", { className: "manual-form", "data-testid": "manual-form" });
+  const urlLabel = el4("label", { for: "manual-url", textContent: "\u5546\u54C1 URL" });
+  const urlInput = el4("input", {
     id: "manual-url",
     type: "url",
     placeholder: "\u5BFE\u5FDC\u5E97\u8217\u306E\u5546\u54C1\u30DA\u30FC\u30B8 URL",
@@ -15681,7 +16199,7 @@ async function renderSync(root) {
     "aria-label": "\u5546\u54C1 URL",
     required: "true"
   });
-  const manualBtn = el3("button", {
+  const manualBtn = el4("button", {
     type: "submit",
     className: "primary",
     textContent: "\u624B\u52D5\u767B\u9332",
@@ -15689,7 +16207,7 @@ async function renderSync(root) {
     "aria-label": "\u624B\u52D5\u767B\u9332"
   });
   manualForm.append(urlLabel, urlInput, manualBtn);
-  const panel = el3("div", { className: "panel" }, [statusList, rematchBtn, manualForm]);
+  const panel = el4("div", { className: "panel" }, [statusList, rematchBtn, manualForm]);
   root.append(panel, statusRegion);
   let pending = false;
   function setPending(value) {
@@ -15715,7 +16233,7 @@ async function renderSync(root) {
     statusList.replaceChildren();
     for (const result of results) {
       const line = result.ok ? formatOutcome(result.source, result.state) : formatFetchError(result.source, result.error);
-      const item = el3("li", {
+      const item = el4("li", {
         textContent: line,
         "data-testid": `sync-row-${result.source}`,
         "aria-label": line,
@@ -15735,7 +16253,7 @@ async function renderSync(root) {
           const state = await fetchSyncState(source);
           return { source, ok: true, state };
         } catch (err) {
-          return { source, ok: false, error: errorMessage3(err) };
+          return { source, ok: false, error: errorMessage4(err) };
         }
       })
     );
@@ -15758,7 +16276,7 @@ async function renderSync(root) {
         setStatus("\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F", "error");
       }
     } catch (err) {
-      setStatus(errorMessage3(err), "error");
+      setStatus(errorMessage4(err), "error");
     } finally {
       setPending(false);
     }
@@ -15788,7 +16306,7 @@ async function renderSync(root) {
           );
         }
       } catch (err) {
-        setStatus(errorMessage3(err), "error");
+        setStatus(errorMessage4(err), "error");
       } finally {
         setPending(false);
       }
@@ -15814,7 +16332,7 @@ async function renderSync(root) {
           setStatus("\u624B\u52D5\u767B\u9332\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F\uFF08\u72B6\u614B\u518D\u53D6\u5F97\u5931\u6557\uFF09", "error");
         }
       } catch (err) {
-        setStatus(errorMessage3(err), "error");
+        setStatus(errorMessage4(err), "error");
       } finally {
         setPending(false);
       }
@@ -15824,7 +16342,7 @@ async function renderSync(root) {
 }
 
 // src/pages/settings/settings.ts
-function el4(tag, props = {}, children = []) {
+function el5(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key2, value] of Object.entries(props)) {
     if (key2 === "className") node.className = value;
@@ -15852,22 +16370,22 @@ async function saveSettings(settings) {
   if (!res.ok) throw new Error(`\u8A2D\u5B9A\u306E\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
   return JSON.parse(text);
 }
-function errorMessage4(err) {
+function errorMessage5(err) {
   return err instanceof Error ? err.message : String(err);
 }
 async function renderSettings(root) {
   root.replaceChildren(
-    el4("div", { className: "panel" }, [
-      el4("h2", { textContent: "\u8A2D\u5B9A" }),
-      el4("p", {
+    el5("div", { className: "panel" }, [
+      el5("h2", { textContent: "\u8A2D\u5B9A" }),
+      el5("p", {
         className: "muted",
         textContent: "\u30B5\u30FC\u30D0\u30DD\u30FC\u30C8\u3068\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\u30D5\u30A9\u30EB\u30C0\u3092\u8A2D\u5B9A\u3057\u307E\u3059\u3002"
       })
     ])
   );
-  const form = el4("form", { className: "settings-form", "data-testid": "settings-form" });
-  const portLabel = el4("label", { for: "settings-port", textContent: "\u30DD\u30FC\u30C8 (1\u201365535)" });
-  const portInput = el4("input", {
+  const form = el5("form", { className: "settings-form", "data-testid": "settings-form" });
+  const portLabel = el5("label", { for: "settings-port", textContent: "\u30DD\u30FC\u30C8 (1\u201365535)" });
+  const portInput = el5("input", {
     id: "settings-port",
     type: "number",
     min: "1",
@@ -15877,11 +16395,11 @@ async function renderSettings(root) {
     "aria-label": "\u30DD\u30FC\u30C8",
     required: "true"
   });
-  const destLabel = el4("label", {
+  const destLabel = el5("label", {
     for: "settings-export-destination",
     textContent: "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\uFF08\u7D76\u5BFE\u30D1\u30B9\uFF09"
   });
-  const destInput = el4("input", {
+  const destInput = el5("input", {
     id: "settings-export-destination",
     type: "text",
     placeholder: "/Users/you/Drive/adp-export",
@@ -15889,7 +16407,7 @@ async function renderSettings(root) {
     "aria-label": "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148",
     required: "true"
   });
-  const saveBtn = el4("button", {
+  const saveBtn = el5("button", {
     type: "submit",
     className: "primary",
     textContent: "\u4FDD\u5B58",
@@ -15897,7 +16415,7 @@ async function renderSettings(root) {
     "aria-label": "\u8A2D\u5B9A\u3092\u4FDD\u5B58"
   });
   form.append(portLabel, portInput, destLabel, destInput, saveBtn);
-  const statusRegion = el4("div", {
+  const statusRegion = el5("div", {
     className: "status-region",
     role: "status",
     "aria-live": "polite",
@@ -15933,7 +16451,7 @@ async function renderSettings(root) {
       destInput.value = settings.exportDestination;
       setStatus("\u8A2D\u5B9A\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F", "success");
     } catch (err) {
-      setStatus(errorMessage4(err), "error");
+      setStatus(errorMessage5(err), "error");
     } finally {
       setPending(false);
     }
@@ -15960,7 +16478,7 @@ async function renderSettings(root) {
         destInput.value = saved.exportDestination;
         setStatus("\u8A2D\u5B9A\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F", "success");
       } catch (err) {
-        setStatus(errorMessage4(err), "error");
+        setStatus(errorMessage5(err), "error");
       } finally {
         setPending(false);
       }
@@ -15972,11 +16490,13 @@ async function renderSettings(root) {
 // src/router.ts
 var routes = {
   library: renderLibrary,
+  related: renderRelated,
   candidates: renderCandidates,
   sync: renderSync,
   settings: renderSettings
 };
 function parseRoute(pathname) {
+  if (pathname.startsWith("/related")) return "related";
   if (pathname.startsWith("/candidates")) return "candidates";
   if (pathname.startsWith("/sync")) return "sync";
   if (pathname.startsWith("/settings")) return "settings";
@@ -15984,6 +16504,8 @@ function parseRoute(pathname) {
 }
 function routePath(route) {
   switch (route) {
+    case "related":
+      return "/related";
     case "candidates":
       return "/candidates";
     case "sync":
@@ -15998,7 +16520,7 @@ async function renderRoute(route, root) {
   await routes[route](root);
 }
 function allRoutes() {
-  return ["library", "candidates", "sync", "settings"];
+  return ["library", "related", "candidates", "sync", "settings"];
 }
 
 // src/main.ts
@@ -16013,19 +16535,28 @@ var main = document.createElement("main");
 app.append(header, main);
 var links = {
   library: document.createElement("a"),
+  related: document.createElement("a"),
   candidates: document.createElement("a"),
   sync: document.createElement("a"),
   settings: document.createElement("a")
 };
 links.library.href = routePath("library");
 links.library.textContent = "\u30E9\u30A4\u30D6\u30E9\u30EA";
+links.related.href = routePath("related");
+links.related.textContent = "\u95A2\u9023\u6BD4\u8F03";
 links.candidates.href = routePath("candidates");
 links.candidates.textContent = "\u5019\u88DC\u30AD\u30E5\u30FC";
 links.sync.href = routePath("sync");
 links.sync.textContent = "\u540C\u671F";
 links.settings.href = routePath("settings");
 links.settings.textContent = "\u8A2D\u5B9A";
-nav.append(links.library, links.candidates, links.sync, links.settings);
+nav.append(
+  links.library,
+  links.related,
+  links.candidates,
+  links.sync,
+  links.settings
+);
 function setActive(route) {
   for (const key2 of allRoutes()) {
     links[key2].classList.toggle("active", key2 === route);

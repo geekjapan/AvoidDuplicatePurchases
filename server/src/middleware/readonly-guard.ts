@@ -15,6 +15,7 @@ const ALLOWED_GET_EXACT = new Set([
   "/api/listings",
   "/api/candidates",
   "/api/settings",
+  "/api/related-products",
   "/api/sync-state/dlsite",
   "/api/sync-state/full_sync",
   "/api/sync-state/fanza_doujin",

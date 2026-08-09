@@ -123,7 +123,7 @@ describe("server API", () => {
 
   it("applies migrations and owns SQLite ownership model", () => {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number };
-    assert.equal(version.user_version, 4);
+    assert.equal(version.user_version, 5);
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
       .all() as Array<{ name: string }>;
@@ -134,6 +134,8 @@ describe("server API", () => {
     assert.ok(names.includes("amazon_observation"));
     assert.ok(names.includes("library_observation"));
     assert.ok(names.includes("price_observation"));
+    assert.ok(names.includes("related_edge"));
+    assert.ok(names.includes("market_offer"));
   });
 
   it("stores Amazon DOM observations without creating owned listings", async () => {

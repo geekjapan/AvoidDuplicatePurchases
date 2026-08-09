@@ -1,6 +1,9 @@
 # Issue #47: 関連製品・セール比較の契約
 
-Status: design-only。Issue #45 の契約と、対象ストアの関連商品・価格取得調査が land するまで実装しない。
+Status: synthetic-fixture 実装済み（2026-08-09）。`POST /api/import/related` は
+`contract: "synthetic_related_v1"` のみ。ストア raw payload / 拡張 fetch は
+adapter 調査後の人間ゲート。詳細は
+[issue-47-related-sales-acceptance.md](./issue-47-related-sales-acceptance.md)。
 
 Issue: [#47 関連製品とセール情報を比較して安く買えるようにする](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/47)
 
