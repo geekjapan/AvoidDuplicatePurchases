@@ -510,7 +510,34 @@ export declare const LibraryImportResponseSchema: z.ZodObject<{
         unknown: z.ZodNumber;
     }, z.core.$strict>;
 }, z.core.$strict>;
-/** Query for `GET /api/listings` (library search / list). */
+/**
+ * Sort keys for `GET /api/listings`.
+ * Price sorts use stored `priceObservation` tiers only — never
+ * `purchasePrice` / `currentPrice` inventions.
+ */
+export declare const ListingsSortSchema: z.ZodEnum<{
+    work: "work";
+    title_asc: "title_asc";
+    title_desc: "title_desc";
+    purchased_at_asc: "purchased_at_asc";
+    purchased_at_desc: "purchased_at_desc";
+    price_observation_asc: "price_observation_asc";
+    price_observation_desc: "price_observation_desc";
+}>;
+/** Which `priceObservation` tier a currency filter or price sort uses. */
+export declare const PriceObservationTierSchema: z.ZodEnum<{
+    regular: "regular";
+    sale: "sale";
+    coupon: "coupon";
+}>;
+/**
+ * Query for `GET /api/listings` (library search / list).
+ *
+ * Price-related parameters consult only persisted `priceObservation` values.
+ * `purchasePrice` and `currentPrice` are never used for filter/sort.
+ * `price_observation_*` sorts require both `priceCurrency` and `priceTier`
+ * so amounts are never ordered across currencies or invented tiers.
+ */
 export declare const ListingsQuerySchema: z.ZodObject<{
     q: z.ZodOptional<z.ZodString>;
     source: z.ZodOptional<z.ZodEnum<{
@@ -524,6 +551,21 @@ export declare const ListingsQuerySchema: z.ZodObject<{
         kobo: "kobo";
     }>>;
     maker: z.ZodOptional<z.ZodString>;
+    priceCurrency: z.ZodOptional<z.ZodString>;
+    priceTier: z.ZodOptional<z.ZodEnum<{
+        regular: "regular";
+        sale: "sale";
+        coupon: "coupon";
+    }>>;
+    sort: z.ZodOptional<z.ZodEnum<{
+        work: "work";
+        title_asc: "title_asc";
+        title_desc: "title_desc";
+        purchased_at_asc: "purchased_at_asc";
+        purchased_at_desc: "purchased_at_desc";
+        price_observation_asc: "price_observation_asc";
+        price_observation_desc: "price_observation_desc";
+    }>>;
     limit: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
     offset: z.ZodOptional<z.ZodCoercedNumber<unknown>>;
 }, z.core.$strip>;

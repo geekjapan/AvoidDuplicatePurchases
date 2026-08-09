@@ -66,6 +66,8 @@ const REQUIRED_EXPORTS = [
   "RematchRequestSchema",
   "RematchResponseSchema",
   "ListingsQuerySchema",
+  "ListingsSortSchema",
+  "PriceObservationTierSchema",
   "ListingSchema",
   "ListingsResponseSchema",
   "MoneySchema",

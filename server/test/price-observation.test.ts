@@ -540,4 +540,138 @@ describe("price observation HTTP + listings API", () => {
     ).n;
     assert.equal(after, before);
   });
+
+  it("rejects invalid currency / tax / non-JPY observation payloads fail-closed", async () => {
+    const cases = [
+      {
+        regular: { amountMinor: 1000, currency: "usd", taxStatus: "unknown" },
+        label: "lowercase currency",
+      },
+      {
+        regular: { amountMinor: 1000, currency: "USD", taxStatus: "unknown" },
+        label: "non-JPY currency",
+      },
+      {
+        regular: { amountMinor: 1000, currency: "JPY", taxStatus: "taxed" },
+        label: "invented taxStatus",
+      },
+      {
+        regular: { amountMinor: -1, currency: "JPY", taxStatus: "unknown" },
+        label: "negative amount",
+      },
+    ] as const;
+
+    for (const c of cases) {
+      const res = await request(port, "/api/listings/price-observation", {
+        method: "POST",
+        body: {
+          source: "dlsite",
+          cid: "RJ000001",
+          pageUrl: "https://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+          regular: c.regular,
+          sale: null,
+          coupon: null,
+        },
+      });
+      assert.equal(res.status, 400, c.label);
+      assert.deepEqual(res.json, { error: "invalid_request" }, c.label);
+    }
+  });
+
+  it("filters and sorts GET /api/listings by stored priceObservation only", async () => {
+    // Seed three-tier observations on DLsite + FANZA. purchasePrice/currentPrice stay null.
+    const seeds = [
+      {
+        source: "dlsite" as const,
+        cid: "RJ000001",
+        pageUrl: "https://www.dlsite.com/maniax/work/=/product_id/RJ000001.html",
+        regular: { amountMinor: 2000, currency: "JPY", taxStatus: "unknown" as const },
+        sale: { amountMinor: 1500, currency: "JPY", taxStatus: "included" as const },
+        coupon: null,
+      },
+      {
+        source: "fanza_doujin" as const,
+        cid: "d_900001",
+        pageUrl: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_900001/",
+        regular: { amountMinor: 1100, currency: "JPY", taxStatus: "unknown" as const },
+        sale: { amountMinor: 880, currency: "JPY", taxStatus: "included" as const },
+        coupon: { amountMinor: 770, currency: "JPY", taxStatus: "included" as const },
+      },
+      {
+        source: "fanza_books" as const,
+        cid: "b100xxxxx01001",
+        pageUrl: "https://book.dmm.co.jp/product/100001/b100xxxxx01001/",
+        regular: { amountMinor: 3000, currency: "JPY", taxStatus: "excluded" as const },
+        sale: null,
+        coupon: null,
+      },
+    ];
+    for (const seed of seeds) {
+      const res = await request(port, "/api/listings/price-observation", {
+        method: "POST",
+        body: seed,
+      });
+      assert.equal(res.status, 200, seed.cid);
+    }
+
+    // Currency filter without tier: any observed JPY tier matches; unobserved rows drop.
+    const jpyOnly = await request(port, "/api/listings?priceCurrency=JPY");
+    assert.equal(jpyOnly.status, 200);
+    const jpyListings = (jpyOnly.json as { listings: Array<{ cid: string; purchasePrice: null; currentPrice: null; priceObservation: unknown }> }).listings;
+    assert.equal(jpyListings.length, 3);
+    for (const row of jpyListings) {
+      assert.equal(row.purchasePrice, null);
+      assert.equal(row.currentPrice, null);
+      assert.ok(row.priceObservation);
+    }
+
+    // Tier-specific filter: sale tier only (fanza_books has regular only → excluded).
+    const saleOnly = await request(
+      port,
+      "/api/listings?priceCurrency=JPY&priceTier=sale",
+    );
+    assert.equal(saleOnly.status, 200);
+    const saleCids = (
+      (saleOnly.json as { listings: Array<{ cid: string }> }).listings
+    ).map((l) => l.cid);
+    assert.deepEqual(saleCids.sort(), ["RJ000001", "d_900001"].sort());
+
+    // Sort ascending by sale observation amount.
+    const sortedAsc = await request(
+      port,
+      "/api/listings?priceCurrency=JPY&priceTier=sale&sort=price_observation_asc",
+    );
+    assert.equal(sortedAsc.status, 200);
+    const ascCids = (
+      (sortedAsc.json as { listings: Array<{ cid: string }> }).listings
+    ).map((l) => l.cid);
+    assert.deepEqual(ascCids, ["d_900001", "RJ000001"]);
+
+    // Sort descending by regular observation.
+    const sortedDesc = await request(
+      port,
+      "/api/listings?priceCurrency=JPY&priceTier=regular&sort=price_observation_desc",
+    );
+    assert.equal(sortedDesc.status, 200);
+    const descCids = (
+      (sortedDesc.json as { listings: Array<{ cid: string }> }).listings
+    ).map((l) => l.cid);
+    assert.deepEqual(descCids, ["b100xxxxx01001", "RJ000001", "d_900001"]);
+
+    // Fail closed: price sort without currency/tier → 400.
+    const missingCurrency = await request(
+      port,
+      "/api/listings?sort=price_observation_asc&priceTier=sale",
+    );
+    assert.equal(missingCurrency.status, 400);
+    const missingTier = await request(
+      port,
+      "/api/listings?sort=price_observation_desc&priceCurrency=JPY",
+    );
+    assert.equal(missingTier.status, 400);
+
+    // current_price sorts are not part of the contract.
+    const inventedSort = await request(port, "/api/listings?sort=current_price_asc");
+    assert.equal(inventedSort.status, 400);
+  });
 });

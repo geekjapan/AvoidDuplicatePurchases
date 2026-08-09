@@ -43,6 +43,22 @@ export async function fetchListings(params: {
   q?: string;
   source?: string;
   maker?: string;
+  /** Exact ISO 4217 currency against stored priceObservation tiers only. */
+  priceCurrency?: string;
+  /** Observation tier for currency filter / price sort. */
+  priceTier?: "regular" | "sale" | "coupon";
+  /**
+   * Server sort. Price sorts use priceObservation only and require
+   * priceCurrency + priceTier.
+   */
+  sort?:
+    | "work"
+    | "title_asc"
+    | "title_desc"
+    | "purchased_at_asc"
+    | "purchased_at_desc"
+    | "price_observation_asc"
+    | "price_observation_desc";
 }): Promise<ListingsResponse> {
   const all: Listing[] = [];
   let offset = 0;
@@ -53,6 +69,9 @@ export async function fetchListings(params: {
     if (params.q) search.set("q", params.q);
     if (params.source) search.set("source", params.source);
     if (params.maker) search.set("maker", params.maker);
+    if (params.priceCurrency) search.set("priceCurrency", params.priceCurrency);
+    if (params.priceTier) search.set("priceTier", params.priceTier);
+    if (params.sort) search.set("sort", params.sort);
     search.set("limit", String(LISTINGS_PAGE_SIZE));
     search.set("offset", String(offset));
     const qs = search.toString();

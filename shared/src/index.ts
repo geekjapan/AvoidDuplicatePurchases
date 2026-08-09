@@ -77,6 +77,8 @@ export {
   RematchRequestSchema,
   RematchResponseSchema,
   ListingsQuerySchema,
+  ListingsSortSchema,
+  PriceObservationTierSchema,
   ListingSchema,
   ListingsResponseSchema,
   MoneySchema,

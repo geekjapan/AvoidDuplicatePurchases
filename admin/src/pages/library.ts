@@ -130,7 +130,11 @@ function productLinkForListing(listing: Listing): Node {
 export async function renderLibrary(root: HTMLElement): Promise<void> {
   root.replaceChildren(el("div", { className: "panel" }, [
     el("h2", { textContent: "ライブラリ" }),
-    el("p", { className: "muted", textContent: "タイトル・メーカー・ソース・cid で検索し、正規 work 単位で表示します。" }),
+    el("p", {
+      className: "muted",
+      textContent:
+        "タイトル・メーカー・ソース・cid で検索し、保存済みの価格観測（priceObservation）だけで通貨絞り込みと並び替えを行います。",
+    }),
   ]));
 
   const filters = el("div", { className: "filters" });
@@ -164,6 +168,53 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
     "aria-label": "メーカー",
   });
 
+  // Price filters/sorts touch only stored priceObservation values.
+  const currencyLabel = el("label", {
+    for: "filter-price-currency",
+    textContent: "観測通貨",
+  });
+  const currencySelect = el("select", {
+    id: "filter-price-currency",
+    "data-testid": "filter-price-currency",
+    "aria-label": "観測通貨",
+  });
+  currencySelect.append(el("option", { value: "", textContent: "通貨指定なし" }));
+  // Visible-DOM observation is JPY-only today; keep the control exact-match only.
+  currencySelect.append(el("option", { value: "JPY", textContent: "JPY" }));
+
+  const tierLabel = el("label", {
+    for: "filter-price-tier",
+    textContent: "観測層",
+  });
+  const tierSelect = el("select", {
+    id: "filter-price-tier",
+    "data-testid": "filter-price-tier",
+    "aria-label": "観測層",
+  });
+  tierSelect.append(el("option", { value: "", textContent: "層指定なし" }));
+  tierSelect.append(el("option", { value: "regular", textContent: "定価/サークル設定" }));
+  tierSelect.append(el("option", { value: "sale", textContent: "セール/キャンペーン" }));
+  tierSelect.append(el("option", { value: "coupon", textContent: "クーポン適用後表示" }));
+
+  const sortLabel = el("label", { for: "filter-sort", textContent: "並び替え" });
+  const sortSelect = el("select", {
+    id: "filter-sort",
+    "data-testid": "filter-sort",
+    "aria-label": "並び替え",
+  });
+  const sortOptions: Array<[string, string]> = [
+    ["work", "作品グループ順"],
+    ["title_asc", "タイトル昇順"],
+    ["title_desc", "タイトル降順"],
+    ["purchased_at_asc", "購入日昇順"],
+    ["purchased_at_desc", "購入日降順"],
+    ["price_observation_asc", "観測価格昇順"],
+    ["price_observation_desc", "観測価格降順"],
+  ];
+  for (const [value, label] of sortOptions) {
+    sortSelect.append(el("option", { value, textContent: label }));
+  }
+
   const searchBtn = el("button", {
     className: "primary",
     textContent: "検索",
@@ -176,6 +227,12 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
     sourceSelect,
     makerLabel,
     makerInput,
+    currencyLabel,
+    currencySelect,
+    tierLabel,
+    tierSelect,
+    sortLabel,
+    sortSelect,
     searchBtn,
   );
 
@@ -227,8 +284,41 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
     qInput.disabled = disabled;
     sourceSelect.disabled = disabled;
     makerInput.disabled = disabled;
+    currencySelect.disabled = disabled;
+    tierSelect.disabled = disabled;
+    sortSelect.disabled = disabled;
     if (mergeBtn) mergeBtn.disabled = disabled;
     for (const btn of splitButtons) btn.disabled = disabled;
+  }
+
+  function selectedPriceTier(): "regular" | "sale" | "coupon" | undefined {
+    const value = tierSelect.value;
+    if (value === "regular" || value === "sale" || value === "coupon") return value;
+    return undefined;
+  }
+
+  function selectedSort():
+    | "work"
+    | "title_asc"
+    | "title_desc"
+    | "purchased_at_asc"
+    | "purchased_at_desc"
+    | "price_observation_asc"
+    | "price_observation_desc"
+    | undefined {
+    const value = sortSelect.value;
+    switch (value) {
+      case "work":
+      case "title_asc":
+      case "title_desc":
+      case "purchased_at_asc":
+      case "purchased_at_desc":
+      case "price_observation_asc":
+      case "price_observation_desc":
+        return value;
+      default:
+        return undefined;
+    }
   }
 
   /**
@@ -247,10 +337,29 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
       const q = qInput.value.trim();
       const source = sourceSelect.value;
       const maker = makerInput.value.trim();
+      const priceCurrency = currencySelect.value.trim();
+      const priceTier = selectedPriceTier();
+      const sort = selectedSort();
+      // Client-side guard: price sorts need currency + tier (server also rejects).
+      if (
+        (sort === "price_observation_asc" || sort === "price_observation_desc") &&
+        (!priceCurrency || !priceTier)
+      ) {
+        if (generation !== loadGeneration) return;
+        listHost.replaceChildren();
+        setStatus(
+          "観測価格で並び替えるには、観測通貨と観測層の両方を指定してください。",
+          "error",
+        );
+        return;
+      }
       const data = await fetchListings({
         q: q || undefined,
         source: source || undefined,
         maker: maker || undefined,
+        priceCurrency: priceCurrency || undefined,
+        priceTier,
+        sort: sort && sort !== "work" ? sort : undefined,
       });
       if (generation !== loadGeneration) return;
       renderListings(data.listings);
