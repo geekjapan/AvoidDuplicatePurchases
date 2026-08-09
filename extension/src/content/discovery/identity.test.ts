@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { DiscoveryCandidate } from "../../messages.js";
-import { scoreDiscoveryCandidates } from "./identity.js";
+import { scoreDiscoveryCandidates, titlePreVolumeKey } from "./identity.js";
+import { titleMatchKey } from "@adp/shared";
 
 function cand(
   partial: Partial<DiscoveryCandidate> & Pick<DiscoveryCandidate, "cid" | "title">,
@@ -44,7 +45,10 @@ describe("discovery identity gate", () => {
       [cand({ cid: "RJ1", title: "フォレスティア", maker: null, rank: 1 })],
     );
     assert.equal(result.kind, "candidates");
-    if (result.kind === "candidates") assert.equal(result.candidates.length, 1);
+    if (result.kind === "candidates") {
+      assert.equal(result.candidates.length, 1);
+      assert.equal(result.candidates[0]!.cid, "RJ1");
+    }
   });
 
   it("never auto-confirms when origin maker is null", () => {
@@ -55,37 +59,74 @@ describe("discovery identity gate", () => {
     assert.equal(result.kind, "candidates");
   });
 
-  it("multiple exact matches become picker (no unique_exact)", () => {
+  it("multiple exact matches become picker with only exact rows", () => {
     const result = scoreDiscoveryCandidates(
       { title: "同一タイトル", maker: "同一サークル" },
       [
         cand({ cid: "RJ1", title: "同一タイトル", maker: "同一サークル", rank: 1 }),
         cand({ cid: "RJ2", title: "同一タイトル", maker: "同一サークル", rank: 2 }),
+        cand({ cid: "RJ3", title: "無関係", maker: "他", rank: 3 }),
       ],
     );
     assert.equal(result.kind, "candidates");
-    if (result.kind === "candidates") assert.equal(result.candidates.length, 2);
+    if (result.kind === "candidates") {
+      assert.equal(result.candidates.length, 2);
+      assert.deepEqual(
+        result.candidates.map((c) => c.cid),
+        ["RJ1", "RJ2"],
+      );
+    }
   });
 
-  it("volume L5-only similarity does not unique_exact against different volume titles with same key", () => {
-    // titleMatchKey strips 巻 markers; gate still requires exact key + maker.
-    // Two volumes of same series with same maker → both match title keys after L5 → multi exact.
-    const result = scoreDiscoveryCandidates(
+  it("volume L5-only match does not unique_exact; wrong volume alone is picker", () => {
+    // titleMatchKey strips 巻 markers; pre-L5 keys must still differ for auto.
+    assert.equal(titleMatchKey("作品 第1巻"), titleMatchKey("作品 第2巻"));
+    assert.notEqual(titlePreVolumeKey("作品 第1巻"), titlePreVolumeKey("作品 第2巻"));
+
+    const onlyWrong = scoreDiscoveryCandidates(
+      { title: "作品 第1巻", maker: "作家A" },
+      [cand({ cid: "RJ2", title: "作品 第2巻", maker: "作家A", rank: 1 })],
+    );
+    assert.equal(onlyWrong.kind, "candidates");
+    if (onlyWrong.kind === "candidates") {
+      assert.equal(onlyWrong.candidates.length, 1);
+      assert.equal(onlyWrong.candidates[0]!.cid, "RJ2");
+    }
+
+    const multiVolume = scoreDiscoveryCandidates(
       { title: "作品 第1巻", maker: "作家A" },
       [
         cand({ cid: "RJ1", title: "作品 第1巻", maker: "作家A", rank: 1 }),
         cand({ cid: "RJ2", title: "作品 第2巻", maker: "作家A", rank: 2 }),
       ],
     );
-    // Both collapse to same title key → multi exact → candidates picker
-    assert.equal(result.kind, "candidates");
+    // RJ1 is strict exact → unique_exact auto
+    assert.equal(multiVolume.kind, "unique_exact");
+    if (multiVolume.kind === "unique_exact") assert.equal(multiVolume.candidate.cid, "RJ1");
   });
 
-  it("caps picker at 10", () => {
+  it("unrelated titles are excluded from picker (none when empty relevant)", () => {
     const many = Array.from({ length: 15 }, (_, i) =>
       cand({ cid: `RJ${i}`, title: `作品${i}`, maker: "x", rank: i + 1 }),
     );
-    const result = scoreDiscoveryCandidates({ title: "別", maker: "y" }, many, 10);
+    const result = scoreDiscoveryCandidates({ title: "別タイトル", maker: "y" }, many, 10);
+    assert.equal(result.kind, "none");
+  });
+
+  it("caps multi-exact picker at 10", () => {
+    const many = Array.from({ length: 15 }, (_, i) =>
+      cand({
+        cid: `RJ${i}`,
+        title: "同一タイトル",
+        maker: "同一サークル",
+        rank: i + 1,
+      }),
+    );
+    const result = scoreDiscoveryCandidates(
+      { title: "同一タイトル", maker: "同一サークル" },
+      many,
+      10,
+    );
     assert.equal(result.kind, "candidates");
     if (result.kind === "candidates") assert.equal(result.candidates.length, 10);
   });

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  discoveryAllowedCountForTests,
   discoverySessionCountForTests,
   resetDiscoverySessionsForTests,
   runDiscoverySelect,
@@ -200,6 +201,8 @@ describe("background discovery orchestrator", () => {
     );
     await new Promise((r) => setTimeout(r, 20));
 
+    assert.equal(discoveryAllowedCountForTests("sess-sel"), 1);
+
     // maker null → candidates path
     const selectReply = await runDiscoverySelect(
       {
@@ -227,6 +230,103 @@ describe("background discovery orchestrator", () => {
         (m as { kind?: string }).kind === "compare",
     );
     assert.equal(compares.length, 1);
+  });
+
+  it("select rejects candidates outside same-session allow-list", async () => {
+    resetDiscoverySessionsForTests();
+    await runDiscoveryStart(
+      baseStart({ sessionId: "sess-allow", maker: null, title: "フォレスティア" }),
+      7,
+      {
+        ...depsWith(),
+        readSearch: async () => readySearch([exactCandidate()]),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const rejected = await runDiscoverySelect(
+      {
+        type: "adp:discovery-select-candidate",
+        sessionId: "sess-allow",
+        productUrl: "https://www.dlsite.com/maniax/work/=/product_id/RJ999999.html",
+        targetSource: "dlsite",
+        cid: "RJ999999",
+      },
+      7,
+      depsWith(),
+    );
+    assert.equal(rejected.ok, false);
+    if (!rejected.ok) assert.equal(rejected.error, "discovery_blocked_policy");
+    assert.equal(discoverySessionCountForTests(), 1);
+  });
+
+  it("select rejects mismatched targetSource even with matching cid/url", async () => {
+    resetDiscoverySessionsForTests();
+    await runDiscoveryStart(
+      baseStart({ sessionId: "sess-src", maker: null, title: "フォレスティア" }),
+      7,
+      {
+        ...depsWith(),
+        readSearch: async () => readySearch([exactCandidate()]),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const rejected = await runDiscoverySelect(
+      {
+        type: "adp:discovery-select-candidate",
+        sessionId: "sess-src",
+        productUrl: exactCandidate().productUrl,
+        targetSource: "fanza_doujin",
+        cid: "RJ012345",
+      },
+      7,
+      depsWith(),
+    );
+    assert.equal(rejected.ok, false);
+  });
+
+  it("restart on same origin tab cancels prior awaiting_selection session", async () => {
+    resetDiscoverySessionsForTests();
+    const notified: unknown[] = [];
+    await runDiscoveryStart(
+      baseStart({ sessionId: "sess-old", maker: null, title: "フォレスティア" }),
+      7,
+      {
+        ...depsWith(),
+        notifyOrigin: async (_t, m) => {
+          notified.push(m);
+        },
+        readSearch: async () => readySearch([exactCandidate()]),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(discoverySessionCountForTests(), 1);
+
+    await runDiscoveryStart(
+      baseStart({ sessionId: "sess-new", maker: null, title: "フォレスティア" }),
+      7,
+      {
+        ...depsWith(),
+        notifyOrigin: async (_t, m) => {
+          notified.push(m);
+        },
+        readSearch: async () => readySearch([exactCandidate()]),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    assert.equal(discoverySessionCountForTests(), 1);
+    assert.equal(discoveryAllowedCountForTests("sess-old"), 0);
+    assert.equal(discoveryAllowedCountForTests("sess-new"), 1);
+    const cancelled = notified.find(
+      (m) =>
+        (m as { type?: string; ok?: boolean; failureCode?: string }).type ===
+          MSG_DISCOVERY_RESULT &&
+        (m as { ok?: boolean }).ok === false &&
+        (m as { failureCode?: string }).failureCode === "discovery_cancelled",
+    );
+    assert.ok(cancelled);
   });
 
   it("age_gate and login fail closed", async () => {

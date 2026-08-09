@@ -28,6 +28,17 @@ import { approvedStoreHttpsUrl } from "../content/banner.js";
 
 export const DEFAULT_POLL_INTERVAL_MS = 500;
 export const DEFAULT_READINESS_TIMEOUT_MS = 30000;
+/** awaiting_selection sessions expire after this TTL (resource hygiene). */
+export const AWAITING_SELECTION_TTL_MS = 5 * 60 * 1000;
+
+type AllowedCandidate = {
+  cid: string;
+  productUrl: string;
+  targetSource: DiscoverySource;
+  title: string;
+  maker: string | null;
+  rank: number;
+};
 
 type SessionRecord = {
   sessionId: string;
@@ -40,6 +51,10 @@ type SessionRecord = {
   /** Tabs opened by this session; closed on finish. Never includes origin. */
   tempTabIds: Set<number>;
   phase: "search" | "awaiting_selection" | "product" | "done";
+  /** Candidates shown to the user for this session; select must match one. */
+  allowedCandidates: AllowedCandidate[];
+  awaitingSelectionExpiresAt: number | null;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
 };
 
 export type DiscoveryDeps = {
@@ -58,12 +73,26 @@ export type DiscoveryDeps = {
   notifyOrigin?: (tabId: number, message: unknown) => Promise<void>;
   pollIntervalMs?: number;
   readinessTimeoutMs?: number;
+  /** Test override for awaiting_selection TTL. */
+  awaitingSelectionTtlMs?: number;
+  /** Test override for setTimeout-based expiry scheduling. */
+  scheduleExpiry?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearExpiry?: (handle: ReturnType<typeof setTimeout>) => void;
 };
 
 const sessions = new Map<string, SessionRecord>();
+let tabLifecycleInstalled = false;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clearExpiryTimer(session: SessionRecord, deps: DiscoveryDeps): void {
+  if (session.expiryTimer !== null) {
+    const clear = deps.clearExpiry ?? clearTimeout;
+    clear(session.expiryTimer);
+    session.expiryTimer = null;
+  }
 }
 
 /** Always create a new background tab — never hijack user tabs. */
@@ -176,6 +205,7 @@ async function waitForProduct(
 }
 
 async function cleanupSession(session: SessionRecord, deps: DiscoveryDeps): Promise<void> {
+  clearExpiryTimer(session, deps);
   const closer = deps.closeTab ?? closeTab;
   for (const id of session.tempTabIds) {
     await closer(id);
@@ -183,6 +213,8 @@ async function cleanupSession(session: SessionRecord, deps: DiscoveryDeps): Prom
   session.tempTabIds.clear();
   sessions.delete(session.sessionId);
   session.phase = "done";
+  session.allowedCandidates = [];
+  session.awaitingSelectionExpiresAt = null;
 }
 
 async function fail(
@@ -210,6 +242,88 @@ async function fail(
   await cleanupSession(session, deps);
 }
 
+function scheduleAwaitingSelectionExpiry(
+  session: SessionRecord,
+  deps: DiscoveryDeps,
+): void {
+  clearExpiryTimer(session, deps);
+  const ttl = deps.awaitingSelectionTtlMs ?? AWAITING_SELECTION_TTL_MS;
+  session.awaitingSelectionExpiresAt = Date.now() + ttl;
+  const schedule = deps.scheduleExpiry ?? setTimeout;
+  session.expiryTimer = schedule(() => {
+    const current = sessions.get(session.sessionId);
+    if (!current || current.phase !== "awaiting_selection") return;
+    void fail(current, "discovery_cancelled", deps, "selection_timeout");
+  }, ttl);
+}
+
+/**
+ * Install once: when origin tab closes, drop related discovery sessions.
+ * Safe to call repeatedly.
+ */
+export function ensureDiscoveryTabLifecycle(): void {
+  if (tabLifecycleInstalled) return;
+  tabLifecycleInstalled = true;
+  if (typeof chrome === "undefined" || !chrome.tabs?.onRemoved?.addListener) return;
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    for (const session of [...sessions.values()]) {
+      if (session.originTabId === tabId) {
+        // Origin gone — no notify path; just clean resources.
+        void cleanupSession(session, {});
+        continue;
+      }
+      if (session.tempTabIds.has(tabId)) {
+        session.tempTabIds.delete(tabId);
+      }
+    }
+  });
+}
+
+async function cancelSessionsForOriginTab(
+  originTabId: number,
+  exceptSessionId: string,
+  deps: DiscoveryDeps,
+): Promise<void> {
+  for (const session of [...sessions.values()]) {
+    if (session.originTabId !== originTabId) continue;
+    if (session.sessionId === exceptSessionId) continue;
+    await fail(session, "discovery_cancelled", deps, "superseded");
+  }
+}
+
+function toAllowed(c: DiscoveryCandidate): AllowedCandidate | null {
+  const safeUrl = approvedStoreHttpsUrl(c.productUrl, c.targetSource);
+  if (!safeUrl) return null;
+  return {
+    cid: c.cid,
+    productUrl: safeUrl,
+    targetSource: c.targetSource,
+    title: c.title,
+    maker: c.maker,
+    rank: c.rank,
+  };
+}
+
+function findAllowed(
+  session: SessionRecord,
+  msg: { cid: string; productUrl: string; targetSource: DiscoverySource },
+): AllowedCandidate | null {
+  const safeUrl = approvedStoreHttpsUrl(msg.productUrl, msg.targetSource);
+  if (!safeUrl) return null;
+  if (msg.targetSource !== session.targetSource) return null;
+  const cid = msg.cid.trim();
+  for (const c of session.allowedCandidates) {
+    if (
+      c.targetSource === msg.targetSource &&
+      c.cid === cid &&
+      c.productUrl === safeUrl
+    ) {
+      return c;
+    }
+  }
+  return null;
+}
+
 async function openProductAndCompare(
   session: SessionRecord,
   candidate: DiscoveryCandidate,
@@ -224,6 +338,10 @@ async function openProductAndCompare(
     await fail(session, "discovery_blocked_policy", deps);
     return;
   }
+
+  clearExpiryTimer(session, deps);
+  session.allowedCandidates = [];
+  session.awaitingSelectionExpiresAt = null;
 
   await notify(session.originTabId, {
     type: MSG_DISCOVERY_STATUS,
@@ -321,6 +439,8 @@ export async function runDiscoveryStart(
   originTabId: number,
   deps: DiscoveryDeps = {},
 ): Promise<DiscoveryStartReply> {
+  ensureDiscoveryTabLifecycle();
+
   const parsed = DiscoveryStartMessageSchema.safeParse(message);
   if (!parsed.success) {
     return { ok: false, error: "discovery_invalid_request" };
@@ -335,6 +455,9 @@ export async function runDiscoveryStart(
   if (existing) {
     await cleanupSession(existing, deps);
   }
+
+  // One active discovery session per origin tab: cancel orphans from re-clicks.
+  await cancelSessionsForOriginTab(originTabId, msg.sessionId, deps);
 
   const targetSource = counterpartSource(msg.source);
   const built = buildDiscoverySearchUrl(targetSource, msg.title);
@@ -355,6 +478,9 @@ export async function runDiscoveryStart(
     originTiers: msg.originTiers,
     tempTabIds: new Set(),
     phase: "search",
+    allowedCandidates: [],
+    awaitingSelectionExpiresAt: null,
+    expiryTimer: null,
   };
   sessions.set(msg.sessionId, session);
 
@@ -427,15 +553,35 @@ export async function runDiscoveryStart(
         return;
       }
 
-      // Ambiguous / non-exact: show picker; keep session + temp tab until select/fail.
+      // Ambiguous / non-exact: show picker; allow-list only these candidates.
+      const allowed: AllowedCandidate[] = [];
+      for (const c of scored.candidates) {
+        const entry = toAllowed(c);
+        if (entry) allowed.push(entry);
+      }
+      if (allowed.length === 0) {
+        await fail(session, "discovery_no_match", deps);
+        return;
+      }
+
       session.phase = "awaiting_selection";
+      session.allowedCandidates = allowed;
+      scheduleAwaitingSelectionExpiry(session, deps);
+
       const result: DiscoveryResultMessage = {
         type: MSG_DISCOVERY_RESULT,
         sessionId: msg.sessionId,
         ok: true,
         kind: "candidates",
         targetSource,
-        candidates: scored.candidates,
+        candidates: allowed.map((c) => ({
+          targetSource: c.targetSource,
+          cid: c.cid,
+          title: c.title,
+          maker: c.maker,
+          productUrl: c.productUrl,
+          rank: c.rank,
+        })),
         originTiers: session.originTiers,
       };
       await notify(originTabId, result);
@@ -445,7 +591,6 @@ export async function runDiscoveryStart(
         phase: "awaiting_selection",
         message: "候補を選択してください",
       });
-      // Leave temp search tab open until user selects or session ends.
       // Close search tab now to avoid leaving clutter; product opens fresh.
       const closer = deps.closeTab ?? closeTab;
       for (const id of [...session.tempTabIds]) {
@@ -465,6 +610,8 @@ export async function runDiscoverySelect(
   originTabId: number,
   deps: DiscoveryDeps = {},
 ): Promise<DiscoverySelectReply> {
+  ensureDiscoveryTabLifecycle();
+
   const parsed = DiscoverySelectMessageSchema.safeParse(message);
   if (!parsed.success) return { ok: false, error: "discovery_invalid_request" };
   const msg = parsed.data;
@@ -477,28 +624,47 @@ export async function runDiscoverySelect(
     return { ok: false, error: "discovery_invalid_request" };
   }
 
-  const safeUrl = approvedStoreHttpsUrl(msg.productUrl, msg.targetSource);
-  if (!safeUrl) return { ok: false, error: "discovery_blocked_policy" };
+  if (
+    session.awaitingSelectionExpiresAt !== null &&
+    Date.now() > session.awaitingSelectionExpiresAt
+  ) {
+    await fail(session, "discovery_cancelled", deps, "selection_timeout");
+    return { ok: false, error: "discovery_session_lost" };
+  }
+
+  const allowed = findAllowed(session, msg);
+  if (!allowed) {
+    return { ok: false, error: "discovery_blocked_policy" };
+  }
 
   const candidate: DiscoveryCandidate = {
-    targetSource: msg.targetSource,
-    cid: msg.cid,
-    title: msg.cid, // title re-read from product page
-    maker: null,
-    productUrl: safeUrl,
-    rank: 1,
+    targetSource: allowed.targetSource,
+    cid: allowed.cid,
+    title: allowed.title,
+    maker: allowed.maker,
+    productUrl: allowed.productUrl,
+    rank: allowed.rank,
   };
 
   void openProductAndCompare(session, candidate, deps);
   return { ok: true, sessionId: msg.sessionId };
 }
 
-/** Test helper: clear in-memory sessions. */
+/** Test helper: clear in-memory sessions and expiry timers. */
 export function resetDiscoverySessionsForTests(): void {
+  for (const session of sessions.values()) {
+    if (session.expiryTimer !== null) clearTimeout(session.expiryTimer);
+  }
   sessions.clear();
+  tabLifecycleInstalled = false;
 }
 
 /** Test helper: inspect active session count. */
 export function discoverySessionCountForTests(): number {
   return sessions.size;
+}
+
+/** Test helper: read allow-list size for a session. */
+export function discoveryAllowedCountForTests(sessionId: string): number {
+  return sessions.get(sessionId)?.allowedCandidates.length ?? 0;
 }

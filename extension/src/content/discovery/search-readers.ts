@@ -3,19 +3,13 @@ import type { DiscoveryCandidate, DiscoverySearchReply, DiscoverySource } from "
 import { extractCidFromUrl } from "../cid.js";
 import { isVisible, visibleTextOf } from "../dom-visibility.js";
 import { approvedStoreHttpsUrl } from "../banner.js";
+import { detectAgeGate, detectLogin, safePageUrl } from "./page-guards.js";
 
 export const DISCOVERY_SEARCH_CANDIDATE_CAP = 30;
 
-function safePageUrl(pageUrl: string): string {
-  try {
-    const url = new URL(pageUrl);
-    if (url.protocol !== "https:") return "";
-    if (url.username !== "" || url.password !== "") return "";
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return "";
-  }
-}
+/** Wave-1 DLsite discovery product URLs are maniax floor only (content_scripts range). */
+const DLSITE_MANIAX_PRODUCT_PATH =
+  /^\/maniax\/work\/=\/product_id\/[A-Za-z0-9]+\.html$/i;
 
 function classListOf(el: Element): string[] {
   const raw = el.getAttribute("class") ?? (el as HTMLElement).className ?? "";
@@ -24,31 +18,6 @@ function classListOf(el: Element): string[] {
 
 function hasClass(el: Element, name: string): boolean {
   return classListOf(el).includes(name);
-}
-
-function detectAgeGate(doc: Document, pageUrl: string): boolean {
-  try {
-    const path = new URL(pageUrl).pathname;
-    if (/age_check/i.test(path)) return true;
-  } catch {
-    // ignore
-  }
-  const title = (doc.title ?? "").trim();
-  if (/年齢認証|年齢確認/.test(title)) return true;
-  const bodyText = doc.body ? visibleTextOf(doc.body).slice(0, 500) : "";
-  if (/このページはアダルト/.test(bodyText) && /年齢認証/.test(bodyText)) return true;
-  return false;
-}
-
-function detectLogin(doc: Document, pageUrl: string): boolean {
-  try {
-    const path = new URL(pageUrl).pathname;
-    if (/\/login|\/my\/|=\/login\//i.test(path)) return true;
-  } catch {
-    // ignore
-  }
-  const title = (doc.title ?? "").trim();
-  return /ログイン/.test(title) && /DMM|FANZA|DLsite/i.test(title);
 }
 
 function absoluteHref(href: string, pageUrl: string): string | null {
@@ -79,6 +48,14 @@ function validateProductUrl(
   }
   const cid = extractCidFromUrl(targetSource, cleaned);
   if (!cid) return null;
+  if (targetSource === "dlsite") {
+    try {
+      const path = new URL(cleaned).pathname;
+      if (!DLSITE_MANIAX_PRODUCT_PATH.test(path)) return null;
+    } catch {
+      return null;
+    }
+  }
   const approved = approvedStoreHttpsUrl(cleaned, targetSource);
   if (!approved) return null;
   return { productUrl: approved, cid };

@@ -5,41 +5,8 @@ import type {
 import { extractProductMeta } from "../meta.js";
 import { extractVisiblePriceTiers } from "../price-observation.js";
 import { classifyDisplayPage } from "../page-kind.js";
-import { isVisible, visibleTextOf } from "../dom-visibility.js";
-
-function safePageUrl(pageUrl: string): string {
-  try {
-    const url = new URL(pageUrl);
-    if (url.protocol !== "https:") return "";
-    if (url.username !== "" || url.password !== "") return "";
-    return `${url.origin}${url.pathname}`;
-  } catch {
-    return "";
-  }
-}
-
-function detectAgeGate(doc: Document, pageUrl: string): boolean {
-  try {
-    if (/age_check/i.test(new URL(pageUrl).pathname)) return true;
-  } catch {
-    // ignore
-  }
-  const title = (doc.title ?? "").trim();
-  if (/年齢認証|年齢確認/.test(title)) return true;
-  const bodyText = doc.body ? visibleTextOf(doc.body).slice(0, 500) : "";
-  return /このページはアダルト/.test(bodyText) && /年齢認証/.test(bodyText);
-}
-
-function detectLogin(doc: Document, pageUrl: string): boolean {
-  try {
-    const path = new URL(pageUrl).pathname;
-    if (/\/login|\/my\//i.test(path)) return true;
-  } catch {
-    // ignore
-  }
-  const title = (doc.title ?? "").trim();
-  return /ログイン/.test(title);
-}
+import { isVisible } from "../dom-visibility.js";
+import { detectAgeGate, detectLogin, safePageUrl } from "./page-guards.js";
 
 /**
  * Read counterpart product page: verify expected CID, then extract visible

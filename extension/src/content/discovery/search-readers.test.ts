@@ -64,6 +64,19 @@ function dlsiteSearchDoc(): MockDocument {
     "偽",
     "https://www.dlsite.com/maniax/cart/=/product_id/RJ999999.html",
   );
+  // non-maniax floors must be rejected (wave-1 content_scripts = maniax only)
+  addItem(
+    "RJ012347",
+    "プロフロア",
+    "他",
+    "https://www.dlsite.com/pro/work/=/product_id/RJ012347.html",
+  );
+  addItem(
+    "RJ012348",
+    "ブックスフロア",
+    "他",
+    "https://www.dlsite.com/books/work/=/product_id/RJ012348.html",
+  );
   // duplicate CID
   addItem(
     "RJ012345",
@@ -171,6 +184,11 @@ describe("discovery search readers", () => {
       reply.candidates.some((c) => c.cid === "RJ999999"),
       false,
       "cart URL must be rejected",
+    );
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ012347" || c.cid === "RJ012348"),
+      false,
+      "non-maniax DLsite floors must be rejected",
     );
   });
 

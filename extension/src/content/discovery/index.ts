@@ -12,7 +12,7 @@ import { mountDiscoveryOriginUi } from "./origin-ui.js";
 import { readDiscoveryProductPage } from "./product-reader.js";
 import { readDiscoverySearchPage } from "./search-readers.js";
 
-export { mountDiscoveryOriginUi } from "./origin-ui.js";
+export { hideDiscoveryOriginUi, mountDiscoveryOriginUi } from "./origin-ui.js";
 export { readDiscoverySearchPage } from "./search-readers.js";
 export { readDiscoveryProductPage } from "./product-reader.js";
 export { scoreDiscoveryCandidates } from "./identity.js";

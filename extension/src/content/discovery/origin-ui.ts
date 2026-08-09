@@ -52,29 +52,16 @@ function newSessionId(): string {
 function formatTier(money: DiscoveryPriceTiers[keyof DiscoveryPriceTiers]): string {
   if (!money) return "未取得";
   const yen = money.amountMinor.toLocaleString("ja-JP");
-  const tax =
-    money.taxStatus === "included"
-      ? "（税込）"
-      : money.taxStatus === "excluded"
-        ? "（税別）"
-        : "";
+  let tax = "";
+  if (money.taxStatus === "included") tax = "（税込）";
+  else if (money.taxStatus === "excluded") tax = "（税別）";
   return `${yen}円${tax}`;
 }
 
-function canRankLowest(a: DiscoveryPriceTiers, b: DiscoveryPriceTiers): boolean {
-  const pairs: Array<[typeof a.regular, typeof b.regular]> = [
-    [a.regular, b.regular],
-    [a.sale, b.sale],
-    [a.coupon, b.coupon],
-  ];
-  for (const [x, y] of pairs) {
-    if (!x || !y) continue;
-    if (x.currency !== y.currency || x.taxStatus !== y.taxStatus) return false;
-  }
-  // Require at least one comparable pair with same currency+tax.
-  return pairs.some(([x, y]) => x && y && x.currency === y.currency && x.taxStatus === y.taxStatus);
-}
-
+/**
+ * Per-tier lowest label. currency/taxStatus mismatch fail-closes only this tier
+ * and must not suppress ranking on other comparable tiers.
+ */
 function lowestLabel(
   origin: DiscoveryPriceTiers,
   target: DiscoveryPriceTiers,
@@ -130,7 +117,6 @@ function renderCompare(
   const box = doc.createElement("div");
   box.className = "adp-discovery-results";
 
-  const rankOk = canRankLowest(result.originTiers, result.targetTiers);
   const targetLabel = SOURCE_LABELS[result.targetSource];
 
   const title = doc.createElement("div");
@@ -166,9 +152,7 @@ function renderCompare(
     ["coupon", "クーポン表示"] as const,
   ] as const) {
     const tr = doc.createElement("tr");
-    const rank = rankOk
-      ? lowestLabel(result.originTiers, result.targetTiers, key)
-      : "";
+    const rank = lowestLabel(result.originTiers, result.targetTiers, key);
     tr.innerHTML = `<td>${label}</td><td>${formatTier(result.originTiers[key])}</td><td>${formatTier(result.targetTiers[key])}${rank}</td>`;
     tbody.appendChild(tr);
   }
@@ -216,14 +200,21 @@ function renderCandidates(
   box.appendChild(list);
   panel.appendChild(box);
   setStatus(panel, FAILURE_MESSAGES.discovery_ambiguous, "idle");
+  box.dataset.sessionId = sessionId;
+}
 
-  // Keep sessionId referenced for lint-free future wiring.
-  void sessionId;
+/**
+ * Remove discovery CTA / results when the product is known owned.
+ * Lookup failure leaves the CTA mounted (caller must not invoke this).
+ */
+export function hideDiscoveryOriginUi(doc: Document = document): void {
+  doc.getElementById(ADP_DISCOVERY_PANEL_ID)?.remove();
 }
 
 /**
  * Mount the user-initiated discovery CTA on a product page.
- * Independent of ownership lookup / price_observation.
+ * Mount is independent of ownership lookup success (lookup failure still shows CTA).
+ * Callers should hide via {@link hideDiscoveryOriginUi} when owned===true is confirmed.
  */
 export function mountDiscoveryOriginUi(
   source: InterventionSource,
