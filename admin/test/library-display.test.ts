@@ -155,4 +155,178 @@ describe("library display metadata", () => {
     assert.equal(row.querySelector("img"), null);
     assert.match(row.textContent ?? "", /未取得/);
   });
+
+  /**
+   * Issue #42: admin groups the flat GET /api/listings contract by workId and
+   * renders title / maker / source / purchase date / image / verified link /
+   * 未取得 without inventing work-level aggregates.
+   */
+  it("renders the five current sources with work grouping and 未取得 boundaries", async () => {
+    window = installDom();
+    const payload: ListingPayload = {
+      listings: [
+        {
+          id: 1,
+          source: "dlsite",
+          cid: "RJ_DISP_001",
+          workId: 100,
+          workIdLocked: false,
+          title: "DLsite表示",
+          maker: "サークル表示",
+          seriesId: null,
+          imageUrl: "https://img.example/dlsite.jpg",
+          imageProvenance: "store_product_metadata",
+          productUrl: "https://www.dlsite.com/maniax/work/=/product_id/RJ_DISP_001.html",
+          productUrlProvenance: "verified_derived",
+          purchasedAt: "2022-06-11T14:20:07.000Z",
+          purchasedAtPrecision: "second",
+          purchasePrice: null,
+          currentPrice: null,
+          priceObservation: null,
+        },
+        {
+          id: 2,
+          source: "fanza_doujin",
+          cid: "d_disp_1",
+          workId: 100,
+          workIdLocked: false,
+          title: "同人表示",
+          maker: "メーカー表示",
+          seriesId: null,
+          imageUrl: "https://img.example/doujin.jpg",
+          imageProvenance: "store_library_metadata",
+          productUrl: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_disp_1/",
+          productUrlProvenance: "verified_derived",
+          purchasedAt: "2026-07-24",
+          purchasedAtPrecision: "day",
+          purchasePrice: null,
+          currentPrice: null,
+          priceObservation: null,
+        },
+        {
+          id: 3,
+          source: "fanza_books",
+          cid: "b_disp_1",
+          workId: 200,
+          workIdLocked: false,
+          title: "Books表示",
+          maker: "著者表示",
+          seriesId: "series-1",
+          imageUrl: null,
+          imageProvenance: null,
+          productUrl: "https://book.dmm.co.jp/product/series-1/b_disp_1/",
+          productUrlProvenance: "verified_derived",
+          purchasedAt: "2023-12-30T12:00:00+09:00",
+          purchasedAtPrecision: "second",
+          purchasePrice: null,
+          currentPrice: null,
+          priceObservation: null,
+        },
+        {
+          id: 4,
+          source: "fanza_video",
+          cid: "v_disp_1",
+          workId: 300,
+          workIdLocked: false,
+          title: "Video表示",
+          maker: null,
+          seriesId: null,
+          imageUrl: null,
+          imageProvenance: null,
+          productUrl: "https://video.dmm.co.jp/av/content/?id=v_disp_1",
+          productUrlProvenance: "verified_derived",
+          purchasedAt: null,
+          purchasedAtPrecision: "unknown",
+          purchasePrice: null,
+          currentPrice: null,
+          priceObservation: null,
+        },
+        {
+          id: 5,
+          source: "fanza_dlsoft",
+          cid: "dl_disp_1",
+          workId: 400,
+          workIdLocked: false,
+          title: "dlsoft表示",
+          maker: "ブランド表示",
+          seriesId: null,
+          imageUrl: "https://img.example/dlsoft.jpg",
+          imageProvenance: "store_library_metadata",
+          productUrl: "https://dlsoft.dmm.co.jp/detail/dl_disp_1/",
+          productUrlProvenance: "verified_derived",
+          purchasedAt: null,
+          purchasedAtPrecision: "unknown",
+          purchasePrice: null,
+          currentPrice: null,
+          priceObservation: null,
+        },
+      ],
+      total: 5,
+    };
+    defineGlobal(
+      "fetch",
+      async () =>
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+
+    const { renderLibrary } = await import("../src/pages/library.js");
+    await renderLibrary(window.document.getElementById("app")!);
+
+    const groups = window.document.querySelectorAll(".work-group");
+    assert.equal(groups.length, 4);
+    const multi = window.document.querySelector('[data-work-id="100"]');
+    assert.equal(multi?.querySelector("header")?.textContent, "作品グループ（2 件）");
+    // Group header is count-only — no work-level title/image aggregate.
+    assert.equal(multi?.querySelector("header")?.textContent?.includes("DLsite表示"), false);
+
+    const dlsite = window.document.querySelector('[data-cid="RJ_DISP_001"]')!;
+    assert.match(dlsite.textContent ?? "", /DLsite表示/);
+    assert.match(dlsite.textContent ?? "", /dlsite \/ RJ_DISP_001/);
+    assert.match(dlsite.textContent ?? "", /サークル表示/);
+    assert.match(dlsite.textContent ?? "", /購入日:/);
+    assert.equal(
+      (dlsite.querySelector("img") as HTMLImageElement | null)?.getAttribute("src"),
+      "https://img.example/dlsite.jpg",
+    );
+    assert.equal(
+      (dlsite.querySelector("a") as HTMLAnchorElement | null)?.getAttribute("href"),
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ_DISP_001.html",
+    );
+    assert.match(dlsite.textContent ?? "", /購入価格: 未取得/);
+    assert.match(dlsite.textContent ?? "", /現在価格: 未取得/);
+
+    const books = window.document.querySelector('[data-cid="b_disp_1"]')!;
+    assert.equal(books.querySelector("img"), null);
+    assert.match(books.textContent ?? "", /Books表示/);
+    assert.match(books.textContent ?? "", /著者表示/);
+    assert.match(books.textContent ?? "", /fanza_books \/ b_disp_1/);
+    assert.ok(books.querySelector(".image-placeholder"));
+    assert.equal(
+      (books.querySelector("a") as HTMLAnchorElement | null)?.getAttribute("href"),
+      "https://book.dmm.co.jp/product/series-1/b_disp_1/",
+    );
+
+    const video = window.document.querySelector('[data-cid="v_disp_1"]')!;
+    assert.match(video.textContent ?? "", /Video表示/);
+    assert.match(video.textContent ?? "", /fanza_video \/ v_disp_1/);
+    // maker null + unknown purchase date → 未取得 (not imported_at, not 0).
+    assert.match(video.textContent ?? "", /未取得/);
+    assert.match(video.textContent ?? "", /購入日: 未取得/);
+    assert.equal(
+      (video.querySelector("a") as HTMLAnchorElement | null)?.getAttribute("href"),
+      "https://video.dmm.co.jp/av/content/?id=v_disp_1",
+    );
+
+    const dlsoft = window.document.querySelector('[data-cid="dl_disp_1"]')!;
+    assert.match(dlsoft.textContent ?? "", /dlsoft表示/);
+    assert.match(dlsoft.textContent ?? "", /ブランド表示/);
+    assert.match(dlsoft.textContent ?? "", /購入日: 未取得/);
+    assert.equal(
+      (dlsoft.querySelector("img") as HTMLImageElement | null)?.getAttribute("src"),
+      "https://img.example/dlsoft.jpg",
+    );
+  });
 });
