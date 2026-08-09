@@ -12,6 +12,15 @@ type InterceptHandler = (event?: Event) => void;
 const handlerKey = "__adpGateClickHandler";
 const prevOnclickKey = "__adpGatePrevOnclick";
 
+type PreviousCtaState = {
+  disabled: boolean | undefined;
+  disabledAttribute: string | null;
+  ariaDisabledAttribute: string | null;
+  tabindexAttribute: string | null;
+};
+
+const originalCtaState = new WeakMap<HTMLElement, PreviousCtaState>();
+
 type ElementWithGateHooks = HTMLElement & {
   onclick: ((this: GlobalEventHandlers, ev: MouseEvent) => unknown) | null;
   [handlerKey]?: InterceptHandler;
@@ -54,10 +63,45 @@ function detachIntercept(el: HTMLElement): void {
   delete record[handlerKey];
 }
 
+function isFormControl(el: HTMLElement): boolean {
+  const tag = el.tagName.toLowerCase();
+  return tag === "button" || tag === "input";
+}
+
+function restoreAttribute(el: HTMLElement, name: string, value: string | null): void {
+  if (value === null) el.removeAttribute(name);
+  else el.setAttribute(name, value);
+}
+
 function disableCta(el: HTMLElement): void {
+  if (el.tagName.toLowerCase() === "button" || el.tagName.toLowerCase() === "input") {
+    try {
+      originalCtaState.set(el, {
+        disabled: (el as HTMLButtonElement).disabled,
+        disabledAttribute: el.getAttribute("disabled"),
+        ariaDisabledAttribute: el.getAttribute("aria-disabled"),
+        tabindexAttribute: el.getAttribute("tabindex"),
+      });
+    } catch {
+      // If a non-standard element throws while reading disabled, preserve attrs.
+      originalCtaState.set(el, {
+        disabled: undefined,
+        disabledAttribute: el.getAttribute("disabled"),
+        ariaDisabledAttribute: el.getAttribute("aria-disabled"),
+        tabindexAttribute: el.getAttribute("tabindex"),
+      });
+    }
+  } else {
+    originalCtaState.set(el, {
+      disabled: undefined,
+      disabledAttribute: el.getAttribute("disabled"),
+      ariaDisabledAttribute: el.getAttribute("aria-disabled"),
+      tabindexAttribute: el.getAttribute("tabindex"),
+    });
+  }
   el.setAttribute(ADP_GATED_ATTR, "1");
   el.setAttribute("aria-disabled", "true");
-  if (el.tagName.toLowerCase() === "button" || el.tagName.toLowerCase() === "input") {
+  if (isFormControl(el)) {
     try {
       (el as HTMLButtonElement).disabled = true;
     } catch {
@@ -72,8 +116,23 @@ function disableCta(el: HTMLElement): void {
 
 function enableCta(el: HTMLElement): void {
   el.removeAttribute(ADP_GATED_ATTR);
-  el.removeAttribute("aria-disabled");
-  if (el.tagName.toLowerCase() === "button" || el.tagName.toLowerCase() === "input") {
+  const previous = originalCtaState.get(el);
+  if (previous) {
+    if (isFormControl(el) && previous.disabled !== undefined) {
+      try {
+        (el as HTMLButtonElement).disabled = previous.disabled;
+      } catch {
+        // ignore
+      }
+    }
+    restoreAttribute(el, "disabled", previous.disabledAttribute);
+    restoreAttribute(el, "aria-disabled", previous.ariaDisabledAttribute);
+    restoreAttribute(el, "tabindex", previous.tabindexAttribute);
+    originalCtaState.delete(el);
+  } else {
+    el.removeAttribute("aria-disabled");
+  }
+  if (isFormControl(el) && !previous) {
     try {
       (el as HTMLButtonElement).disabled = false;
     } catch {
@@ -81,7 +140,7 @@ function enableCta(el: HTMLElement): void {
     }
     el.removeAttribute("disabled");
   }
-  if (el.tagName.toLowerCase() === "a") {
+  if (el.tagName.toLowerCase() === "a" && !previous) {
     el.removeAttribute("tabindex");
   }
   detachIntercept(el);

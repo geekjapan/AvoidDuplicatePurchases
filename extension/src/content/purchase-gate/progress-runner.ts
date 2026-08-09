@@ -11,12 +11,13 @@ import {
   type GateStateStore,
 } from "./gate-state.js";
 import { isPurchaseProgressPage } from "./page-kind.js";
+import type { CartCidLoadResult } from "../cart/types.js";
 
 export type ProgressLookupFn = (
   items: Array<{ source: InterventionSource; cid: string }>,
 ) => Promise<LookupHit[] | null>;
 
-export type CartCidLoader = () => Promise<string[]>;
+export type CartCidLoader = () => Promise<CartCidLoadResult>;
 
 function readPathname(doc: Document): string {
   const loc = doc.location;
@@ -36,8 +37,9 @@ function readPathname(doc: Document): string {
  *
  * Strategy:
  * 1. Prefer live cart cid loader + lookup when provided (FANZA basket APIs / tests).
- * 2. Fall back to session state written on the cart page (DLsite has no cart list API).
- * 3. Lookup failure / empty unknown → do not gate (fail-open).
+ * 2. Fall back to session state written on the cart page only when no live loader
+ *    exists (DLsite has no cart list API).
+ * 3. Live basket or lookup failure / empty unknown → do not gate (fail-open).
  */
 export async function runPurchaseProgressPage(
   source: InterventionSource,
@@ -58,16 +60,26 @@ export async function runPurchaseProgressPage(
       options.lookup ??
       (async (items) => lookupItems(items));
 
-    let cids: string[] = [];
     if (options.loadCartCids) {
+      let loaded: CartCidLoadResult;
       try {
-        cids = await options.loadCartCids();
+        loaded = await options.loadCartCids();
       } catch {
-        cids = [];
+        return { gated: false, ctaCount: 0 };
       }
-    }
+      // A live basket failure must not fall back to stale session cids.
+      if (!Array.isArray(loaded)) return { gated: false, ctaCount: 0 };
+      if (loaded.length === 0) {
+        return applyConfirmedDuplicateGate(
+          doc,
+          source,
+          "purchase_progress",
+          [],
+          options.store,
+        );
+      }
+      const cids = loaded;
 
-    if (cids.length > 0) {
       let results: LookupHit[] | null;
       try {
         results = await lookup(cids.map((cid) => ({ source, cid })));

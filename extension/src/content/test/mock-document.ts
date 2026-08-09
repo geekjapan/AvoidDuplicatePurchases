@@ -170,6 +170,9 @@ export class MockElement {
     _listener: EventListenerOrEventListenerObject,
     _options?: boolean | AddEventListenerOptions,
   ): void {
+    void _type;
+    void _listener;
+    void _options;
     // Capture listeners are not fully simulated; onclick path is used in tests.
   }
 
@@ -178,6 +181,9 @@ export class MockElement {
     _listener: EventListenerOrEventListenerObject,
     _options?: boolean | EventListenerOptions,
   ): void {
+    void _type;
+    void _listener;
+    void _options;
     // no-op
   }
 

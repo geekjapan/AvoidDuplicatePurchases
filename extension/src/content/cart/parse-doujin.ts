@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CartRow } from "./types.js";
+import type { CartCidLoadResult, CartRow } from "./types.js";
 
 const BASKETS_URL = "https://www.dmm.co.jp/dc/doujin/api/baskets/";
 
@@ -123,23 +123,23 @@ export async function fetchDoujinCartRows(
  */
 export async function fetchDoujinCartCids(
   fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
-): Promise<string[]> {
+): Promise<CartCidLoadResult> {
   try {
     const response = await fetchFn(BASKETS_URL, {
       credentials: "include",
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
-    if (!response.ok) return [];
+    if (!response.ok) return { status: "unavailable" };
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      return [];
+      return { status: "unavailable" };
     }
     const parsed = DoujinBasketPayloadSchema.safeParse(payload);
-    if (!parsed.success) return [];
+    if (!parsed.success) return { status: "unavailable" };
     return parsed.data.data.map((item) => item.content_id);
   } catch {
-    return [];
+    return { status: "unavailable" };
   }
 }

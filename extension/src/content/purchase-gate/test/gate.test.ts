@@ -13,9 +13,13 @@ import { parseFixtureDocument } from "../../test/mock-document.js";
 import {
   ADP_GATE_BANNER_ID,
   ADP_GATED_ATTR,
+  applyConfirmedDuplicateGate,
   isPurchaseGateMounted,
+  mountPurchaseGate,
   readConfirmedDuplicateCids,
   runPurchaseProgressPage,
+  unmountPurchaseGate,
+  writeConfirmedDuplicateCids,
   type GateStateStore,
 } from "../index.js";
 
@@ -253,6 +257,71 @@ describe("fail-closed purchase gate (#57)", () => {
     assert.equal(immediate?.getAttribute(ADP_GATED_ATTR) ?? null, null);
   });
 
+  it("restores each CTA's pre-gate disabled and accessibility state", () => {
+    const doc = parseFixtureDocument(
+      `<!doctype html><body>
+        <button type="button" data-adp-purchase-cta="purchase-progress" disabled="original-disabled" aria-disabled="false" tabindex="4">注文を確定する</button>
+        <a href="/checkout" data-adp-purchase-cta="purchase-progress" aria-disabled="mixed" tabindex="7">支払いへ</a>
+      </body>`,
+      "https://book.dmm.co.jp/checkout",
+    );
+    const button = doc.body.querySelector(
+      '[data-adp-purchase-cta="purchase-progress"]',
+    ) as unknown as {
+      disabled: boolean;
+      getAttribute: (name: string) => string | null;
+      setAttribute: (name: string, value: string) => void;
+    };
+    const anchor = doc.body.querySelectorAll(
+      '[data-adp-purchase-cta="purchase-progress"]',
+    )[1] as unknown as {
+      getAttribute: (name: string) => string | null;
+      setAttribute: (name: string, value: string) => void;
+    };
+
+    button.setAttribute("disabled", "original-disabled");
+    button.setAttribute("aria-disabled", "false");
+    button.setAttribute("tabindex", "4");
+    anchor.setAttribute("aria-disabled", "mixed");
+    anchor.setAttribute("tabindex", "7");
+    assert.equal(button.disabled, true);
+    assert.equal(mountPurchaseGate(doc as unknown as Document, "purchase_progress"), 2);
+    assert.equal(button.getAttribute("aria-disabled"), "true");
+    assert.equal(anchor.getAttribute("tabindex"), "-1");
+
+    unmountPurchaseGate(doc as unknown as Document);
+    assert.equal(button.disabled, true);
+    assert.equal(button.getAttribute("disabled"), "original-disabled");
+    assert.equal(button.getAttribute("aria-disabled"), "false");
+    assert.equal(button.getAttribute("tabindex"), "4");
+    assert.equal(anchor.getAttribute("aria-disabled"), "mixed");
+    assert.equal(anchor.getAttribute("tabindex"), "7");
+  });
+
+  it("clears gated CTAs even when the banner was removed first", () => {
+    const doc = parseFixtureDocument(
+      `<!doctype html><body><button data-adp-purchase-cta="purchase-progress">注文を確定する</button></body>`,
+      "https://book.dmm.co.jp/checkout",
+    );
+    const store = memoryStore();
+    mountPurchaseGate(doc as unknown as Document, "purchase_progress");
+    const banner = doc.getElementById(ADP_GATE_BANNER_ID);
+    assert.ok(banner?.parentNode);
+    banner?.parentNode?.removeChild(banner);
+
+    applyConfirmedDuplicateGate(
+      doc as unknown as Document,
+      "fanza_books",
+      "purchase_progress",
+      [],
+      store,
+    );
+    const cta = doc.body.querySelector(
+      '[data-adp-purchase-cta="purchase-progress"]',
+    );
+    assert.equal(cta?.getAttribute(ADP_GATED_ATTR), null);
+  });
+
   it("purchase-progress: gates from live cart cids when confirmed; fail-open on lookup null", async () => {
     const doc = parseFixtureDocument(
       `<!doctype html><body>
@@ -343,5 +412,44 @@ describe("fail-closed purchase gate (#57)", () => {
     );
     assert.equal(result.gated, false);
     assert.equal(isPurchaseGateMounted(doc as unknown as Document), false);
+  });
+
+  it("does not reuse session cids when the live basket is unavailable", async () => {
+    const doc = parseFixtureDocument(
+      `<!doctype html><body><button data-adp-purchase-cta="purchase-progress">注文を確定する</button></body>`,
+      "https://book.dmm.co.jp/checkout",
+    );
+    const store = memoryStore();
+    writeConfirmedDuplicateCids("fanza_books", ["b100xxxxx01001"], store);
+    let lookupCalls = 0;
+
+    const unavailable = await runPurchaseProgressPage(
+      "fanza_books",
+      doc as unknown as Document,
+      {
+        loadCartCids: async () => ({ status: "unavailable" as const }),
+        lookup: async () => {
+          lookupCalls += 1;
+          return [{ owned: true, other: [] }];
+        },
+        store,
+      },
+    );
+
+    assert.deepEqual(unavailable, { gated: false, ctaCount: 0 });
+    assert.equal(lookupCalls, 0);
+    assert.equal(isPurchaseGateMounted(doc as unknown as Document), false);
+
+    const empty = await runPurchaseProgressPage(
+      "fanza_books",
+      doc as unknown as Document,
+      {
+        loadCartCids: async () => [],
+        lookup: async () => [{ owned: true, other: [] }],
+        store,
+      },
+    );
+    assert.deepEqual(empty, { gated: false, ctaCount: 0 });
+    assert.deepEqual(readConfirmedDuplicateCids("fanza_books", store), []);
   });
 });

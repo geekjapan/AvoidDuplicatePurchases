@@ -2,7 +2,6 @@ import type { InterventionSource } from "@adp/shared";
 
 import { isConfirmedDuplicate } from "./confirmed.js";
 import {
-  clearConfirmedDuplicateCids,
   writeConfirmedDuplicateCids,
   type GateStateStore,
 } from "./gate-state.js";
@@ -29,8 +28,7 @@ export function applyConfirmedDuplicateGate(
   const unique = [...new Set(confirmedCids.map((c) => c.trim()).filter(Boolean))];
   if (unique.length === 0) {
     writeConfirmedDuplicateCids(source, [], store ?? undefined);
-    if (isPurchaseGateMounted(doc)) unmountPurchaseGate(doc);
-    else clearConfirmedDuplicateCids(source, store ?? undefined);
+    unmountPurchaseGate(doc);
     return { gated: false, ctaCount: 0 };
   }
   writeConfirmedDuplicateCids(source, unique, store ?? undefined);

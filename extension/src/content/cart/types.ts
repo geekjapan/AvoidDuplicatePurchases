@@ -7,6 +7,9 @@ export interface CartRow {
   host: HTMLElement;
 }
 
+/** Live basket loading result; an empty array is a valid empty basket. */
+export type CartCidLoadResult = string[] | { readonly status: "unavailable" };
+
 export interface CartLookupItem {
   source: InterventionSource;
   cid: string;

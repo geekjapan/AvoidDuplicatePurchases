@@ -43,30 +43,34 @@ function isPostPaymentCompletePath(pathname: string): boolean {
   );
 }
 
+function isPathOrChild(pathname: string, prefix: string): boolean {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 function isDlsiteProgress(pathname: string): boolean {
   // Cart child human pages (not exact cart, not ajax — already filtered).
-  if (pathname.startsWith("/maniax/cart/")) return true;
-  if (pathname.startsWith("/maniax/order")) return true;
-  if (pathname.startsWith("/maniax/payment")) return true;
-  if (pathname.startsWith("/maniax/purchase")) return true;
-  if (pathname.startsWith("/maniax/checkout")) return true;
+  if (isPathOrChild(pathname, "/maniax/cart")) return true;
+  if (isPathOrChild(pathname, "/maniax/order")) return true;
+  if (isPathOrChild(pathname, "/maniax/payment")) return true;
+  if (isPathOrChild(pathname, "/maniax/purchase")) return true;
+  if (isPathOrChild(pathname, "/maniax/checkout")) return true;
   return false;
 }
 
 function isDoujinProgress(pathname: string): boolean {
-  if (pathname.startsWith("/dc/doujin/-/basket/")) return true;
-  if (pathname.startsWith("/dc/doujin/-/order")) return true;
-  if (pathname.startsWith("/dc/doujin/-/payment")) return true;
-  if (pathname.startsWith("/dc/doujin/-/purchase")) return true;
-  if (pathname.startsWith("/dc/doujin/-/checkout")) return true;
+  if (isPathOrChild(pathname, "/dc/doujin/-/basket")) return true;
+  if (isPathOrChild(pathname, "/dc/doujin/-/order")) return true;
+  if (isPathOrChild(pathname, "/dc/doujin/-/payment")) return true;
+  if (isPathOrChild(pathname, "/dc/doujin/-/purchase")) return true;
+  if (isPathOrChild(pathname, "/dc/doujin/-/checkout")) return true;
   return false;
 }
 
 function isBooksProgress(pathname: string): boolean {
-  if (pathname.startsWith("/basket/")) return true;
-  if (pathname.startsWith("/order")) return true;
-  if (pathname.startsWith("/payment")) return true;
-  if (pathname.startsWith("/purchase")) return true;
-  if (pathname.startsWith("/checkout")) return true;
+  if (isPathOrChild(pathname, "/basket")) return true;
+  if (isPathOrChild(pathname, "/order")) return true;
+  if (isPathOrChild(pathname, "/payment")) return true;
+  if (isPathOrChild(pathname, "/purchase")) return true;
+  if (isPathOrChild(pathname, "/checkout")) return true;
   return false;
 }

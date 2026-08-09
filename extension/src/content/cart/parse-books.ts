@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { CartRow } from "./types.js";
+import type { CartCidLoadResult, CartRow } from "./types.js";
 
 const PRODUCT_IDS_URL = "https://book.dmm.co.jp/ajax/bff/basket_product_ids/";
 
@@ -88,23 +88,23 @@ export async function fetchBooksCartRows(
  */
 export async function fetchBooksCartCids(
   fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
-): Promise<string[]> {
+): Promise<CartCidLoadResult> {
   try {
     const response = await fetchFn(PRODUCT_IDS_URL, {
       credentials: "include",
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
-    if (!response.ok) return [];
+    if (!response.ok) return { status: "unavailable" };
     let payload: unknown;
     try {
       payload = await response.json();
     } catch {
-      return [];
+      return { status: "unavailable" };
     }
     const parsed = BooksProductIdsPayloadSchema.safeParse(payload);
-    if (!parsed.success) return [];
+    if (!parsed.success) return { status: "unavailable" };
     return parsed.data.product_ids.map((id) => id.trim()).filter(Boolean);
   } catch {
-    return [];
+    return { status: "unavailable" };
   }
 }
