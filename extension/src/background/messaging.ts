@@ -15,14 +15,19 @@ import { runLibrarySync, type LibrarySyncOutcome } from "./library-sync.js";
 import {
   isAdminMessage,
   MSG_AMAZON_SYNC,
+  MSG_DISCOVERY_SELECT,
+  MSG_DISCOVERY_START,
   MSG_LIBRARY_SYNC,
   MSG_LOOKUP,
   MSG_PRICE_OBSERVATION,
   MSG_SYNC,
   MSG_SERVER_STATUS,
+  type DiscoverySelectMessage,
+  type DiscoveryStartMessage,
   type PriceObservationMessage,
   type PriceObservationReply,
 } from "../messages.js";
+import { runDiscoverySelect, runDiscoveryStart } from "./discovery.js";
 
 export type MessageHandler = (
   message: { type?: string },
@@ -197,6 +202,32 @@ export function registerMessaging(): void {
         })
         .catch((err: unknown) =>
           sendResponse({ ok: false, error: String(err) } satisfies PriceObservationReply),
+        );
+      return true;
+    }
+    if (message?.type === MSG_DISCOVERY_START) {
+      const originTabId = _sender.tab?.id;
+      if (typeof originTabId !== "number") {
+        sendResponse({ ok: false, error: "discovery_invalid_request" });
+        return true;
+      }
+      runDiscoveryStart(message as DiscoveryStartMessage, originTabId)
+        .then(sendResponse)
+        .catch((err: unknown) =>
+          sendResponse({ ok: false, error: String(err) }),
+        );
+      return true;
+    }
+    if (message?.type === MSG_DISCOVERY_SELECT) {
+      const originTabId = _sender.tab?.id;
+      if (typeof originTabId !== "number") {
+        sendResponse({ ok: false, error: "discovery_invalid_request" });
+        return true;
+      }
+      runDiscoverySelect(message as DiscoverySelectMessage, originTabId)
+        .then(sendResponse)
+        .catch((err: unknown) =>
+          sendResponse({ ok: false, error: String(err) }),
         );
       return true;
     }

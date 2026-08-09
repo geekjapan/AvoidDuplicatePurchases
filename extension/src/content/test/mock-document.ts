@@ -278,6 +278,8 @@ export class MockDocument {
   readonly head = new MockElement("head");
   readonly body = new MockElement("body");
   readonly location = { href: "" };
+  /** Optional document title used by discovery age-gate / login detectors. */
+  title = "";
   readonly defaultView = {
     getComputedStyle: (el: MockElement) => ({
       display:

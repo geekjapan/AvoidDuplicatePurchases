@@ -4,8 +4,12 @@ import { classifyDisplayPage } from "./page-kind.js";
 import { isPurchaseProgressPage, runPurchaseProgressPage } from "./purchase-gate/index.js";
 import { runListingPage } from "./listing-page.js";
 import { runProductPage } from "./product-page.js";
+import { bootDiscovery } from "./discovery/index.js";
 
 export function boot(pathname: string = window.location.pathname): void {
+  // Discovery message handlers + product CTA (independent of ownership lookup).
+  bootDiscovery("dlsite", pathname);
+
   const kind = classifyDisplayPage("dlsite", pathname);
   if (kind === "product") {
     void runProductPage("dlsite");

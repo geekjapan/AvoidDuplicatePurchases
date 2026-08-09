@@ -45,6 +45,99 @@ export const DISPLAY_CSS = `
   z-index: 5;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
+.adp-discovery-panel {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid #90caf9;
+  background: #f5faff;
+  color: #0d47a1;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.adp-discovery-start-btn {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid #1976d2;
+  background: #1976d2;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.adp-discovery-start-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.adp-discovery-status {
+  margin: 4px 0 0;
+}
+.adp-discovery-status[data-kind="error"] {
+  color: #b71c1c;
+}
+.adp-discovery-status[data-kind="ok"] {
+  color: #1b5e20;
+}
+.adp-discovery-status[data-kind="busy"] {
+  color: #0d47a1;
+}
+.adp-discovery-results,
+.adp-discovery-candidates {
+  margin-top: 10px;
+}
+.adp-discovery-results__title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.adp-discovery-results__meta {
+  margin-bottom: 8px;
+}
+.adp-discovery-price-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 13px;
+}
+.adp-discovery-price-table th,
+.adp-discovery-price-table td {
+  border: 1px solid #bbdefb;
+  padding: 4px 8px;
+  text-align: left;
+}
+.adp-discovery-price-table th {
+  background: #e3f2fd;
+}
+.adp-discovery-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #455a64;
+}
+.adp-discovery-candidate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.adp-discovery-candidate-list li {
+  margin: 4px 0;
+}
+.adp-discovery-candidate-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid #90caf9;
+  border-radius: 4px;
+  background: #fff;
+  color: #0d47a1;
+  cursor: pointer;
+  font-size: 13px;
+}
+.adp-discovery-candidate-btn:hover {
+  background: #e3f2fd;
+}
 `;
 
 export function ensureDisplayStyles(doc: Document): void {
