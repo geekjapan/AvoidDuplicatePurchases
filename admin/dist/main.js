@@ -1362,7 +1362,7 @@ function issue(...args) {
 function cleanEnum(obj) {
   return Object.entries(obj).filter(([k, _]) => {
     return Number.isNaN(Number.parseInt(k, 10));
-  }).map((el6) => el6[1]);
+  }).map((el7) => el7[1]);
 }
 function base64ToUint8Array(base643) {
   const binaryString = atob(base643);
@@ -1456,15 +1456,15 @@ function formatError(error51, mapper = (issue2) => issue2.message) {
           let curr = fieldErrors;
           let i = 0;
           while (i < fullpath.length) {
-            const el6 = fullpath[i];
+            const el7 = fullpath[i];
             const terminal = i === fullpath.length - 1;
             if (!terminal) {
-              curr[el6] = curr[el6] || { _errors: [] };
+              curr[el7] = curr[el7] || { _errors: [] };
             } else {
-              curr[el6] = curr[el6] || { _errors: [] };
-              curr[el6]._errors.push(mapper(issue2));
+              curr[el7] = curr[el7] || { _errors: [] };
+              curr[el7]._errors.push(mapper(issue2));
             }
-            curr = curr[el6];
+            curr = curr[el7];
             i++;
           }
         }
@@ -1494,16 +1494,16 @@ function treeifyError(error51, mapper = (issue2) => issue2.message) {
         let curr = result;
         let i = 0;
         while (i < fullpath.length) {
-          const el6 = fullpath[i];
+          const el7 = fullpath[i];
           const terminal = i === fullpath.length - 1;
-          if (typeof el6 === "string") {
+          if (typeof el7 === "string") {
             curr.properties ?? (curr.properties = {});
-            (_a3 = curr.properties)[el6] ?? (_a3[el6] = { errors: [] });
-            curr = curr.properties[el6];
+            (_a3 = curr.properties)[el7] ?? (_a3[el7] = { errors: [] });
+            curr = curr.properties[el7];
           } else {
             curr.items ?? (curr.items = []);
-            (_b = curr.items)[el6] ?? (_b[el6] = { errors: [] });
-            curr = curr.items[el6];
+            (_b = curr.items)[el7] ?? (_b[el7] = { errors: [] });
+            curr = curr.items[el7];
           }
           if (terminal) {
             curr.errors.push(mapper(issue2));
@@ -3168,10 +3168,10 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
     const proms = [];
     const shape = value.shape;
     for (const key2 of value.keys) {
-      const el6 = shape[key2];
-      const isOptionalIn = el6._zod.optin === "optional";
-      const isOptionalOut = el6._zod.optout === "optional";
-      const r = el6._zod.run({ value: input[key2], issues: [] }, ctx);
+      const el7 = shape[key2];
+      const isOptionalIn = el7._zod.optin === "optional";
+      const isOptionalOut = el7._zod.optout === "optional";
+      const r = el7._zod.run({ value: input[key2], issues: [] }, ctx);
       if (r instanceof Promise) {
         proms.push(r.then((r2) => handlePropertyResult(r2, payload, key2, input, isOptionalIn, isOptionalOut)));
       } else {
@@ -3649,9 +3649,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     if (def.rest) {
       let i = items.length - 1;
       const rest = input.slice(items.length);
-      for (const el6 of rest) {
+      for (const el7 of rest) {
         i++;
-        const result = def.rest._zod.run({ value: el6, issues: [] }, ctx);
+        const result = def.rest._zod.run({ value: el7, issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((r) => handleTupleResult(r, payload, i)));
         } else {
@@ -15702,7 +15702,12 @@ async function renderLibrary(root) {
   await load();
 }
 
-// src/pages/related.ts
+// src/pages/price-comparison.ts
+var PRICE_COMPARISON_SOURCES = [
+  "dlsite",
+  "fanza_doujin",
+  "fanza_books"
+];
 function el3(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key2, value] of Object.entries(props)) {
@@ -15718,6 +15723,13 @@ function el3(tag, props = {}, children = []) {
 function errorMessage3(err) {
   return err instanceof Error ? err.message : String(err);
 }
+function isPriceComparisonSource(source) {
+  return PRICE_COMPARISON_SOURCES.includes(source);
+}
+function storeBrandLabel(source) {
+  if (source === "dlsite") return "DLsite";
+  return "FANZA";
+}
 function taxStatusLabel2(status) {
   if (status === "included") return "\u7A0E\u8FBC";
   if (status === "excluded") return "\u7A0E\u5225";
@@ -15726,6 +15738,282 @@ function taxStatusLabel2(status) {
 function moneyLabel2(money) {
   if (!money) return "\u672A\u53D6\u5F97";
   return `${money.currency} ${money.amountMinor}\uFF08${taxStatusLabel2(money.taxStatus)}\u30FB\u6700\u5C0F\u5358\u4F4D\uFF09`;
+}
+function tierDisplayName(tier) {
+  if (tier === "regular") return "\u5B9A\u4FA1/\u30B5\u30FC\u30AF\u30EB\u8A2D\u5B9A\u4FA1\u683C";
+  if (tier === "sale") return "\u30BB\u30FC\u30EB/\u30AD\u30E3\u30F3\u30DA\u30FC\u30F3\u4FA1\u683C";
+  return "\u30AF\u30FC\u30DD\u30F3\u9069\u7528\u5F8C\u8868\u793A\u4FA1\u683C";
+}
+function filterComparisonListings(listings) {
+  return listings.filter((listing) => isPriceComparisonSource(listing.source));
+}
+function groupByWorkId(listings) {
+  const map2 = /* @__PURE__ */ new Map();
+  for (const listing of listings) {
+    const group = map2.get(listing.workId) ?? [];
+    group.push(listing);
+    map2.set(listing.workId, group);
+  }
+  return map2;
+}
+function tierMoney(listing, tier) {
+  const obs = listing.priceObservation;
+  if (!obs) return null;
+  return obs[tier];
+}
+function compareTier(candidates) {
+  const present = candidates.filter(
+    (c) => c.money !== null
+  );
+  if (present.length < 2) {
+    return { status: "insufficient", reason: "fewer_than_two_values" };
+  }
+  const first = present[0].money;
+  for (const c of present) {
+    if (c.money.currency !== first.currency || c.money.taxStatus !== first.taxStatus) {
+      return { status: "incomparable", reason: "currency_or_tax_mismatch" };
+    }
+  }
+  let lowest = present[0].money.amountMinor;
+  for (const c of present) {
+    if (c.money.amountMinor < lowest) lowest = c.money.amountMinor;
+  }
+  const winners = present.filter((c) => c.money.amountMinor === lowest).map((c) => ({ source: c.source, cid: c.cid }));
+  return {
+    status: "lowest",
+    currency: first.currency,
+    taxStatus: first.taxStatus,
+    amountMinor: lowest,
+    winners
+  };
+}
+function comparisonSummaryLabel(result) {
+  if (result.status === "incomparable") {
+    return "\u6BD4\u8F03\u4E0D\u53EF\uFF08\u901A\u8CA8\u307E\u305F\u306F\u7A0E\u533A\u5206\u304C\u4E00\u81F4\u3057\u306A\u3044\uFF09";
+  }
+  if (result.status === "insufficient") {
+    return "\u6BD4\u8F03\u5BFE\u8C61\u4E0D\u8DB3\uFF08\u540C\u4E00\u5C64\u306E\u53D6\u5F97\u5024\u304C2\u4EF6\u672A\u6E80\uFF09";
+  }
+  const who = result.winners.map((w) => `${w.source}/${w.cid}`).join(", ");
+  return `\u6700\u5B89: ${result.currency} ${result.amountMinor}\uFF08${taxStatusLabel2(result.taxStatus)}\u30FB\u6700\u5C0F\u5358\u4F4D\uFF09\u2014 ${who}`;
+}
+function tierCandidates(listings, tier) {
+  return listings.map((listing) => ({
+    source: listing.source,
+    cid: listing.cid,
+    money: tierMoney(listing, tier)
+  }));
+}
+function renderListingRow(listing) {
+  const source = listing.source;
+  const obs = listing.priceObservation;
+  const row = el3("tr", {
+    className: "price-comparison-listing-row",
+    "data-testid": "price-comparison-listing-row",
+    "data-source": listing.source,
+    "data-cid": listing.cid,
+    "data-work-id": String(listing.workId)
+  });
+  const identity = el3("td", {
+    "data-testid": "price-comparison-identity"
+  }, [
+    el3("div", {
+      className: "price-comparison-store",
+      textContent: storeBrandLabel(source)
+    }),
+    el3("strong", { textContent: listing.title }),
+    el3("div", {
+      className: "muted",
+      "data-testid": "price-comparison-source-cid",
+      textContent: `${listing.source} / ${listing.cid}`
+    }),
+    el3("div", {
+      className: "muted",
+      textContent: `\u30E1\u30FC\u30AB\u30FC: ${listing.maker ?? "\u672A\u53D6\u5F97"}`
+    })
+  ]);
+  const regularCell = el3("td", {
+    "data-testid": "price-comparison-tier-regular",
+    "data-tier": "regular",
+    "data-missing": obs?.regular ? "false" : "true",
+    textContent: moneyLabel2(obs?.regular ?? null)
+  });
+  const saleCell = el3("td", {
+    "data-testid": "price-comparison-tier-sale",
+    "data-tier": "sale",
+    "data-missing": obs?.sale ? "false" : "true",
+    textContent: moneyLabel2(obs?.sale ?? null)
+  });
+  const couponCell = el3("td", {
+    "data-testid": "price-comparison-tier-coupon",
+    "data-tier": "coupon",
+    "data-missing": obs?.coupon ? "false" : "true",
+    textContent: moneyLabel2(obs?.coupon ?? null)
+  });
+  const metaCell = el3("td", {
+    "data-testid": "price-comparison-observed-at",
+    textContent: obs?.observedAt ?? "\u672A\u53D6\u5F97"
+  });
+  row.append(identity, regularCell, saleCell, couponCell, metaCell);
+  return row;
+}
+function renderTierSummary(tier, listings) {
+  const result = compareTier(tierCandidates(listings, tier));
+  const statusAttr = result.status === "lowest" ? "lowest" : result.status === "incomparable" ? "incomparable" : "insufficient";
+  return el3("div", {
+    className: `price-comparison-tier-summary status-${statusAttr}`,
+    "data-testid": `price-comparison-summary-${tier}`,
+    "data-tier": tier,
+    "data-comparison-status": statusAttr,
+    textContent: `${tierDisplayName(tier)}: ${comparisonSummaryLabel(result)}`
+  });
+}
+function renderWorkGroup(workId, listings) {
+  const sorted = [...listings].sort((a, b) => {
+    if (a.source !== b.source) return a.source.localeCompare(b.source);
+    return a.cid.localeCompare(b.cid);
+  });
+  const group = el3("section", {
+    className: "work-group price-comparison-work",
+    "data-testid": "price-comparison-work-group",
+    "data-work-id": String(workId)
+  });
+  group.append(
+    el3("header", {
+      textContent: `\u4F5C\u54C1\u30B0\u30EB\u30FC\u30D7 \u2014 ${sorted.length} listings\uFF08workId \u306F\u5185\u90E8 grouping \u306E\u307F\uFF09`
+    })
+  );
+  const table = el3("table", {
+    className: "price-comparison-table",
+    "data-testid": "price-comparison-table"
+  });
+  table.append(
+    el3("thead", {}, [
+      el3("tr", {}, [
+        el3("th", { textContent: "\u30B9\u30C8\u30A2 / \u5546\u54C1" }),
+        el3("th", { textContent: tierDisplayName("regular") }),
+        el3("th", { textContent: tierDisplayName("sale") }),
+        el3("th", { textContent: tierDisplayName("coupon") }),
+        el3("th", { textContent: "\u89B3\u6E2C\u6642\u523B" })
+      ])
+    ])
+  );
+  const tbody = el3("tbody");
+  for (const listing of sorted) {
+    tbody.append(renderListingRow(listing));
+  }
+  table.append(tbody);
+  group.append(table);
+  const summary = el3("div", {
+    className: "price-comparison-summaries",
+    "data-testid": "price-comparison-summaries"
+  });
+  for (const tier of ["regular", "sale", "coupon"]) {
+    summary.append(renderTierSummary(tier, sorted));
+  }
+  group.append(summary);
+  return group;
+}
+async function renderPriceComparison(root) {
+  root.replaceChildren(
+    el3("div", { className: "panel" }, [
+      el3("h2", { textContent: "FANZA / DLsite \u4FA1\u683C\u6BD4\u8F03" }),
+      el3("p", {
+        className: "muted",
+        "data-testid": "price-comparison-boundary",
+        textContent: "\u540C\u4E00 workId \u306E\u4FDD\u6709 listing \u306B\u3064\u3044\u3066\u3001\u4FDD\u5B58\u6E08\u307F\u306E\u53EF\u8996DOM\u4FA1\u683C\u89B3\u6E2C\uFF08priceObservation\uFF09\u3060\u3051\u3092\u6BD4\u8F03\u3057\u307E\u3059\u3002\u5BFE\u8C61\u306F dlsite / fanza_doujin / fanza_books \u306E\u307F\u3002\u672A\u53D6\u5F97\u5C64\u306F\u63A8\u6E2C\u305B\u305A\u300C\u672A\u53D6\u5F97\u300D\u3068\u8868\u793A\u3057\u3001\u901A\u8CA8\u307E\u305F\u306F\u7A0E\u533A\u5206\u304C\u4E00\u81F4\u3057\u306A\u3044\u4FA1\u683C\u306F\u300C\u6BD4\u8F03\u4E0D\u53EF\u300D\u3068\u3057\u307E\u3059\u3002\u624B\u52D5\u540C\u671F\u3067\u5F97\u305F\u89B3\u6E2C\u306E\u8AAD\u307F\u53D6\u308A\u5C02\u7528\u8868\u793A\u3067\u3042\u308A\u3001\u30D7\u30ED\u30D0\u30A4\u30C0\u53D6\u5F97\u30FBCookie/\u8CC7\u683C\u60C5\u5831\u30FB\u30D0\u30C3\u30AF\u30B0\u30E9\u30A6\u30F3\u30C9\u5DE1\u56DE\u30FB\u8CFC\u5165/\u30AB\u30FC\u30C8/\u30AF\u30FC\u30DD\u30F3\u64CD\u4F5C\u306F\u884C\u3044\u307E\u305B\u3093\u3002"
+      })
+    ])
+  );
+  const statusRegion = el3("div", {
+    className: "status-region",
+    role: "status",
+    "aria-live": "polite",
+    "aria-atomic": "true",
+    "data-testid": "price-comparison-status"
+  });
+  const resultsHost = el3("div", {
+    className: "panel",
+    "data-testid": "price-comparison-results"
+  });
+  root.append(statusRegion, resultsHost);
+  function setStatus(message, kind = "info") {
+    statusRegion.textContent = message;
+    statusRegion.className = `status-region status-${kind}`;
+    statusRegion.setAttribute("data-kind", kind);
+    if (kind === "error") {
+      statusRegion.setAttribute("role", "alert");
+      statusRegion.setAttribute("aria-live", "assertive");
+    } else {
+      statusRegion.setAttribute("role", "status");
+      statusRegion.setAttribute("aria-live", "polite");
+    }
+  }
+  setStatus("\u4FDD\u6709 listing \u306E\u4FA1\u683C\u89B3\u6E2C\u3092\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026");
+  try {
+    const data = await fetchListings({});
+    const comparable = filterComparisonListings(data.listings);
+    const excludedCount = data.listings.length - comparable.length;
+    const groups = groupByWorkId(comparable);
+    const workIds = [...groups.keys()].sort((a, b) => a - b);
+    resultsHost.replaceChildren();
+    if (workIds.length === 0) {
+      resultsHost.append(
+        el3("p", {
+          className: "empty",
+          "data-testid": "price-comparison-empty",
+          textContent: "\u6BD4\u8F03\u5BFE\u8C61\uFF08dlsite / fanza_doujin / fanza_books\uFF09\u306E\u4FDD\u6709 listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002"
+        })
+      );
+      setStatus(
+        excludedCount > 0 ? `\u5BFE\u8C61 listing 0 \u4EF6\uFF08\u4ED6\u30BD\u30FC\u30B9 ${excludedCount} \u4EF6\u306F\u6BD4\u8F03\u304B\u3089\u9664\u5916\uFF09\u3002` : "\u6BD4\u8F03\u3067\u304D\u308B listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002"
+      );
+      return;
+    }
+    for (const workId of workIds) {
+      const listings = groups.get(workId) ?? [];
+      resultsHost.append(renderWorkGroup(workId, listings));
+    }
+    setStatus(
+      `\u4F5C\u54C1\u30B0\u30EB\u30FC\u30D7 ${workIds.length} \u4EF6\u30FB\u5BFE\u8C61 listing ${comparable.length} \u4EF6\u3092\u8868\u793A` + (excludedCount > 0 ? `\uFF08\u9664\u5916\u30BD\u30FC\u30B9 ${excludedCount} \u4EF6\uFF09` : "") + "\u3002",
+      "success"
+    );
+  } catch (err) {
+    resultsHost.replaceChildren(
+      el3("p", {
+        className: "empty",
+        "data-testid": "price-comparison-empty",
+        textContent: "\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"
+      })
+    );
+    setStatus(errorMessage3(err), "error");
+  }
+}
+
+// src/pages/related.ts
+function el4(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key2, value] of Object.entries(props)) {
+    if (key2 === "className") node.className = value;
+    else if (key2 === "textContent") node.textContent = value;
+    else node.setAttribute(key2, value);
+  }
+  for (const child of children) {
+    node.append(child instanceof Node ? child : document.createTextNode(child));
+  }
+  return node;
+}
+function errorMessage4(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function taxStatusLabel3(status) {
+  if (status === "included") return "\u7A0E\u8FBC";
+  if (status === "excluded") return "\u7A0E\u5225";
+  return "\u7A0E\u533A\u5206\u4E0D\u660E";
+}
+function moneyLabel3(money) {
+  if (!money) return "\u672A\u53D6\u5F97";
+  return `${money.currency} ${money.amountMinor}\uFF08${taxStatusLabel3(money.taxStatus)}\u30FB\u6700\u5C0F\u5358\u4F4D\uFF09`;
 }
 function freshnessLabel(freshness) {
   if (freshness === "fresh") return "\u53D6\u5F97\u6E08\u307F\uFF0824h\u4EE5\u5185\uFF09";
@@ -15752,14 +16040,14 @@ function evidenceLabel(item) {
 function priceBlock(item) {
   const p = item.price;
   const lines = [
-    `\u73FE\u5728: ${moneyLabel2(p.current)}`,
-    `\u901A\u5E38: ${moneyLabel2(p.regular)}`,
+    `\u73FE\u5728: ${moneyLabel3(p.current)}`,
+    `\u901A\u5E38: ${moneyLabel3(p.regular)}`,
     `\u5272\u5F15\u7387: ${p.discountPercent === null ? "\u672A\u53D6\u5F97" : `${p.discountPercent}%`}`,
     `\u30BB\u30FC\u30EB\u7D42\u4E86: ${p.saleEndsAt ?? "\u672A\u53D6\u5F97\uFF08\u63A8\u6E2C\u3057\u306A\u3044\uFF09"}`,
     `\u89B3\u6E2C\u6642\u523B: ${p.observedAt ?? "\u672A\u53D6\u5F97"}`,
     `\u72B6\u614B: ${freshnessLabel(p.freshness)}`
   ];
-  return el3("div", {
+  return el4("div", {
     className: "related-price",
     "data-testid": "related-price",
     "data-freshness": p.freshness,
@@ -15768,47 +16056,47 @@ function priceBlock(item) {
 }
 async function renderRelated(root) {
   root.replaceChildren(
-    el3("div", { className: "panel" }, [
-      el3("h2", { textContent: "\u95A2\u9023\u88FD\u54C1\u30FB\u30BB\u30FC\u30EB\u6BD4\u8F03" }),
-      el3("p", {
+    el4("div", { className: "panel" }, [
+      el4("h2", { textContent: "\u95A2\u9023\u88FD\u54C1\u30FB\u30BB\u30FC\u30EB\u6BD4\u8F03" }),
+      el4("p", {
         className: "muted",
         textContent: "\u4FDD\u6709 listing \u3092\u8D77\u70B9\u306B\u3001maker / author / series / store_related \u306E\u6839\u62E0\u304C\u3042\u308B\u95A2\u9023\u5019\u88DC\u3060\u3051\u3092\u6BD4\u8F03\u3057\u307E\u3059\u3002\u30BF\u30A4\u30C8\u30EB\u985E\u4F3C\u3060\u3051\u3067\u306F\u51FA\u3057\u307E\u305B\u3093\u3002\u672A\u4FDD\u6709\u306E market offer \u306F\u30E9\u30A4\u30D6\u30E9\u30EA\u884C\u3068\u6DF7\u305C\u307E\u305B\u3093\u3002"
       })
     ])
   );
-  const controls = el3("div", {
+  const controls = el4("div", {
     className: "panel related-controls",
     "data-testid": "related-controls"
   });
-  const statusRegion = el3("div", {
+  const statusRegion = el4("div", {
     className: "status-region",
     role: "status",
     "aria-live": "polite",
     "aria-atomic": "true",
     "data-testid": "related-status"
   });
-  const ownedPanel = el3("div", {
+  const ownedPanel = el4("div", {
     className: "panel",
     "data-testid": "related-owned-anchor"
   });
-  const resultsHost = el3("div", {
+  const resultsHost = el4("div", {
     className: "panel",
     "data-testid": "related-results"
   });
   root.append(controls, statusRegion, ownedPanel, resultsHost);
-  const anchorSelect = el3("select", {
+  const anchorSelect = el4("select", {
     "data-testid": "related-anchor-select",
     "aria-label": "\u6BD4\u8F03\u306E\u8D77\u70B9\uFF08\u4FDD\u6709 listing\uFF09"
   });
-  const ownedModeSelect = el3("select", {
+  const ownedModeSelect = el4("select", {
     "data-testid": "related-owned-mode",
     "aria-label": "\u4FDD\u6709\u6E08\u307F\u306E\u6271\u3044"
   });
   ownedModeSelect.append(
-    el3("option", { value: "exclude", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u9664\u5916\uFF08\u65E2\u5B9A\uFF09" }),
-    el3("option", { value: "mark", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u660E\u793A\u3057\u3066\u8868\u793A" })
+    el4("option", { value: "exclude", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u9664\u5916\uFF08\u65E2\u5B9A\uFF09" }),
+    el4("option", { value: "mark", textContent: "\u4FDD\u6709/\u91CD\u8907\u5019\u88DC\u3092\u660E\u793A\u3057\u3066\u8868\u793A" })
   );
-  const sortSelect = el3("select", {
+  const sortSelect = el4("select", {
     "data-testid": "related-sort",
     "aria-label": "\u4E26\u3073\u66FF\u3048"
   });
@@ -15819,27 +16107,27 @@ async function renderRelated(root) {
     ["sale_ends_asc", "\u30BB\u30FC\u30EB\u7D42\u4E86\u304C\u8FD1\u3044\u9806"],
     ["title_asc", "\u30BF\u30A4\u30C8\u30EB\u6607\u9806"]
   ]) {
-    sortSelect.append(el3("option", { value, textContent: label }));
+    sortSelect.append(el4("option", { value, textContent: label }));
   }
-  const sourceSelect = el3("select", {
+  const sourceSelect = el4("select", {
     "data-testid": "related-source-filter",
     "aria-label": "\u5019\u88DC\u30BD\u30FC\u30B9\u7D5E\u308A\u8FBC\u307F"
   });
-  sourceSelect.append(el3("option", { value: "", textContent: "\u5168\u30BD\u30FC\u30B9" }));
+  sourceSelect.append(el4("option", { value: "", textContent: "\u5168\u30BD\u30FC\u30B9" }));
   for (const source of SOURCES) {
-    sourceSelect.append(el3("option", { value: source, textContent: source }));
+    sourceSelect.append(el4("option", { value: source, textContent: source }));
   }
-  const loadButton = el3("button", {
+  const loadButton = el4("button", {
     className: "primary",
     type: "button",
     "data-testid": "related-load",
     textContent: "\u95A2\u9023\u5019\u88DC\u3092\u8AAD\u307F\u8FBC\u3080"
   });
   controls.append(
-    el3("label", {}, ["\u8D77\u70B9 listing ", anchorSelect]),
-    el3("label", {}, ["\u4FDD\u6709\u306E\u6271\u3044 ", ownedModeSelect]),
-    el3("label", {}, ["\u4E26\u3073\u66FF\u3048 ", sortSelect]),
-    el3("label", {}, ["\u30BD\u30FC\u30B9 ", sourceSelect]),
+    el4("label", {}, ["\u8D77\u70B9 listing ", anchorSelect]),
+    el4("label", {}, ["\u4FDD\u6709\u306E\u6271\u3044 ", ownedModeSelect]),
+    el4("label", {}, ["\u4E26\u3073\u66FF\u3048 ", sortSelect]),
+    el4("label", {}, ["\u30BD\u30FC\u30B9 ", sourceSelect]),
     loadButton
   );
   let listings = [];
@@ -15858,31 +16146,31 @@ async function renderRelated(root) {
   }
   function renderOwnedAnchor(listing) {
     ownedPanel.replaceChildren(
-      el3("h3", { textContent: "\u8D77\u70B9\uFF08\u4FDD\u6709 listing\uFF09" })
+      el4("h3", { textContent: "\u8D77\u70B9\uFF08\u4FDD\u6709 listing\uFF09" })
     );
     if (!listing) {
       ownedPanel.append(
-        el3("p", { className: "empty", textContent: "\u4FDD\u6709 listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002" })
+        el4("p", { className: "empty", textContent: "\u4FDD\u6709 listing \u304C\u3042\u308A\u307E\u305B\u3093\u3002" })
       );
       return;
     }
     ownedPanel.append(
-      el3("div", {
+      el4("div", {
         className: "related-owned-card",
         "data-testid": "related-owned-card",
         "data-source": listing.source,
         "data-cid": listing.cid
       }, [
-        el3("strong", { textContent: listing.title }),
-        el3("div", {
+        el4("strong", { textContent: listing.title }),
+        el4("div", {
           className: "muted",
           textContent: `${listing.source} / ${listing.cid}`
         }),
-        el3("div", {
+        el4("div", {
           className: "muted",
           textContent: `\u30E1\u30FC\u30AB\u30FC: ${listing.maker ?? "\u672A\u53D6\u5F97"}`
         }),
-        el3("div", {
+        el4("div", {
           className: "muted",
           textContent: "\u3053\u306E\u884C\u306F\u6240\u6709 listing \u3067\u3059\u3002\u4E0B\u306E\u95A2\u9023\u5019\u88DC\u30C6\u30FC\u30D6\u30EB\u306B\u306F\u6DF7\u305C\u307E\u305B\u3093\u3002"
         })
@@ -15891,11 +16179,11 @@ async function renderRelated(root) {
   }
   function renderResults(data) {
     resultsHost.replaceChildren(
-      el3("h3", { textContent: "\u95A2\u9023\u5019\u88DC\uFF08market offer\uFF09" })
+      el4("h3", { textContent: "\u95A2\u9023\u5019\u88DC\uFF08market offer\uFF09" })
     );
     if (!data) {
       resultsHost.append(
-        el3("p", {
+        el4("p", {
           className: "muted",
           textContent: "\u8D77\u70B9\u3092\u9078\u3093\u3067\u8AAD\u307F\u8FBC\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
         })
@@ -15903,7 +16191,7 @@ async function renderRelated(root) {
       return;
     }
     resultsHost.append(
-      el3("p", {
+      el4("p", {
         className: "muted",
         "data-testid": "related-meta",
         textContent: `anchor ${data.anchor.source}/${data.anchor.cid} \xB7 \u751F\u6210 ${data.generatedAt} \xB7 \u4EF6\u6570 ${data.total}`
@@ -15911,7 +16199,7 @@ async function renderRelated(root) {
     );
     if (data.warnings.length > 0) {
       resultsHost.append(
-        el3("p", {
+        el4("p", {
           className: "muted",
           "data-testid": "related-warnings",
           textContent: `warnings: ${data.warnings.map((w) => `${w.source}:${w.code}`).join(", ")}`
@@ -15920,7 +16208,7 @@ async function renderRelated(root) {
     }
     if (data.items.length === 0) {
       resultsHost.append(
-        el3("p", {
+        el4("p", {
           className: "empty",
           "data-testid": "related-empty",
           textContent: "\u95A2\u9023\u5019\u88DC\u306F\u3042\u308A\u307E\u305B\u3093\u3002"
@@ -15928,35 +16216,35 @@ async function renderRelated(root) {
       );
       return;
     }
-    const table = el3("table", {
+    const table = el4("table", {
       className: "related-table",
       "data-testid": "related-table"
     });
     table.append(
-      el3("thead", {}, [
-        el3("tr", {}, [
-          el3("th", { textContent: "\u5546\u54C1" }),
-          el3("th", { textContent: "\u95A2\u9023\u6839\u62E0" }),
-          el3("th", { textContent: "\u6240\u6709\u72B6\u614B" }),
-          el3("th", { textContent: "\u4FA1\u683C\u30B9\u30CA\u30C3\u30D7\u30B7\u30E7\u30C3\u30C8" })
+      el4("thead", {}, [
+        el4("tr", {}, [
+          el4("th", { textContent: "\u5546\u54C1" }),
+          el4("th", { textContent: "\u95A2\u9023\u6839\u62E0" }),
+          el4("th", { textContent: "\u6240\u6709\u72B6\u614B" }),
+          el4("th", { textContent: "\u4FA1\u683C\u30B9\u30CA\u30C3\u30D7\u30B7\u30E7\u30C3\u30C8" })
         ])
       ])
     );
-    const tbody = el3("tbody");
+    const tbody = el4("tbody");
     for (const item of data.items) {
-      const titleCell = el3("td", {}, [
-        el3("strong", { textContent: item.product.title }),
-        el3("div", {
+      const titleCell = el4("td", {}, [
+        el4("strong", { textContent: item.product.title }),
+        el4("div", {
           className: "muted",
           textContent: `${item.product.source} / ${item.product.cid}`
         }),
-        el3("div", {
+        el4("div", {
           className: "muted",
           textContent: `\u30E1\u30FC\u30AB\u30FC: ${item.product.maker ?? "\u672A\u53D6\u5F97"}`
         })
       ]);
       if (item.product.productUrl) {
-        const link = el3("a", {
+        const link = el4("a", {
           href: item.product.productUrl,
           target: "_blank",
           rel: "noreferrer noopener",
@@ -15965,12 +16253,12 @@ async function renderRelated(root) {
         titleCell.append(link);
       } else {
         titleCell.append(
-          el3("div", { className: "muted", textContent: "\u5546\u54C1\u30EA\u30F3\u30AF: \u672A\u53D6\u5F97" })
+          el4("div", { className: "muted", textContent: "\u5546\u54C1\u30EA\u30F3\u30AF: \u672A\u53D6\u5F97" })
         );
       }
       if (item.product.imageUrl) {
         titleCell.append(
-          el3("img", {
+          el4("img", {
             src: item.product.imageUrl,
             alt: "",
             loading: "lazy",
@@ -15979,7 +16267,7 @@ async function renderRelated(root) {
           })
         );
       }
-      const tr = el3("tr", {
+      const tr = el4("tr", {
         "data-testid": "related-row",
         "data-source": item.product.source,
         "data-cid": item.product.cid,
@@ -15988,15 +16276,15 @@ async function renderRelated(root) {
       });
       tr.append(
         titleCell,
-        el3("td", {
+        el4("td", {
           "data-testid": "related-evidence",
           textContent: evidenceLabel(item)
         }),
-        el3("td", {
+        el4("td", {
           "data-testid": "related-ownership",
           textContent: ownershipLabel(item)
         }),
-        el3("td", {}, [priceBlock(item)])
+        el4("td", {}, [priceBlock(item)])
       );
       tbody.append(tr);
     }
@@ -16011,7 +16299,7 @@ async function renderRelated(root) {
       anchorSelect.replaceChildren();
       if (listings.length === 0) {
         anchorSelect.append(
-          el3("option", { value: "", textContent: "\uFF08\u4FDD\u6709 listing \u306A\u3057\uFF09" })
+          el4("option", { value: "", textContent: "\uFF08\u4FDD\u6709 listing \u306A\u3057\uFF09" })
         );
         renderOwnedAnchor(null);
         renderResults(null);
@@ -16020,7 +16308,7 @@ async function renderRelated(root) {
       }
       for (const listing of listings) {
         anchorSelect.append(
-          el3("option", {
+          el4("option", {
             value: `${listing.source}\0${listing.cid}`,
             textContent: `${listing.title}\uFF08${listing.source}/${listing.cid}\uFF09`
           })
@@ -16030,7 +16318,7 @@ async function renderRelated(root) {
       renderResults(null);
       setStatus(`\u4FDD\u6709 listing ${listings.length} \u4EF6\u3002\u8D77\u70B9\u3092\u9078\u3093\u3067\u95A2\u9023\u5019\u88DC\u3092\u8AAD\u307F\u8FBC\u3081\u307E\u3059\u3002`);
     } catch (err) {
-      setStatus(errorMessage3(err), "error");
+      setStatus(errorMessage4(err), "error");
     }
   }
   async function loadRelated() {
@@ -16065,7 +16353,7 @@ async function renderRelated(root) {
       setStatus(`\u95A2\u9023\u5019\u88DC ${data.total} \u4EF6\u3092\u8868\u793A\u3057\u3066\u3044\u307E\u3059\u3002`, "success");
     } catch (err) {
       renderResults(null);
-      setStatus(errorMessage3(err), "error");
+      setStatus(errorMessage4(err), "error");
     } finally {
       pending = false;
       loadButton.removeAttribute("disabled");
@@ -16092,7 +16380,7 @@ var SOURCE_LABELS = {
   fanza_dlsoft: "FANZA PC\u30B2\u30FC\u30E0",
   full_sync: "\u5168\u4F53\u540C\u671F"
 };
-function el4(tag, props = {}, children = []) {
+function el5(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key2, value] of Object.entries(props)) {
     if (key2 === "className") node.className = value;
@@ -16158,40 +16446,40 @@ async function postManualListing(url2) {
   const text = await res.text();
   if (!res.ok) throw new Error(`\u624B\u52D5\u767B\u9332\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
 }
-function errorMessage4(err) {
+function errorMessage5(err) {
   return err instanceof Error ? err.message : String(err);
 }
 async function renderSync(root) {
   root.replaceChildren(
-    el4("div", { className: "panel" }, [
-      el4("h2", { textContent: "\u540C\u671F" }),
-      el4("p", {
+    el5("div", { className: "panel" }, [
+      el5("h2", { textContent: "\u540C\u671F" }),
+      el5("p", {
         className: "muted",
         textContent: "\u5404\u30BD\u30FC\u30B9\u306E\u6700\u7D42\u540C\u671F\u72B6\u614B\u3092\u8868\u793A\u3057\u3001\u518D\u7167\u5408\u3068\u624B\u52D5\u767B\u9332\u3092\u884C\u3044\u307E\u3059\u3002"
       })
     ])
   );
-  const statusList = el4("ul", {
+  const statusList = el5("ul", {
     className: "sync-status-list",
     "data-testid": "sync-status-list",
     "aria-label": "\u540C\u671F\u72B6\u614B\u4E00\u89A7"
   });
-  const statusRegion = el4("div", {
+  const statusRegion = el5("div", {
     className: "status-region",
     role: "status",
     "aria-live": "polite",
     "aria-atomic": "true",
     "data-testid": "sync-status-region"
   });
-  const rematchBtn = el4("button", {
+  const rematchBtn = el5("button", {
     className: "primary",
     textContent: "\u518D\u7167\u5408\u3092\u5B9F\u884C",
     "data-testid": "rematch-btn",
     "aria-label": "\u518D\u7167\u5408\u3092\u5B9F\u884C"
   });
-  const manualForm = el4("form", { className: "manual-form", "data-testid": "manual-form" });
-  const urlLabel = el4("label", { for: "manual-url", textContent: "\u5546\u54C1 URL" });
-  const urlInput = el4("input", {
+  const manualForm = el5("form", { className: "manual-form", "data-testid": "manual-form" });
+  const urlLabel = el5("label", { for: "manual-url", textContent: "\u5546\u54C1 URL" });
+  const urlInput = el5("input", {
     id: "manual-url",
     type: "url",
     placeholder: "\u5BFE\u5FDC\u5E97\u8217\u306E\u5546\u54C1\u30DA\u30FC\u30B8 URL",
@@ -16199,7 +16487,7 @@ async function renderSync(root) {
     "aria-label": "\u5546\u54C1 URL",
     required: "true"
   });
-  const manualBtn = el4("button", {
+  const manualBtn = el5("button", {
     type: "submit",
     className: "primary",
     textContent: "\u624B\u52D5\u767B\u9332",
@@ -16207,7 +16495,7 @@ async function renderSync(root) {
     "aria-label": "\u624B\u52D5\u767B\u9332"
   });
   manualForm.append(urlLabel, urlInput, manualBtn);
-  const panel = el4("div", { className: "panel" }, [statusList, rematchBtn, manualForm]);
+  const panel = el5("div", { className: "panel" }, [statusList, rematchBtn, manualForm]);
   root.append(panel, statusRegion);
   let pending = false;
   function setPending(value) {
@@ -16233,7 +16521,7 @@ async function renderSync(root) {
     statusList.replaceChildren();
     for (const result of results) {
       const line = result.ok ? formatOutcome(result.source, result.state) : formatFetchError(result.source, result.error);
-      const item = el4("li", {
+      const item = el5("li", {
         textContent: line,
         "data-testid": `sync-row-${result.source}`,
         "aria-label": line,
@@ -16253,7 +16541,7 @@ async function renderSync(root) {
           const state = await fetchSyncState(source);
           return { source, ok: true, state };
         } catch (err) {
-          return { source, ok: false, error: errorMessage4(err) };
+          return { source, ok: false, error: errorMessage5(err) };
         }
       })
     );
@@ -16276,7 +16564,7 @@ async function renderSync(root) {
         setStatus("\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F", "error");
       }
     } catch (err) {
-      setStatus(errorMessage4(err), "error");
+      setStatus(errorMessage5(err), "error");
     } finally {
       setPending(false);
     }
@@ -16306,7 +16594,7 @@ async function renderSync(root) {
           );
         }
       } catch (err) {
-        setStatus(errorMessage4(err), "error");
+        setStatus(errorMessage5(err), "error");
       } finally {
         setPending(false);
       }
@@ -16332,7 +16620,7 @@ async function renderSync(root) {
           setStatus("\u624B\u52D5\u767B\u9332\u304C\u5B8C\u4E86\u3057\u307E\u3057\u305F\uFF08\u72B6\u614B\u518D\u53D6\u5F97\u5931\u6557\uFF09", "error");
         }
       } catch (err) {
-        setStatus(errorMessage4(err), "error");
+        setStatus(errorMessage5(err), "error");
       } finally {
         setPending(false);
       }
@@ -16342,7 +16630,7 @@ async function renderSync(root) {
 }
 
 // src/pages/settings/settings.ts
-function el5(tag, props = {}, children = []) {
+function el6(tag, props = {}, children = []) {
   const node = document.createElement(tag);
   for (const [key2, value] of Object.entries(props)) {
     if (key2 === "className") node.className = value;
@@ -16370,22 +16658,22 @@ async function saveSettings(settings) {
   if (!res.ok) throw new Error(`\u8A2D\u5B9A\u306E\u4FDD\u5B58\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${text}`);
   return JSON.parse(text);
 }
-function errorMessage5(err) {
+function errorMessage6(err) {
   return err instanceof Error ? err.message : String(err);
 }
 async function renderSettings(root) {
   root.replaceChildren(
-    el5("div", { className: "panel" }, [
-      el5("h2", { textContent: "\u8A2D\u5B9A" }),
-      el5("p", {
+    el6("div", { className: "panel" }, [
+      el6("h2", { textContent: "\u8A2D\u5B9A" }),
+      el6("p", {
         className: "muted",
         textContent: "\u30B5\u30FC\u30D0\u30DD\u30FC\u30C8\u3068\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\u30D5\u30A9\u30EB\u30C0\u3092\u8A2D\u5B9A\u3057\u307E\u3059\u3002"
       })
     ])
   );
-  const form = el5("form", { className: "settings-form", "data-testid": "settings-form" });
-  const portLabel = el5("label", { for: "settings-port", textContent: "\u30DD\u30FC\u30C8 (1\u201365535)" });
-  const portInput = el5("input", {
+  const form = el6("form", { className: "settings-form", "data-testid": "settings-form" });
+  const portLabel = el6("label", { for: "settings-port", textContent: "\u30DD\u30FC\u30C8 (1\u201365535)" });
+  const portInput = el6("input", {
     id: "settings-port",
     type: "number",
     min: "1",
@@ -16395,11 +16683,11 @@ async function renderSettings(root) {
     "aria-label": "\u30DD\u30FC\u30C8",
     required: "true"
   });
-  const destLabel = el5("label", {
+  const destLabel = el6("label", {
     for: "settings-export-destination",
     textContent: "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148\uFF08\u7D76\u5BFE\u30D1\u30B9\uFF09"
   });
-  const destInput = el5("input", {
+  const destInput = el6("input", {
     id: "settings-export-destination",
     type: "text",
     placeholder: "/Users/you/Drive/adp-export",
@@ -16407,7 +16695,7 @@ async function renderSettings(root) {
     "aria-label": "\u30A8\u30AF\u30B9\u30DD\u30FC\u30C8\u5148",
     required: "true"
   });
-  const saveBtn = el5("button", {
+  const saveBtn = el6("button", {
     type: "submit",
     className: "primary",
     textContent: "\u4FDD\u5B58",
@@ -16415,7 +16703,7 @@ async function renderSettings(root) {
     "aria-label": "\u8A2D\u5B9A\u3092\u4FDD\u5B58"
   });
   form.append(portLabel, portInput, destLabel, destInput, saveBtn);
-  const statusRegion = el5("div", {
+  const statusRegion = el6("div", {
     className: "status-region",
     role: "status",
     "aria-live": "polite",
@@ -16451,7 +16739,7 @@ async function renderSettings(root) {
       destInput.value = settings.exportDestination;
       setStatus("\u8A2D\u5B9A\u3092\u8AAD\u307F\u8FBC\u307F\u307E\u3057\u305F", "success");
     } catch (err) {
-      setStatus(errorMessage5(err), "error");
+      setStatus(errorMessage6(err), "error");
     } finally {
       setPending(false);
     }
@@ -16478,7 +16766,7 @@ async function renderSettings(root) {
         destInput.value = saved.exportDestination;
         setStatus("\u8A2D\u5B9A\u3092\u4FDD\u5B58\u3057\u307E\u3057\u305F", "success");
       } catch (err) {
-        setStatus(errorMessage5(err), "error");
+        setStatus(errorMessage6(err), "error");
       } finally {
         setPending(false);
       }
@@ -16491,12 +16779,14 @@ async function renderSettings(root) {
 var routes = {
   library: renderLibrary,
   related: renderRelated,
+  "price-comparison": renderPriceComparison,
   candidates: renderCandidates,
   sync: renderSync,
   settings: renderSettings
 };
 function parseRoute(pathname) {
   if (pathname.startsWith("/related")) return "related";
+  if (pathname.startsWith("/price-comparison")) return "price-comparison";
   if (pathname.startsWith("/candidates")) return "candidates";
   if (pathname.startsWith("/sync")) return "sync";
   if (pathname.startsWith("/settings")) return "settings";
@@ -16506,6 +16796,8 @@ function routePath(route) {
   switch (route) {
     case "related":
       return "/related";
+    case "price-comparison":
+      return "/price-comparison";
     case "candidates":
       return "/candidates";
     case "sync":
@@ -16520,7 +16812,14 @@ async function renderRoute(route, root) {
   await routes[route](root);
 }
 function allRoutes() {
-  return ["library", "related", "candidates", "sync", "settings"];
+  return [
+    "library",
+    "related",
+    "price-comparison",
+    "candidates",
+    "sync",
+    "settings"
+  ];
 }
 
 // src/main.ts
@@ -16536,6 +16835,7 @@ app.append(header, main);
 var links = {
   library: document.createElement("a"),
   related: document.createElement("a"),
+  "price-comparison": document.createElement("a"),
   candidates: document.createElement("a"),
   sync: document.createElement("a"),
   settings: document.createElement("a")
@@ -16544,6 +16844,8 @@ links.library.href = routePath("library");
 links.library.textContent = "\u30E9\u30A4\u30D6\u30E9\u30EA";
 links.related.href = routePath("related");
 links.related.textContent = "\u95A2\u9023\u6BD4\u8F03";
+links["price-comparison"].href = routePath("price-comparison");
+links["price-comparison"].textContent = "\u4FA1\u683C\u6BD4\u8F03";
 links.candidates.href = routePath("candidates");
 links.candidates.textContent = "\u5019\u88DC\u30AD\u30E5\u30FC";
 links.sync.href = routePath("sync");
@@ -16553,6 +16855,7 @@ links.settings.textContent = "\u8A2D\u5B9A";
 nav.append(
   links.library,
   links.related,
+  links["price-comparison"],
   links.candidates,
   links.sync,
   links.settings
