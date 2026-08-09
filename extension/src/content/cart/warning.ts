@@ -66,10 +66,11 @@ export function mountCartWarning(
   hit: LookupHit,
   deleter: CartDeleter,
   onDeleted?: (cid: string) => void,
+  onRestored?: (cid: string) => void,
 ): void {
   if (hasMountedWarningForCid(row.host, row.cid)) return;
   const warning = renderCartWarning(doc, row, hit, () => {
-    void handleDelete(doc, row.cid, deleter, onDeleted).catch(() => {});
+    void handleDelete(doc, row.cid, deleter, onDeleted, onRestored).catch(() => {});
   });
   row.host.insertAdjacentElement("afterbegin", warning);
 }
@@ -83,6 +84,7 @@ async function handleDelete(
   cid: string,
   deleter: CartDeleter,
   onDeleted?: (cid: string) => void,
+  onRestored?: (cid: string) => void,
 ): Promise<void> {
   try {
     const result = await deleter.remove([cid]);
@@ -91,6 +93,7 @@ async function handleDelete(
     showUndoToast(doc, async () => {
       try {
         await deleter.restore([cid]);
+        onRestored?.(cid);
       } catch {
         // Undo boundary: absorb restore failures (no unhandled rejection).
       }

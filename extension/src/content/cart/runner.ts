@@ -2,6 +2,12 @@ import type { InterventionSource } from "@adp/shared";
 
 import { createCartDeleter } from "../../cart-deleter/index.js";
 import { lookupItems } from "../lookup.js";
+import {
+  applyConfirmedDuplicateGate,
+  collectConfirmedDuplicateCids,
+  isConfirmedDuplicate,
+  type GateStateStore,
+} from "../purchase-gate/index.js";
 import type { LookupHit } from "../types.js";
 import { interventionToCartSource, isCartInterventionPage } from "./page-kind.js";
 import { mountCartWarning } from "./warning.js";
@@ -12,10 +18,6 @@ export type CartRowParser = (doc: Document) => CartRow[] | Promise<CartRow[]>;
 export type LookupFn = (
   items: CartLookupItem[],
 ) => Promise<LookupHit[] | null>;
-
-function isDuplicate(hit: LookupHit): boolean {
-  return hit.owned || hit.other.length > 0;
-}
 
 function readPathname(doc: Document): string {
   const loc = doc.location;
@@ -30,11 +32,21 @@ function readPathname(doc: Document): string {
   return "";
 }
 
+export interface RunCartPageOptions {
+  /** Optional session store for cross-page gate state (tests inject a Map shim). */
+  gateStore?: GateStateStore | null;
+}
+
+/**
+ * Cart intervention: row warnings + delete, and whole-cart purchase gate while
+ * any confirmed duplicate remains (ADR-0001). Lookup failure → fail-open.
+ */
 export async function runCartPage(
   source: InterventionSource,
   doc: Document,
   parseRows: CartRowParser,
   lookup: LookupFn = async (items) => lookupItems(items),
+  options: RunCartPageOptions = {},
 ): Promise<number> {
   try {
     const pathname = readPathname(doc);
@@ -62,6 +74,7 @@ export async function runCartPage(
     } catch {
       return 0;
     }
+    // Fail-open when lookup is unavailable.
     if (!results) return 0;
 
     const cartSource = interventionToCartSource(source);
@@ -71,16 +84,43 @@ export async function runCartPage(
       doc,
     });
 
+    const confirmed = new Set(collectConfirmedDuplicateCids(rows, results));
+
+    const refreshGate = (): void => {
+      applyConfirmedDuplicateGate(
+        doc,
+        source,
+        "cart",
+        [...confirmed],
+        options.gateStore,
+      );
+    };
+
     let warned = 0;
     for (let i = 0; i < rows.length; i++) {
       const hit = results[i];
-      if (!hit || !isDuplicate(hit)) continue;
+      if (!hit || !isConfirmedDuplicate(hit)) continue;
       const row = rows[i]!;
       // Only exact product-row hosts (parsers already skip unmatched / body).
       if (!row.host || row.host === doc.body) continue;
-      mountCartWarning(doc, row, hit, deleter);
+      mountCartWarning(
+        doc,
+        row,
+        hit,
+        deleter,
+        (cid) => {
+          confirmed.delete(cid);
+          refreshGate();
+        },
+        (cid) => {
+          confirmed.add(cid);
+          refreshGate();
+        },
+      );
       warned += 1;
     }
+
+    refreshGate();
     return warned;
   } catch {
     return 0;

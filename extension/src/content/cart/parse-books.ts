@@ -81,3 +81,30 @@ export async function fetchBooksCartRows(
     return [];
   }
 }
+
+/**
+ * Cids only (no DOM host matching). Used on purchase-progression pages where
+ * basket row hosts may be absent.
+ */
+export async function fetchBooksCartCids(
+  fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<string[]> {
+  try {
+    const response = await fetchFn(PRODUCT_IDS_URL, {
+      credentials: "include",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return [];
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return [];
+    }
+    const parsed = BooksProductIdsPayloadSchema.safeParse(payload);
+    if (!parsed.success) return [];
+    return parsed.data.product_ids.map((id) => id.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}

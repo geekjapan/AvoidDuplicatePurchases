@@ -1,5 +1,7 @@
 import { boot as bootCart } from "./cart/dlsite-cart.js";
+import { isCartInterventionPage } from "./cart/page-kind.js";
 import { classifyDisplayPage } from "./page-kind.js";
+import { isPurchaseProgressPage, runPurchaseProgressPage } from "./purchase-gate/index.js";
 import { runListingPage } from "./listing-page.js";
 import { runProductPage } from "./product-page.js";
 
@@ -13,8 +15,16 @@ export function boot(pathname: string = window.location.pathname): void {
     void runListingPage("dlsite");
     return;
   }
-  // cart: T-CART; library / history / unrecognized: no-op
-  bootCart(pathname);
+  if (isCartInterventionPage("dlsite", pathname)) {
+    bootCart(pathname);
+    return;
+  }
+  // Purchase-progression (after cart, before payment complete): fail-closed gate.
+  if (isPurchaseProgressPage("dlsite", pathname)) {
+    void runPurchaseProgressPage("dlsite", document);
+    return;
+  }
+  // library / history / unrecognized: no-op
 }
 
 if (document.readyState === "loading") {

@@ -116,3 +116,30 @@ export async function fetchDoujinCartRows(
     return [];
   }
 }
+
+/**
+ * Cids only (no DOM host matching). Used on purchase-progression pages where
+ * basket row hosts may be absent.
+ */
+export async function fetchDoujinCartCids(
+  fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<string[]> {
+  try {
+    const response = await fetchFn(BASKETS_URL, {
+      credentials: "include",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    if (!response.ok) return [];
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      return [];
+    }
+    const parsed = DoujinBasketPayloadSchema.safeParse(payload);
+    if (!parsed.success) return [];
+    return parsed.data.data.map((item) => item.content_id);
+  } catch {
+    return [];
+  }
+}

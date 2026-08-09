@@ -59,5 +59,15 @@ export function buildCartFixtureDocument(html: string, pageUrl: string): MockDoc
     doc.body.appendChild(div);
   }
 
+  for (const match of html.matchAll(
+    /<(button|a)([^>]*data-adp-purchase-cta="([^"]+)"[^>]*)>([^<]*)<\/\1>/gi,
+  )) {
+    const el = doc.createElement(match[1]!);
+    if (match[1]!.toLowerCase() === "button") el.setAttribute("type", "button");
+    el.setAttribute("data-adp-purchase-cta", match[3]!);
+    el.textContent = (match[4] ?? "").trim();
+    doc.body.appendChild(el);
+  }
+
   return doc;
 }
