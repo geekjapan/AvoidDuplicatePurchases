@@ -280,13 +280,68 @@ export const LibraryImportResponseSchema = z
     byState: LibraryImportByStateSchema,
 })
     .strict();
-/** Query for `GET /api/listings` (library search / list). */
-export const ListingsQuerySchema = z.object({
+/**
+ * Sort keys for `GET /api/listings`.
+ * Price sorts use stored `priceObservation` tiers only — never
+ * `purchasePrice` / `currentPrice` inventions.
+ */
+export const ListingsSortSchema = z.enum([
+    "work",
+    "title_asc",
+    "title_desc",
+    "purchased_at_asc",
+    "purchased_at_desc",
+    "price_observation_asc",
+    "price_observation_desc",
+]);
+/** Which `priceObservation` tier a currency filter or price sort uses. */
+export const PriceObservationTierSchema = z.enum(["regular", "sale", "coupon"]);
+/**
+ * Query for `GET /api/listings` (library search / list).
+ *
+ * Price-related parameters consult only persisted `priceObservation` values.
+ * `purchasePrice` and `currentPrice` are never used for filter/sort.
+ * `price_observation_*` sorts require both `priceCurrency` and `priceTier`
+ * so amounts are never ordered across currencies or invented tiers.
+ */
+export const ListingsQuerySchema = z
+    .object({
     q: z.string().optional(),
     source: SourceSchema.optional(),
     maker: z.string().optional(),
+    /**
+     * Exact ISO 4217 currency of a stored observation tier.
+     * Rows without a matching observation currency do not match.
+     */
+    priceCurrency: z
+        .string()
+        .regex(/^[A-Z]{3}$/)
+        .optional(),
+    /** Observation tier used with `priceCurrency` and/or price sorts. */
+    priceTier: PriceObservationTierSchema.optional(),
+    sort: ListingsSortSchema.optional(),
     limit: z.coerce.number().int().positive().max(500).optional(),
     offset: z.coerce.number().int().nonnegative().optional(),
+})
+    .superRefine((query, ctx) => {
+    const sort = query.sort ?? "work";
+    const isPriceSort = sort === "price_observation_asc" || sort === "price_observation_desc";
+    if (isPriceSort && !query.priceCurrency) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["priceCurrency"],
+            message: "price_observation sorts require priceCurrency",
+        });
+    }
+    if (isPriceSort && !query.priceTier) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["priceTier"],
+            message: "price_observation sorts require priceTier",
+        });
+    }
+    // Currency filter without tier means "any tier"; with tier, that tier only.
+    // No extra refine needed — server matches stored observation tiers only.
 });
 /** One listing row as returned to the management UI. */
 export const ListingSchema = z

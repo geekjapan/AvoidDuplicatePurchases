@@ -145,6 +145,18 @@ describe("library display metadata", () => {
       "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_display_1/",
     );
 
+    // Price filter/sort controls expose observation-only contract.
+    assert.ok(window.document.querySelector('[data-testid="filter-price-currency"]'));
+    assert.ok(window.document.querySelector('[data-testid="filter-price-tier"]'));
+    assert.ok(window.document.querySelector('[data-testid="filter-sort"]'));
+    const sortSelect = window.document.querySelector(
+      '[data-testid="filter-sort"]',
+    ) as HTMLSelectElement;
+    const sortValues = Array.from(sortSelect.options).map((o) => o.value);
+    assert.ok(sortValues.includes("price_observation_asc"));
+    assert.ok(sortValues.includes("price_observation_desc"));
+    assert.equal(sortValues.includes("current_price_asc"), false);
+
     const missing = window.document.querySelector('[data-cid="v_display_2"]')!;
     assert.equal(missing.querySelector("img"), null);
     assert.equal(missing.querySelector("a"), null);

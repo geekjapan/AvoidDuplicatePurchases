@@ -251,6 +251,32 @@ describe("shared API endpoint schemas", () => {
     assert.equal(query.limit, 20);
     assert.equal(query.offset, 0);
 
+    const priceQuery = ListingsQuerySchema.parse({
+      priceCurrency: "JPY",
+      priceTier: "sale",
+      sort: "price_observation_asc",
+    });
+    assert.equal(priceQuery.priceCurrency, "JPY");
+    assert.equal(priceQuery.priceTier, "sale");
+    assert.equal(priceQuery.sort, "price_observation_asc");
+
+    // Price sorts require both currency and tier (fail closed — no inventions).
+    assert.throws(() =>
+      ListingsQuerySchema.parse({
+        sort: "price_observation_desc",
+        priceCurrency: "JPY",
+      }),
+    );
+    assert.throws(() =>
+      ListingsQuerySchema.parse({
+        sort: "price_observation_asc",
+        priceTier: "regular",
+      }),
+    );
+    // Lowercase / invented currencies and current_price sorts are rejected.
+    assert.throws(() => ListingsQuerySchema.parse({ priceCurrency: "jpy" }));
+    assert.throws(() => ListingsQuerySchema.parse({ sort: "current_price_asc" }));
+
     const listing = ListingSchema.parse({
       id: 1,
       source: "dlsite",

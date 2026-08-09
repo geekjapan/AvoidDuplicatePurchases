@@ -14812,12 +14812,47 @@ var LibraryImportResponseSchema = external_exports.object({
   /** Per-state observed counts; the server always emits every state key. */
   byState: LibraryImportByStateSchema
 }).strict();
+var ListingsSortSchema = external_exports.enum([
+  "work",
+  "title_asc",
+  "title_desc",
+  "purchased_at_asc",
+  "purchased_at_desc",
+  "price_observation_asc",
+  "price_observation_desc"
+]);
+var PriceObservationTierSchema = external_exports.enum(["regular", "sale", "coupon"]);
 var ListingsQuerySchema = external_exports.object({
   q: external_exports.string().optional(),
   source: SourceSchema.optional(),
   maker: external_exports.string().optional(),
+  /**
+   * Exact ISO 4217 currency of a stored observation tier.
+   * Rows without a matching observation currency do not match.
+   */
+  priceCurrency: external_exports.string().regex(/^[A-Z]{3}$/).optional(),
+  /** Observation tier used with `priceCurrency` and/or price sorts. */
+  priceTier: PriceObservationTierSchema.optional(),
+  sort: ListingsSortSchema.optional(),
   limit: external_exports.coerce.number().int().positive().max(500).optional(),
   offset: external_exports.coerce.number().int().nonnegative().optional()
+}).superRefine((query, ctx) => {
+  const sort = query.sort ?? "work";
+  const isPriceSort = sort === "price_observation_asc" || sort === "price_observation_desc";
+  if (isPriceSort && !query.priceCurrency) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["priceCurrency"],
+      message: "price_observation sorts require priceCurrency"
+    });
+  }
+  if (isPriceSort && !query.priceTier) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["priceTier"],
+      message: "price_observation sorts require priceTier"
+    });
+  }
 });
 var ListingSchema = external_exports.object({
   id: external_exports.number().int().positive(),
@@ -14913,6 +14948,9 @@ async function fetchListings(params) {
     if (params.q) search.set("q", params.q);
     if (params.source) search.set("source", params.source);
     if (params.maker) search.set("maker", params.maker);
+    if (params.priceCurrency) search.set("priceCurrency", params.priceCurrency);
+    if (params.priceTier) search.set("priceTier", params.priceTier);
+    if (params.sort) search.set("sort", params.sort);
     search.set("limit", String(LISTINGS_PAGE_SIZE));
     search.set("offset", String(offset));
     const qs = search.toString();
@@ -15188,7 +15226,10 @@ function productLinkForListing(listing) {
 async function renderLibrary(root) {
   root.replaceChildren(el2("div", { className: "panel" }, [
     el2("h2", { textContent: "\u30E9\u30A4\u30D6\u30E9\u30EA" }),
-    el2("p", { className: "muted", textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u30FBcid \u3067\u691C\u7D22\u3057\u3001\u6B63\u898F work \u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059\u3002" })
+    el2("p", {
+      className: "muted",
+      textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u30FBcid \u3067\u691C\u7D22\u3057\u3001\u4FDD\u5B58\u6E08\u307F\u306E\u4FA1\u683C\u89B3\u6E2C\uFF08priceObservation\uFF09\u3060\u3051\u3067\u901A\u8CA8\u7D5E\u308A\u8FBC\u307F\u3068\u4E26\u3073\u66FF\u3048\u3092\u884C\u3044\u307E\u3059\u3002"
+    })
   ]));
   const filters = el2("div", { className: "filters" });
   const qLabel = el2("label", { for: "filter-q", textContent: "\u30BF\u30A4\u30C8\u30EB\u691C\u7D22" });
@@ -15217,6 +15258,48 @@ async function renderLibrary(root) {
     "data-testid": "filter-maker",
     "aria-label": "\u30E1\u30FC\u30AB\u30FC"
   });
+  const currencyLabel = el2("label", {
+    for: "filter-price-currency",
+    textContent: "\u89B3\u6E2C\u901A\u8CA8"
+  });
+  const currencySelect = el2("select", {
+    id: "filter-price-currency",
+    "data-testid": "filter-price-currency",
+    "aria-label": "\u89B3\u6E2C\u901A\u8CA8"
+  });
+  currencySelect.append(el2("option", { value: "", textContent: "\u901A\u8CA8\u6307\u5B9A\u306A\u3057" }));
+  currencySelect.append(el2("option", { value: "JPY", textContent: "JPY" }));
+  const tierLabel2 = el2("label", {
+    for: "filter-price-tier",
+    textContent: "\u89B3\u6E2C\u5C64"
+  });
+  const tierSelect = el2("select", {
+    id: "filter-price-tier",
+    "data-testid": "filter-price-tier",
+    "aria-label": "\u89B3\u6E2C\u5C64"
+  });
+  tierSelect.append(el2("option", { value: "", textContent: "\u5C64\u6307\u5B9A\u306A\u3057" }));
+  tierSelect.append(el2("option", { value: "regular", textContent: "\u5B9A\u4FA1/\u30B5\u30FC\u30AF\u30EB\u8A2D\u5B9A" }));
+  tierSelect.append(el2("option", { value: "sale", textContent: "\u30BB\u30FC\u30EB/\u30AD\u30E3\u30F3\u30DA\u30FC\u30F3" }));
+  tierSelect.append(el2("option", { value: "coupon", textContent: "\u30AF\u30FC\u30DD\u30F3\u9069\u7528\u5F8C\u8868\u793A" }));
+  const sortLabel = el2("label", { for: "filter-sort", textContent: "\u4E26\u3073\u66FF\u3048" });
+  const sortSelect = el2("select", {
+    id: "filter-sort",
+    "data-testid": "filter-sort",
+    "aria-label": "\u4E26\u3073\u66FF\u3048"
+  });
+  const sortOptions = [
+    ["work", "\u4F5C\u54C1\u30B0\u30EB\u30FC\u30D7\u9806"],
+    ["title_asc", "\u30BF\u30A4\u30C8\u30EB\u6607\u9806"],
+    ["title_desc", "\u30BF\u30A4\u30C8\u30EB\u964D\u9806"],
+    ["purchased_at_asc", "\u8CFC\u5165\u65E5\u6607\u9806"],
+    ["purchased_at_desc", "\u8CFC\u5165\u65E5\u964D\u9806"],
+    ["price_observation_asc", "\u89B3\u6E2C\u4FA1\u683C\u6607\u9806"],
+    ["price_observation_desc", "\u89B3\u6E2C\u4FA1\u683C\u964D\u9806"]
+  ];
+  for (const [value, label] of sortOptions) {
+    sortSelect.append(el2("option", { value, textContent: label }));
+  }
   const searchBtn = el2("button", {
     className: "primary",
     textContent: "\u691C\u7D22",
@@ -15229,6 +15312,12 @@ async function renderLibrary(root) {
     sourceSelect,
     makerLabel,
     makerInput,
+    currencyLabel,
+    currencySelect,
+    tierLabel2,
+    tierSelect,
+    sortLabel,
+    sortSelect,
     searchBtn
   );
   const statusRegion = el2("div", {
@@ -15269,8 +15358,31 @@ async function renderLibrary(root) {
     qInput.disabled = disabled;
     sourceSelect.disabled = disabled;
     makerInput.disabled = disabled;
+    currencySelect.disabled = disabled;
+    tierSelect.disabled = disabled;
+    sortSelect.disabled = disabled;
     if (mergeBtn) mergeBtn.disabled = disabled;
     for (const btn of splitButtons) btn.disabled = disabled;
+  }
+  function selectedPriceTier() {
+    const value = tierSelect.value;
+    if (value === "regular" || value === "sale" || value === "coupon") return value;
+    return void 0;
+  }
+  function selectedSort() {
+    const value = sortSelect.value;
+    switch (value) {
+      case "work":
+      case "title_asc":
+      case "title_desc":
+      case "purchased_at_asc":
+      case "purchased_at_desc":
+      case "price_observation_asc":
+      case "price_observation_desc":
+        return value;
+      default:
+        return void 0;
+    }
   }
   async function load() {
     const generation = ++loadGeneration;
@@ -15283,10 +15395,25 @@ async function renderLibrary(root) {
       const q = qInput.value.trim();
       const source = sourceSelect.value;
       const maker = makerInput.value.trim();
+      const priceCurrency = currencySelect.value.trim();
+      const priceTier = selectedPriceTier();
+      const sort = selectedSort();
+      if ((sort === "price_observation_asc" || sort === "price_observation_desc") && (!priceCurrency || !priceTier)) {
+        if (generation !== loadGeneration) return;
+        listHost.replaceChildren();
+        setStatus(
+          "\u89B3\u6E2C\u4FA1\u683C\u3067\u4E26\u3073\u66FF\u3048\u308B\u306B\u306F\u3001\u89B3\u6E2C\u901A\u8CA8\u3068\u89B3\u6E2C\u5C64\u306E\u4E21\u65B9\u3092\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+          "error"
+        );
+        return;
+      }
       const data = await fetchListings({
         q: q || void 0,
         source: source || void 0,
-        maker: maker || void 0
+        maker: maker || void 0,
+        priceCurrency: priceCurrency || void 0,
+        priceTier,
+        sort: sort && sort !== "work" ? sort : void 0
       });
       if (generation !== loadGeneration) return;
       renderListings(data.listings);
