@@ -3,7 +3,12 @@ export type ListingSource =
   | "fanza_doujin"
   | "fanza_books"
   | "fanza_video"
-  | "fanza_dlsoft";
+  | "fanza_dlsoft"
+  // Library-sync sources (issue #43/#44/#46 foundation): accepted by the
+  // listing CHECK but have no verified canonical product-URL contract yet.
+  | "amazon"
+  | "ebookjapan"
+  | "kobo";
 
 /** Verified FANZA Video URL path floors (evidence: video.dmm.co.jp public product pages). */
 export type FanzaVideoFloor = "av" | "amateur";
@@ -121,6 +126,11 @@ export function productUrlForSource(
       return fanzaVideoProductUrl(cid, options.videoFloor);
     case "fanza_dlsoft":
       return fanzaDlsoftProductUrl(cid);
+    case "amazon":
+    case "ebookjapan":
+    case "kobo":
+      // No verified canonical product URL evidence for library-sync sources.
+      return null;
     default: {
       const _exhaustive: never = source;
       return _exhaustive;

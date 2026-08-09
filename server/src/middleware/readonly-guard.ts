@@ -21,6 +21,10 @@ const ALLOWED_GET_EXACT = new Set([
   "/api/sync-state/fanza_books",
   "/api/sync-state/fanza_video",
   "/api/sync-state/fanza_dlsoft",
+  // DOM library-sync sources: read-only state readout stays allowed.
+  "/api/sync-state/amazon",
+  "/api/sync-state/ebookjapan",
+  "/api/sync-state/kobo",
 ]);
 
 /**

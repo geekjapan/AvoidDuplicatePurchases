@@ -65,8 +65,24 @@ describe("library display metadata", () => {
           productUrlProvenance: "verified_derived",
           purchasedAt: "2026-07-24",
           purchasedAtPrecision: "day",
-          purchasePrice: null,
-          currentPrice: null,
+          purchasePrice: {
+            amountMinor: 1234,
+            currency: "JPY",
+            taxStatus: "included",
+          },
+          currentPrice: {
+            amountMinor: 1480,
+            currency: "JPY",
+            taxStatus: "unknown",
+            observedAt: "2026-08-08T00:00:00.000Z",
+            provenance: "store_product_metadata",
+          },
+          priceObservation: {
+            regular: { amountMinor: 1100, currency: "JPY", taxStatus: "unknown" },
+            sale: { amountMinor: 880, currency: "JPY", taxStatus: "included" },
+            coupon: null,
+            observedAt: "2026-08-08T12:00:00.000Z",
+          },
         },
         {
           id: 2,
@@ -81,10 +97,11 @@ describe("library display metadata", () => {
           imageProvenance: null,
           productUrl: null,
           productUrlProvenance: null,
-          purchasedAt: null,
+          purchasedAt: "2026-08-08",
           purchasedAtPrecision: "unknown",
           purchasePrice: null,
           currentPrice: null,
+          priceObservation: null,
         },
       ],
       total: 2,
@@ -111,6 +128,13 @@ describe("library display metadata", () => {
     assert.equal(image.getAttribute("referrerpolicy"), "no-referrer");
     assert.equal(image.getAttribute("src"), "https://img.example/display.jpg");
     assert.match(row.textContent ?? "", /2026-07-24/);
+    assert.match(row.textContent ?? "", /購入価格: JPY 1234/);
+    assert.match(row.textContent ?? "", /現在価格: JPY 1480/);
+    assert.match(row.textContent ?? "", /取得時刻: 2026-08-08T00:00:00.000Z/);
+    assert.match(row.textContent ?? "", /定価\/サークル設定価格: JPY 1100/);
+    assert.match(row.textContent ?? "", /セール\/キャンペーン価格: JPY 880/);
+    assert.match(row.textContent ?? "", /クーポン適用後表示価格: 未取得/);
+    assert.match(row.textContent ?? "", /観測時刻: 2026-08-08T12:00:00.000Z/);
 
     const link = row.querySelector("a") as HTMLAnchorElement;
     assert.ok(link);
@@ -125,6 +149,7 @@ describe("library display metadata", () => {
     assert.equal(missing.querySelector("img"), null);
     assert.equal(missing.querySelector("a"), null);
     assert.match(missing.textContent ?? "", /未取得/);
+    assert.match(missing.textContent ?? "", /購入日: 未取得/);
 
     image.dispatchEvent(new window.Event("error"));
     assert.equal(row.querySelector("img"), null);

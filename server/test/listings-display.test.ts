@@ -13,7 +13,10 @@ import { parseBooksImportPayload } from "@adp/shared/adapters/fanza_books";
 import { parseVideoGraphqlPayload } from "@adp/shared/adapters/fanza_video";
 import { parseDlsoftLibraryPayload } from "@adp/shared/adapters/fanza_dlsoft";
 import type { DatabaseSync } from "node:sqlite";
-import { sanitizeProductUrl } from "../src/services/listing-display.js";
+import {
+  listingDisplayMetadata,
+  sanitizeProductUrl,
+} from "../src/services/listing-display.js";
 import "../src/routes/listings.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -32,6 +35,7 @@ type ApiListing = {
   purchasedAtPrecision: "second" | "day" | "unknown";
   purchasePrice: null;
   currentPrice: null;
+  priceObservation: null;
 };
 
 function request(port: number, path: string): Promise<{ status: number; json: unknown }> {
@@ -125,6 +129,24 @@ describe("library listing display metadata", () => {
     assert.equal(sanitizeProductUrl("https://user:password@store.example/item"), null);
   });
 
+  it("does not publish an image when the source has no image provenance", () => {
+    assert.deepEqual(
+      listingDisplayMetadata({
+        source: "fanza_books",
+        cid: "book_without_image_contract",
+        seriesId: "series-1",
+        imageUrl: "https://img.example/unverified.jpg",
+        rawJson: "{}",
+      }),
+      {
+        imageUrl: null,
+        imageProvenance: null,
+        productUrl: "https://book.dmm.co.jp/product/series-1/book_without_image_contract/",
+        productUrlProvenance: "verified_derived",
+      },
+    );
+  });
+
   it("returns flat rows with source-safe nullable display metadata", async () => {
     const response = await request(port, "/api/listings?limit=500&offset=0");
     assert.equal(response.status, 200);
@@ -143,6 +165,7 @@ describe("library listing display metadata", () => {
         purchasedAtPrecision: byCid.get("RJ000001")?.purchasedAtPrecision,
         purchasePrice: byCid.get("RJ000001")?.purchasePrice,
         currentPrice: byCid.get("RJ000001")?.currentPrice,
+        priceObservation: byCid.get("RJ000001")?.priceObservation,
       },
       {
         imageUrl: "https://img.dlsite.com/modpub/images2/work/doujin/example.jpg",
@@ -154,6 +177,7 @@ describe("library listing display metadata", () => {
         purchasedAtPrecision: "second",
         purchasePrice: null,
         currentPrice: null,
+        priceObservation: null,
       },
     );
     assert.equal(byCid.get("d_100001")?.imageProvenance, "store_library_metadata");
@@ -186,8 +210,10 @@ describe("library listing display metadata", () => {
       assert.ok("purchasedAtPrecision" in listing);
       assert.ok("purchasePrice" in listing);
       assert.ok("currentPrice" in listing);
+      assert.ok("priceObservation" in listing);
       assert.equal(listing.purchasePrice, null);
       assert.equal(listing.currentPrice, null);
+      assert.equal(listing.priceObservation, null);
     }
   });
 

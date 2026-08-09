@@ -84,6 +84,11 @@ export function productUrlForSource(source, cid, options = {}) {
             return fanzaVideoProductUrl(cid, options.videoFloor);
         case "fanza_dlsoft":
             return fanzaDlsoftProductUrl(cid);
+        case "amazon":
+        case "ebookjapan":
+        case "kobo":
+            // No verified canonical product URL evidence for library-sync sources.
+            return null;
         default: {
             const _exhaustive = source;
             return _exhaustive;

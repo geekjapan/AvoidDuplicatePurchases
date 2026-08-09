@@ -1,4 +1,4 @@
-export type ListingSource = "dlsite" | "fanza_doujin" | "fanza_books" | "fanza_video" | "fanza_dlsoft";
+export type ListingSource = "dlsite" | "fanza_doujin" | "fanza_books" | "fanza_video" | "fanza_dlsoft" | "amazon" | "ebookjapan" | "kobo";
 /** Verified FANZA Video URL path floors (evidence: video.dmm.co.jp public product pages). */
 export type FanzaVideoFloor = "av" | "amateur";
 /** Build a canonical DLsite product page URL for lookup `other` links. */

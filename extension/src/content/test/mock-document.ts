@@ -1,12 +1,29 @@
 /** Minimal DOM shim for node:test content-script tests. */
+export class MockTextNode {
+  readonly nodeType = 3;
+  textContent: string;
+  parent: MockElement | null = null;
+  constructor(text: string) {
+    this.textContent = text;
+  }
+
+  get parentNode(): MockElement | null {
+    return this.parent;
+  }
+}
+
 export class MockElement {
   tagName: string;
+  readonly nodeType = 1;
   private _textContent = "";
   innerHTML = "";
   className = "";
   id = "";
   href = "";
+  hidden = false;
   children: MockElement[] = [];
+  /** Direct child nodes including text (for label-own-text walks). */
+  childNodes: Array<MockElement | MockTextNode> = [];
   parent: MockElement | null = null;
   ownerDocument: MockDocument | null = null;
   /**
@@ -14,7 +31,24 @@ export class MockElement {
    * When unset, getComputedStyle falls back to inline style then static.
    */
   computedPosition: string | undefined;
-  readonly style = { position: "" };
+  /** Optional stylesheet-computed visibility overrides for DOM-reader tests. */
+  computedDisplay: string | undefined;
+  computedVisibility: string | undefined;
+  computedOpacity: string | undefined;
+  computedStyle:
+    | {
+        display?: string;
+        visibility?: string;
+        opacity?: string;
+        position?: string;
+      }
+    | undefined;
+  readonly style = {
+    display: "",
+    visibility: "",
+    opacity: "",
+    position: "",
+  };
   private attributes = new Map<string, string>();
 
   get content(): string {
@@ -22,13 +56,35 @@ export class MockElement {
   }
 
   get textContent(): string {
-    if (this.children.length === 0) return this._textContent;
-    return this.children.map((child) => child.textContent).join("");
+    if (this.childNodes.length === 0) return this._textContent;
+    return this.childNodes.map((child) => child.textContent ?? "").join("");
   }
 
   set textContent(value: string) {
     this._textContent = value;
     this.children = [];
+    this.childNodes = value ? [new MockTextNode(value)] : [];
+    for (const node of this.childNodes) node.parent = this;
+  }
+
+  get parentElement(): MockElement | null {
+    return this.parent;
+  }
+
+  get parentNode(): MockElement | null {
+    return this.parent;
+  }
+
+  get nextElementSibling(): MockElement | null {
+    if (!this.parent) return null;
+    const idx = this.parent.children.indexOf(this);
+    return idx >= 0 ? (this.parent.children[idx + 1] ?? null) : null;
+  }
+
+  get previousElementSibling(): MockElement | null {
+    if (!this.parent) return null;
+    const idx = this.parent.children.indexOf(this);
+    return idx > 0 ? (this.parent.children[idx - 1] ?? null) : null;
   }
 
   constructor(tag: string) {
@@ -49,17 +105,28 @@ export class MockElement {
     return this.attributes.get(name) ?? null;
   }
 
-  appendChild(child: MockElement): MockElement {
+  hasAttribute(name: string): boolean {
+    return this.attributes.has(name);
+  }
+
+  private adoptDocument(ownerDocument: MockDocument): void {
+    this.ownerDocument = ownerDocument;
+    for (const child of this.children) child.adoptDocument(ownerDocument);
+  }
+
+  appendChild(child: MockElement | MockTextNode): MockElement | MockTextNode {
     child.parent = this;
-    if (this.ownerDocument) child.ownerDocument = this.ownerDocument;
-    this.children.push(child);
+    if (child instanceof MockElement && this.ownerDocument) child.adoptDocument(this.ownerDocument);
+    this.childNodes.push(child);
+    if (child instanceof MockElement) this.children.push(child);
     return child;
   }
 
   insertAdjacentElement(_position: string, element: MockElement): MockElement {
     this.children.unshift(element);
+    this.childNodes.unshift(element);
     element.parent = this;
-    if (this.ownerDocument) element.ownerDocument = this.ownerDocument;
+    if (this.ownerDocument) element.adoptDocument(this.ownerDocument);
     return element;
   }
 
@@ -72,6 +139,7 @@ export class MockElement {
   }
 
   private matchesSimpleSelector(selector: string): boolean {
+    if (selector === "*") return true;
     // tag[attr="value"] / tag[attr*="value"] / tag[attr^="value"] / [attr=...]
     const attrPrefix = /^([a-zA-Z][\w-]*)?\[([^^\]]+)\^="([^"]+)"\]$/.exec(selector);
     if (attrPrefix) {
@@ -154,8 +222,14 @@ export class MockDocument {
   readonly body = new MockElement("body");
   readonly location = { href: "" };
   readonly defaultView = {
-    getComputedStyle: (el: MockElement): { position: string } => ({
-      position: el.computedPosition ?? (el.style.position || "static"),
+    getComputedStyle: (el: MockElement) => ({
+      display:
+        el.computedStyle?.display ?? el.computedDisplay ?? (el.style.display || "block"),
+      visibility:
+        el.computedStyle?.visibility ?? el.computedVisibility ?? (el.style.visibility || "visible"),
+      opacity: el.computedStyle?.opacity ?? el.computedOpacity ?? (el.style.opacity || "1"),
+      position:
+        el.computedStyle?.position ?? el.computedPosition ?? (el.style.position || "static"),
     }),
   };
 
@@ -171,10 +245,8 @@ export class MockDocument {
     return el;
   }
 
-  createTextNode(text: string): MockElement {
-    const node = new MockElement("#text");
-    node.textContent = text;
-    return node;
+  createTextNode(text: string): MockTextNode {
+    return new MockTextNode(text);
   }
 
   getElementById(id: string): MockElement | null {

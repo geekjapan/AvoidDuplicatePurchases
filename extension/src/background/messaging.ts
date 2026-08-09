@@ -1,13 +1,27 @@
-import { lookupOnServer, type ServerLookupItem } from "./server-client.js";
+import {
+  LIBRARY_SOURCES,
+  PriceObservationRequestSchema,
+  type LibrarySource,
+} from "@adp/shared";
+import {
+  lookupOnServer,
+  postPriceObservationOnServer,
+  type ServerLookupItem,
+} from "./server-client.js";
 import { runFullSync, type FullSyncOutcome } from "../alarms.js";
 import { checkServerHealth } from "./server-client.js";
 import { runAmazonManualSync, type AmazonSyncOutcome } from "./amazon-sync.js";
+import { runLibrarySync, type LibrarySyncOutcome } from "./library-sync.js";
 import {
   isAdminMessage,
   MSG_AMAZON_SYNC,
+  MSG_LIBRARY_SYNC,
   MSG_LOOKUP,
+  MSG_PRICE_OBSERVATION,
   MSG_SYNC,
   MSG_SERVER_STATUS,
+  type PriceObservationMessage,
+  type PriceObservationReply,
 } from "../messages.js";
 
 export type MessageHandler = (
@@ -56,6 +70,20 @@ export interface AmazonSyncMessage {
 export interface AmazonSyncReply {
   ok: boolean;
   outcome?: AmazonSyncOutcome;
+}
+
+export interface LibrarySyncMessage {
+  type: typeof MSG_LIBRARY_SYNC;
+  source: LibrarySource;
+}
+
+export interface LibrarySyncReply {
+  ok: boolean;
+  outcome?: LibrarySyncOutcome;
+}
+
+function isLibrarySource(source: unknown): source is LibrarySource {
+  return (LIBRARY_SOURCES as readonly string[]).includes(source as string);
 }
 
 /**
@@ -108,6 +136,67 @@ export function registerMessaging(): void {
               error: String(err),
             },
           }),
+        );
+      return true;
+    }
+    if (message?.type === MSG_LIBRARY_SYNC) {
+      const source = (message as LibrarySyncMessage).source;
+      if (!isLibrarySource(source)) {
+        sendResponse({
+          ok: false,
+          outcome: {
+            ok: false,
+            source: LIBRARY_SOURCES[0],
+            pages: 0,
+            observed: 0,
+            inserted: 0,
+            updated: 0,
+            error: "library_unknown_provider",
+          },
+        });
+        return true;
+      }
+      runLibrarySync(source)
+        .then((outcome) => sendResponse({ ok: outcome.ok, outcome }))
+        .catch((err: unknown) =>
+          sendResponse({
+            ok: false,
+            outcome: {
+              ok: false,
+              source,
+              pages: 0,
+              observed: 0,
+              inserted: 0,
+              updated: 0,
+              error: String(err),
+            },
+          }),
+        );
+      return true;
+    }
+    if (message?.type === MSG_PRICE_OBSERVATION) {
+      const msg = message as Partial<PriceObservationMessage>;
+      const parsed = PriceObservationRequestSchema.safeParse({
+        source: msg.source,
+        cid: msg.cid,
+        pageUrl: msg.pageUrl,
+        regular: msg.regular,
+        sale: msg.sale,
+        coupon: msg.coupon,
+      });
+      if (!parsed.success) {
+        sendResponse({ ok: false, error: "invalid_price_observation" } satisfies PriceObservationReply);
+        return true;
+      }
+      postPriceObservationOnServer(parsed.data)
+        .then((res) => {
+          const reply: PriceObservationReply = res.ok
+            ? { ok: true }
+            : { ok: false, error: res.error };
+          sendResponse(reply);
+        })
+        .catch((err: unknown) =>
+          sendResponse({ ok: false, error: String(err) } satisfies PriceObservationReply),
         );
       return true;
     }

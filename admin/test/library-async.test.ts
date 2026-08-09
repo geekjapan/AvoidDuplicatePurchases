@@ -25,6 +25,7 @@ type ListingPayload = {
     purchasedAtPrecision: "second" | "day" | "unknown";
     purchasePrice: null;
     currentPrice: null;
+    priceObservation: null;
   }>;
   total: number;
 };
@@ -48,6 +49,7 @@ const SAMPLE: ListingPayload = {
       purchasedAtPrecision: "unknown",
       purchasePrice: null,
       currentPrice: null,
+      priceObservation: null,
     },
     {
       id: 2,
@@ -66,6 +68,7 @@ const SAMPLE: ListingPayload = {
       purchasedAtPrecision: "unknown",
       purchasePrice: null,
       currentPrice: null,
+      priceObservation: null,
     },
   ],
   total: 2,

@@ -59,3 +59,17 @@ LINEヤフーのプライバシーポリシーは、購入したサービス等�
 ## トリアージ判断
 
 取得経路とデータ状態は一部確認できたが、公式API、安定IDの保証、履歴保持範囲、レンタル期限、第三者クライアントによる内部URL利用許諾は確認できない。したがって、Issue #44をそのまま実装着手可能とは判断しない。サービス提供者の許諾または取得範囲を明示した追加判断と、匿名化された認証済みレスポンスの確認が必要である。
+
+## 実装メモ（2026-08-08、Issue #44 reader 実装）
+
+上記の調査は研究時点の結論であり、変更しない。本実装はユーザー承認記録（`.orca/workflows/dom-sync-20260808/decisions/browser-dom-and-price-scope.md`）と可視 DOM 観測記録（同 `visible-dom-selector-observations.md`）に基づき、承認された範囲だけを実装する。
+
+- **登録**: `extension/src/content/ebookjapan-library.ts` の `ebookjapanLibraryPageReader`（`source: "ebookjapan"`）を foundation の `LibraryPageReader` registry へ登録（`library.ts` のブラウザ実行時ガード内）。Amazon reader の挙動は変更しない。
+- **URL ゲート**: HTTPS + `ebookjapan.yahoo.co.jp` + 厳密な `/bookshelf` または `/bookshelf/` パスのみ。query は無し、または単一の正の整数 `page` パラメータのみ許可する（`page` 以外の query キー、重複 `page`、空・非正値は不許可）。サブパス（`/bookshelf/all` 等）・追跡 query・ハッシュ・資格情報は fail closed（`login`）。ゲートを通過した URL だけを `page` のみの canonical 形（trailing slash 付き path）へ正規化する。
+- **シェル認識**: 観測済みの `h1.heading__main`、`ul.tab-menu-list`、`#wd_temp_shelf-main`、`.shelf-control__amount` が揃うまで `page_not_ready`。空本棚は `.zero-message.zero-message--shelf` の可視テキスト `本がありません` のみで `empty`。
+- **タブ境界**: アクティブタブが `購入済み` のときだけ purchased へ写像する。`無料読書履歴` は `free` に留め、購入済みへ昇格しない。アクティブ判定不能・別タブは `page_not_ready`（fail closed）。
+- **項目境界**: 観測契約に非空アイテム markup が無いため、棚内の実在する可視 HTTPS 商品リンク（`/books/<titleId>/<publicationCd>/`、research #44 の公開 URL 形）だけを境界にする。`publicationCd` を暫定 `cid`、リンク可視テキスト（または img alt）を title とする。商品リンクが無ければ推測せず `page_not_ready`。URL の title/ID からの合成はしない。
+- **状態写像（保守的）**: 購入済みタブ上の商品リンクは `purchased`。可視テキストに レンタル / 立ち読み・サンプル / ギフト / 予約 / 読み放題 / 無料 があれば各非購入状態へ倒す。タイトル存在だけでは所有にしない。価格フィールドは出力しない。
+- **画像・商品 URL**: 絶対 http(s)・資格情報なしの `img[src]` のみ `imageUrl`。`productUrl` は実在する HTTPS ebookjapan 商品リンクの origin+path のみ。
+- **ページング**: 可視の同一ホスト bookshelf リンク（`?page=N` または「次」系テキスト）があるときだけ次 URL を返す。visited/max-page ガードは background 共通層。非表示 API・手動ページ送りは使わない。
+- **残課題**: 非空アイテムの安定したカード markup（著者/出版社セレクタ、バッジ位置、ページャ DOM）は観測契約に未収録。実棚の追加観測で境界を厚くできるが、未観測セレクタの推測は行わない。

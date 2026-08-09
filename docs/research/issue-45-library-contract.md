@@ -1,6 +1,6 @@
 # Issue #45: library display contract
 
-Status: design-only. This note defines the smallest contract that can be implemented without inventing store data. It does not change the application, the issue tracker, or the current store scope.
+Status: safe slice implemented; `purchasePrice`/`currentPrice` source blocked; visible-DOM `priceObservation` independently persisted for owned DLsite / FANZA Doujin / FANZA Books listings. This note defines the smallest contract that can be implemented without inventing store data. It does not change the issue tracker or expand the current store scope.
 
 Source issues: [#45](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/45), [#43 Amazon/Kindle](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/43), [#44 ebookjapan](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/44), [#46 Rakuten Kobo](https://github.com/geekjapan/AvoidDuplicatePurchases/issues/46).
 
@@ -8,7 +8,7 @@ Source issues: [#45](https://github.com/geekjapan/AvoidDuplicatePurchases/issues
 
 - The approved model is `work` (currently only `id`), `listing` (one store-specific owned product), and derived `match_key`. Listing ownership is represented by the row; `(source, cid)` is the stable external identity and `work.id` may change after rematch. [`docs/spec.md`](../../docs/spec.md#L43-L88), [`server/migrations/001_initial.sql`](../../server/migrations/001_initial.sql#L1-L35)
 - The five existing source values are `dlsite`, `fanza_doujin`, `fanza_books`, `fanza_video`, and `fanza_dlsoft`. [`shared/src/identity.ts`](../../shared/src/identity.ts#L1-L15)
-- `listing` already stores `title`, `maker_name`, `series_id`, `image_url`, `purchased_at`, `purchased_at_precision`, `raw_json`, and `imported_at`. There are no purchase-price, current-price, currency, tax, price-observation, or product-URL columns. [`server/migrations/001_initial.sql`](../../server/migrations/001_initial.sql#L5-L25)
+- `listing` stores `title`, `maker_name`, `series_id`, `image_url`, `purchased_at`, `purchased_at_precision`, `raw_json`, and `imported_at`, plus later migrations for image/product-URL provenance. There are still no `purchasePrice` / `currentPrice` columns on `listing`. Visible three-tier prices live in a separate `price_observation` table keyed by `listing_id` (owned listing only). [`server/migrations/001_initial.sql`](../../server/migrations/001_initial.sql#L5-L25), [`server/src/services/price-observation.ts`](../../server/src/services/price-observation.ts)
 - `GET /api/listings` currently returns a flat, paginated `listings` array with `id`, source/cid, `workId`, lock state, title, maker, series ID, image URL, and purchase timestamp. Its query is `q`, `source`, `maker`, `limit`, and `offset`; server order is `work_id, id`. [`shared/src/api.ts`](../../shared/src/api.ts#L126-L152), [`server/src/routes/listings.ts`](../../server/src/routes/listings.ts#L31-L117)
 - The admin page already groups that flat array by `workId`, then renders one row per listing with merge/split actions. It currently searches title/maker/source through the existing endpoint and does not render image, URL, purchase date, or price fields. [`admin/src/pages/library.ts`](../../admin/src/pages/library.ts#L25-L33), [`admin/src/pages/library.ts`](../../admin/src/pages/library.ts#L148-L185), [`admin/src/pages/library.ts`](../../admin/src/pages/library.ts#L228-L299)
 - Product URL builders already exist. They produce verified derived URLs from source identity, with `series_id` required for Books and an evidence-backed floor required for Video; lookup returns such URLs only for its `other` results, not for library listings. Missing evidence returns no URL rather than a store-root or guessed URL. [`shared/adapters/dlsite/urls.ts`](../../shared/adapters/dlsite/urls.ts#L37-L129), [`server/src/services/lookup.ts`](../../server/src/services/lookup.ts#L104-L153)
@@ -52,6 +52,17 @@ type LibraryListing = {
   purchasedAtPrecision: "second" | "day" | "unknown";
   purchasePrice: Money | null;
   currentPrice: CurrentPrice | null;
+  /**
+   * Visible-DOM three-tier observation for DLsite / DMM·FANZA product pages.
+   * Independent optional tiers; missing/ambiguous stay null. Never calculated
+   * and never written to purchasePrice. observedAt is server receipt time (UTC).
+   */
+  priceObservation: {
+    regular: Money | null; // 定価 / サークル設定価格
+    sale: Money | null;    // セール / キャンペーン価格
+    coupon: Money | null;  // クーポン適用後の表示価格（支払額ではない）
+    observedAt: string;
+  } | null;
 };
 ```
 
@@ -62,8 +73,9 @@ Field rules:
 | `imageUrl` | Use only a validated absolute `http`/`https` URL from store metadata. `imageProvenance` says whether the value came from product metadata or the owned-library payload. Do not derive an image URL from a cid. |
 | `productUrl` | Use an explicitly verified canonical store URL or an adapter's verified derivation from `(source, cid)` plus required evidence. `productUrlProvenance` must match. If the builder lacks required evidence, return `null`; never guess, use a store root, or use a search URL. |
 | `purchasedAt` | The store's ownership/acquisition event time, not `imported_at` and not the current-price fetch time. `second` accepts an ISO-8601 instant; `day` accepts the source date at day precision; `unknown` is used when no trustworthy event time exists. |
-| `purchasePrice` | The amount actually supplied by a purchase record. Do not infer it from a current price, list price, sale badge, or `0`. `amountMinor` and `currency` are both present when the value exists. |
-| `currentPrice` | The latest separately acquired store price snapshot. `observedAt` is the ADP observation time, stored in UTC; it is not a claim about when the store changed the price. Keep only the latest snapshot in v1; no price-history UI. |
+| `purchasePrice` | The amount actually supplied by a purchase record. Do not infer it from a current price, list price, sale badge, visible DOM tier, or `0`. `amountMinor` and `currency` are both present when the value exists. **Not populated by visible-DOM observation**; remains `null` until an authorized purchase-record source is approved. |
+| `currentPrice` | The latest separately acquired store price snapshot. `observedAt` is the ADP observation time, stored in UTC; it is not a claim about when the store changed the price. Keep only the latest snapshot in v1; no price-history UI. **Independent of `priceObservation`**; remains `null` until an authorized product-metadata source is approved. |
+| `priceObservation` | Latest **independently persisted** visible-DOM three-tier observation (`regular` / `sale` / `coupon`) for an **already-owned** listing (DLsite / FANZA Doujin / FANZA Books only). Stored in `price_observation` (not on `listing` price columns). Tiers are independent; do not derive one from another or from a percentage. Coupon tier is display eligibility only and **must never populate or promote into `purchasePrice` or `currentPrice`**. Linked by `(source, cid)` to an existing owned listing; `upsertPriceObservation` returns `not_found` for unowned CIDs and never creates a listing. **Preserved across normal library/product imports** (imports do not clear or rewrite `price_observation`). `observedAt` is server receipt time (UTC). |
 | `currency` | ISO 4217 code, no FX conversion. JPY/USD/etc. values remain separate. Never add or compare amounts across currencies. |
 | `taxStatus` | Preserve the store's stated tax treatment: included, excluded, or unknown. Do not apply a tax rate, infer tax status from locale, or silently round/recalculate. |
 
@@ -115,3 +127,62 @@ The following decisions remain intentionally unresolved and require user/store-r
 5. **Canonical URL/image availability for new stores:** the adapter must provide a verified canonical URL or a derivation recipe and a real image provenance before those fields are non-null. A missing value remains `未取得`.
 
 Until those decisions land, #45 is a display-contract task only: implement the existing grouping and normalized nullable fields first; keep price fields and unsupported-store values absent/null rather than guessing.
+
+## Current safe-slice implementation boundary
+
+The current implementation of the safe slice is intentionally limited to the
+five existing sources (`dlsite`, `fanza_doujin`, `fanza_books`, `fanza_video`,
+and `fanza_dlsoft`). `GET /api/listings` remains a flat, paginated response;
+the admin page groups those rows by `workId` without exposing it as a durable
+product identifier. It exposes adapter-backed images and purchase dates,
+verified HTTPS product URLs, and explicit nullable `purchasePrice` and
+`currentPrice` fields. Images from a source without an approved image
+provenance are suppressed, and an `unknown` purchase-date precision never
+falls back to `imported_at`.
+
+The shared API schema models `Money`, `CurrentPrice`, and `PriceObservation`
+for an offline/local response, including minor units, currency, tax status,
+UTC observation time, and provenance.
+
+**Separation that matches the current implementation:**
+
+1. **`purchasePrice` / `currentPrice`** — still unauthorized for every source.
+   The server emits `null` for both, performs no purchase-record or
+   store-metadata price request, and does not expose price filtering or
+   sorting. Non-null acceptance remains blocked on the source-specific
+   decisions above.
+2. **`priceObservation`** — implemented for owned DLsite / FANZA Doujin /
+   FANZA Books product pages via visible-DOM extraction only. Persisted in
+   `price_observation`, returned on `GET /api/listings` when present, and
+   never written into `purchasePrice` or `currentPrice`. Owned-only: no
+   unowned listing is created. Normal import/sync paths leave existing
+   observations intact.
+3. **Amazon / ebookjapan / Kobo** — library ownership sync is separate from
+   this price contract; they remain excluded from `priceObservation` sources
+   until an authorized path is evidenced.
+
+Amazon/Kindle, ebookjapan, and Rakuten Kobo library rows may still appear via
+DOM library sync with `purchasePrice`/`currentPrice`/`priceObservation` null.
+
+## Implemented vs. design-only (2026-08-09)
+
+Keep the three authority boundaries explicit so a later reviewer does not
+read implementation into a design document:
+
+- **Implemented: visible-DOM observation.** The library-sync readers observe
+  only the visible provider library DOM (Amazon / ebookjapan / Kobo) and
+  visible product-page prices (DLsite / FANZA Doujin / FANZA Books).
+  Persistence is `library_observation` / `price_observation`; explicit
+  `purchased` observations project to the idempotent `listing` upsert.
+- **Not implemented: provider authority.** No store API, receipt, order,
+  account, cookie, or hidden response payload is read. A visible
+  `purchased` marker is reader evidence, not an official provider ownership
+  record; whether each provider's DOM is an authoritative ownership source
+  remains a human gate (issues #43 / #44 / #46).
+- **Not implemented: purchase price authority.** `purchasePrice` and
+  `currentPrice` stay `null` for every source until an authorized
+  purchase-record / product-metadata source is approved (#45 decisions 1–3).
+- **Design-only: Issue #47.** The related-products / sale-comparison
+  contract (`docs/research/issue-47-sales-contract.md`) is design-only — no
+  `GET /api/related-products`, sale import, or freshness UI exists, and
+  nothing in the visible-DOM or price-observation slice depends on it.

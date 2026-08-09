@@ -51,8 +51,12 @@ export function listingDisplayMetadata(input: ListingDisplayInput): {
   productUrl: string | null;
   productUrlProvenance: ProductUrlProvenance | null;
 } {
-  const imageUrl = sanitizeProductImageUrl(input.imageUrl);
-  const imageProvenance = imageUrl ? imageProvenanceFor(input.source) : null;
+  // Only sources with an adapter-provenance contract may expose an image.
+  // A valid URL from an unsupported source is still untrusted display data.
+  const imageProvenance = imageProvenanceFor(input.source);
+  const imageUrl = imageProvenance
+    ? sanitizeProductImageUrl(input.imageUrl)
+    : null;
   const productUrl = sanitizeProductUrl(
     productUrlForSource(input.source, input.cid, {
       seriesId: input.seriesId,
@@ -64,7 +68,7 @@ export function listingDisplayMetadata(input: ListingDisplayInput): {
   );
   return {
     imageUrl,
-    imageProvenance,
+    imageProvenance: imageUrl ? imageProvenance : null,
     productUrl,
     productUrlProvenance: productUrl ? "verified_derived" : null,
   };

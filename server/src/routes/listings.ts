@@ -5,11 +5,13 @@ import {
   ListingsResponseSchema,
   ListingSchema,
   makerMatchKey,
+  type PriceObservation,
   type Source,
 } from "@adp/shared";
 import { registerApiRouteMount } from "../route-mounts.js";
 import type { ApiContext } from "../http.js";
 import { listingDisplayMetadata } from "../services/listing-display.js";
+import { loadPriceObservationsByListingIds } from "../services/price-observation.js";
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -44,7 +46,10 @@ interface ListingRow {
   raw_json: string;
 }
 
-function rowToListing(row: ListingRow) {
+function rowToListing(
+  row: ListingRow,
+  priceObservation: PriceObservation | null = null,
+) {
   const display = listingDisplayMetadata({
     source: row.source,
     cid: row.cid,
@@ -62,10 +67,14 @@ function rowToListing(row: ListingRow) {
     maker: row.maker_name,
     seriesId: row.series_id,
     ...display,
-    purchasedAt: row.purchased_at,
+    // `unknown` explicitly means there is no trustworthy ownership event
+    // time. Do not leak a stale or import-time value under that precision.
+    purchasedAt:
+      row.purchased_at_precision === "unknown" ? null : row.purchased_at,
     purchasedAtPrecision: row.purchased_at_precision,
     purchasePrice: null,
     currentPrice: null,
+    priceObservation,
   });
 }
 
@@ -120,11 +129,18 @@ async function handleListingsRoute(
   const limit = query.limit ?? 500;
   filtered = filtered.slice(offset, offset + limit);
 
+  const observations = loadPriceObservationsByListingIds(
+    ctx.db,
+    filtered.map((row) => row.id),
+  );
+
   json(
     res,
     200,
     ListingsResponseSchema.parse({
-      listings: filtered.map(rowToListing),
+      listings: filtered.map((row) =>
+        rowToListing(row, observations.get(row.id) ?? null),
+      ),
       total,
     }),
   );

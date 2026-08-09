@@ -12,6 +12,8 @@ import {
   ExportResponseSchema,
   ImportRequestSchema,
   ImportResponseSchema,
+  CurrentPriceSchema,
+  PriceObservationSchema,
   ListingSchema,
   ListingWorkPathSchema,
   ListingsQuerySchema,
@@ -21,9 +23,11 @@ import {
   LookupResponseSchema,
   ManualListingRequestSchema,
   ManualListingResponseSchema,
+  MoneySchema,
   RematchRequestSchema,
   RematchResponseSchema,
   SourcePathSchema,
+  SyncOutcomeSchema,
   SyncStateResponseSchema,
   WorkAssignmentRequestSchema,
   WorkAssignmentResponseSchema,
@@ -133,14 +137,74 @@ describe("shared API endpoint schemas", () => {
     assert.equal(res.inserted + res.updated, 3);
   });
 
-  it("validates GET /api/sync-state/:source response", () => {
+  it("validates GET /api/sync-state/:source response strictly", () => {
+    const outcome = {
+      ok: true,
+      counts: { inserted: 1, updated: 0 },
+      error: null,
+      fetched: 2,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+    };
     const res = SyncStateResponseSchema.parse({
       cursor: "123",
       lastSyncedAt: "2026-01-01T00:00:00.000Z",
+      latestOutcome: outcome,
     });
     assert.equal(res.cursor, "123");
+    assert.deepEqual(SyncOutcomeSchema.parse(outcome).counts, {
+      inserted: 1,
+      updated: 0,
+    });
+    // Missing latestOutcome is a missing required key, not an empty state.
     assert.throws(() =>
-      SyncStateResponseSchema.parse({ cursor: "x", lastSyncedAt: "not-a-date" }),
+      SyncStateResponseSchema.parse({ cursor: "x", lastSyncedAt: "2026-01-01T00:00:00.000Z" }),
+    );
+    assert.throws(() =>
+      SyncStateResponseSchema.parse({ cursor: "x", lastSyncedAt: "not-a-date", latestOutcome: null }),
+    );
+    // Unknown keys fail closed.
+    assert.throws(() =>
+      SyncStateResponseSchema.parse({
+        cursor: "x",
+        lastSyncedAt: null,
+        latestOutcome: null,
+        extra: true,
+      }),
+    );
+    // Malformed latestOutcome values fail closed.
+    assert.throws(() =>
+      SyncStateResponseSchema.parse({
+        cursor: "x",
+        lastSyncedAt: null,
+        latestOutcome: { ok: true },
+      }),
+    );
+    assert.throws(() =>
+      SyncStateResponseSchema.parse({
+        cursor: "x",
+        lastSyncedAt: null,
+        latestOutcome: {
+          ok: true,
+          counts: { inserted: 1, updated: 0 },
+          error: null,
+          fetched: -1,
+          recordedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    );
+    assert.throws(() =>
+      SyncStateResponseSchema.parse({
+        cursor: "x",
+        lastSyncedAt: null,
+        latestOutcome: {
+          ok: true,
+          counts: { inserted: 1, updated: 0 },
+          error: null,
+          fetched: null,
+          recordedAt: "not-a-date",
+          extra: 1,
+        },
+      }),
     );
   });
 
@@ -204,8 +268,48 @@ describe("shared API endpoint schemas", () => {
       purchasedAtPrecision: "unknown",
       purchasePrice: null,
       currentPrice: null,
+      priceObservation: null,
     });
     assert.equal(listing.cid, "RJ000001");
+
+    const purchasePrice = MoneySchema.parse({
+      amountMinor: 1234,
+      currency: "JPY",
+      taxStatus: "included",
+    });
+    const currentPrice = CurrentPriceSchema.parse({
+      amountMinor: 1480,
+      currency: "JPY",
+      taxStatus: "unknown",
+      observedAt: "2026-08-08T00:00:00.000Z",
+      provenance: "store_product_metadata",
+    });
+    const priceObservation = PriceObservationSchema.parse({
+      regular: { amountMinor: 1100, currency: "JPY", taxStatus: "unknown" },
+      sale: { amountMinor: 880, currency: "JPY", taxStatus: "included" },
+      coupon: null,
+      observedAt: "2026-08-08T00:00:00.000Z",
+    });
+    const pricedListing = ListingSchema.parse({
+      ...listing,
+      purchasePrice,
+      currentPrice,
+      priceObservation,
+    });
+    assert.equal(pricedListing.currentPrice?.amountMinor, 1480);
+    assert.equal(pricedListing.priceObservation?.sale?.amountMinor, 880);
+    assert.throws(() =>
+      MoneySchema.parse({ amountMinor: -1, currency: "JPY", taxStatus: "included" }),
+    );
+    assert.throws(() =>
+      MoneySchema.parse({ amountMinor: 1.5, currency: "jpy", taxStatus: "included" }),
+    );
+    assert.throws(() =>
+      CurrentPriceSchema.parse({
+        ...currentPrice,
+        observedAt: "2026-08-08T00:00:00.000+09:00",
+      }),
+    );
 
     assert.throws(() =>
       ListingSchema.parse({
@@ -221,6 +325,13 @@ describe("shared API endpoint schemas", () => {
         productUrlProvenance: "verified_derived",
       }),
     );
+    assert.throws(() =>
+      ListingSchema.parse({
+        ...listing,
+        imageUrl: "https://img.example/display.jpg",
+        imageProvenance: null,
+      }),
+    );
 
     const res = ListingsResponseSchema.parse({
       listings: [listing],
@@ -233,6 +344,15 @@ describe("shared API endpoint schemas", () => {
         listings: [{ id: 1, source: "dlsite", cid: "", workId: 1, title: "t" }],
       }),
     );
+    assert.throws(() =>
+      ListingsResponseSchema.parse({
+        listings: [listing],
+        total: 1,
+        extra: true,
+      }),
+    );
+    // Strict ListingSchema rejects unknown keys on a row.
+    assert.throws(() => ListingSchema.parse({ ...listing, rawJson: "{}" }));
   });
 
   it("validates manual listing and work assignment contracts", () => {
@@ -259,6 +379,7 @@ describe("shared API endpoint schemas", () => {
         purchasedAtPrecision: "unknown",
         purchasePrice: null,
         currentPrice: null,
+        priceObservation: null,
       },
     });
 

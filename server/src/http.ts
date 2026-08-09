@@ -25,6 +25,8 @@ import { dispatchRouteMounts } from "./route-mounts.js";
 import { getLatestSyncOutcome, persistSyncOutcome } from "./import/fanza/common.js";
 import "./import/fanza/index.js";
 import "./routes/amazon.js";
+import "./routes/library.js";
+import "./routes/price-observation.js";
 
 /**
  * Reserved outcome source for full-sync global results (not a marketplace source).
@@ -298,6 +300,13 @@ export async function handleApi(
 
   const importMatch = url.pathname.match(/^\/api\/import\/([^/]+)$/);
   if (method === "POST" && importMatch) {
+    // The generic library-sync endpoint is not a Source path; route it before
+    // SourcePathSchema validation so "library" is not rejected as a source.
+    if (importMatch[1] === "library") {
+      if (await dispatchRouteMounts(req, res, ctx, url)) return true;
+      notFound(res);
+      return true;
+    }
     const source = parseZod(SourcePathSchema, { source: importMatch[1] });
     if (!source) {
       validationError(res);

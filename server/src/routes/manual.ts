@@ -409,6 +409,7 @@ async function handleManualRoute(
         purchasedAtPrecision: finalRow.purchased_at_precision,
         purchasePrice: null,
         currentPrice: null,
+        priceObservation: null,
       }),
     });
     ctx.db.exec("COMMIT");

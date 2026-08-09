@@ -125,6 +125,10 @@ const WRITE_ROUTES: Array<[string, string, unknown]> = [
   ["POST", "/api/import/dlsite", { items: [{ cid: "RJ000001" }] }],
   ["POST", "/api/import/fanza_doujin", { items: [{ cid: "d_123456" }] }],
   ["POST", "/api/sync-state/dlsite", { cursor: "last=1" }],
+  ["POST", "/api/sync-state/amazon", {}],
+  ["POST", "/api/sync-state/ebookjapan", {}],
+  ["POST", "/api/sync-state/kobo", {}],
+  ["POST", "/api/import/library", { source: "amazon", pageUrl: "https://www.amazon.co.jp/", items: [{ cid: "SYNTHETI01", title: "t", state: "purchased" }] }],
   ["POST", "/api/sync-outcome/fanza_doujin", { ok: true, counts: { inserted: 1, updated: 0 } }],
   ["POST", "/api/rematch", {}],
   ["POST", "/api/candidates/1", { same: true }],
@@ -259,6 +263,21 @@ describe("readonly guard", () => {
     assert.equal(syncState.status, 200);
     const settings = await request(port, "GET", "/api/settings");
     assert.equal(settings.status, 200);
+  });
+
+  it("permits GET sync-state for the DOM library sources", async () => {
+    for (const source of ["amazon", "ebookjapan", "kobo"]) {
+      const res = await request(port, "GET", `/api/sync-state/${source}`);
+      assert.equal(res.status, 200, `GET /api/sync-state/${source}`);
+      const state = res.json as { cursor: null; lastSyncedAt: null; latestOutcome: null };
+      assert.deepEqual(state, { cursor: null, lastSyncedAt: null, latestOutcome: null });
+    }
+    // Mark-synced stays a write: POST must remain forbidden in read-only mode.
+    for (const source of ["amazon", "ebookjapan", "kobo"]) {
+      const res = await request(port, "POST", `/api/sync-state/${source}`, {});
+      assert.equal(res.status, 403, `POST /api/sync-state/${source}`);
+      assert.deepEqual(res.json, { error: "forbidden" });
+    }
   });
 
   it("rejects unknown GET /api routes with 403 (not 404)", async () => {

@@ -19,7 +19,9 @@
     "https://video.dmm.co.jp/*",
     "https://api.video.dmm.co.jp/*",
     "https://dlsoft.dmm.co.jp/*",
-    "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll*",
+    "https://www.amazon.co.jp/*",
+    "https://ebookjapan.yahoo.co.jp/*",
+    "https://books.rakuten.co.jp/*",
     "http://127.0.0.1:41321/*"
   ],
   "permissions": ["alarms", "scripting"],
@@ -41,9 +43,25 @@
     },
     {
       "matches": [
-        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll*"
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll",
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/",
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/*"
       ],
       "js": ["dist/content/amazon-books.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll",
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/",
+        "https://www.amazon.co.jp/hz/mycd/digital-console/contentlist/booksAll/*",
+        "https://ebookjapan.yahoo.co.jp/bookshelf",
+        "https://ebookjapan.yahoo.co.jp/bookshelf/",
+        "https://books.rakuten.co.jp/e-book/kobo/library",
+        "https://books.rakuten.co.jp/e-book/kobo/library/",
+        "https://books.rakuten.co.jp/e-book/kobo/library/*"
+      ],
+      "js": ["dist/content/library.js"],
       "run_at": "document_idle"
     }
   ]
