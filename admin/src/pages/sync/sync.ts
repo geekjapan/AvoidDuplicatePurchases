@@ -1,4 +1,4 @@
-import { SOURCES } from "@adp/shared";
+import { SOURCES, SyncStateResponseSchema, type SyncStateResponse } from "@adp/shared";
 
 const SOURCE_LABELS: Record<string, string> = {
   dlsite: "DLsite",
@@ -9,22 +9,8 @@ const SOURCE_LABELS: Record<string, string> = {
   full_sync: "全体同期",
 };
 
-interface SyncOutcome {
-  ok: boolean;
-  counts?: { inserted: number; updated: number };
-  error?: string | null;
-  fetched?: number | null;
-  recordedAt?: string;
-}
-
-interface SyncState {
-  cursor: string | null;
-  lastSyncedAt: string | null;
-  latestOutcome?: SyncOutcome | null;
-}
-
 type SourceLoadResult =
-  | { source: string; ok: true; state: SyncState }
+  | { source: string; ok: true; state: SyncStateResponse }
   | { source: string; ok: false; error: string };
 
 export type LoadStatesResult = "ok" | "partial" | "error";
@@ -55,7 +41,7 @@ function formatLastSynced(lastSyncedAt: string | null): string {
   }
 }
 
-function formatOutcome(source: string, state: SyncState | null): string {
+function formatOutcome(source: string, state: SyncStateResponse | null): string {
   const label = SOURCE_LABELS[source] ?? source;
   const last = formatLastSynced(state?.lastSyncedAt ?? null);
   const latest = state?.latestOutcome;
@@ -80,11 +66,13 @@ function formatFetchError(source: string, error: string): string {
   return `${label}: 取得エラー ${error}`;
 }
 
-async function fetchSyncState(source: string): Promise<SyncState> {
+async function fetchSyncState(source: string): Promise<SyncStateResponse> {
   const res = await fetch(`/api/sync-state/${encodeURIComponent(source)}`);
   const text = await res.text();
   if (!res.ok) throw new Error(`同期状態の取得に失敗しました (${source}): ${text}`);
-  return JSON.parse(text) as SyncState;
+  // Strict shared schema: unknown keys, missing latestOutcome, or malformed
+  // outcome values fail closed as a fetch error instead of rendering garbage.
+  return SyncStateResponseSchema.parse(JSON.parse(text));
 }
 
 async function postRematch(): Promise<{ rematched: number; candidates: number }> {

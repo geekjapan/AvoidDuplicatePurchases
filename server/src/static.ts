@@ -13,6 +13,7 @@ import { installAutoExport } from "./export/auto.js";
 import type { ProductFetcher } from "./services/import.js";
 import { loadAdminSettings } from "./routes/settings.js";
 import "./routes/listings.js";
+import "./routes/price-observation.js";
 import "./routes/candidates.js";
 import "./routes/work.js";
 import "./routes/settings.js";

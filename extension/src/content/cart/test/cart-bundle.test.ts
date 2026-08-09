@@ -92,14 +92,14 @@ describe("MV3 cart behavior inside existing content IIFEs", () => {
     }
   });
 
-  it("manifest keeps exactly three content_scripts (no separate cart dist contract)", () => {
+  it("manifest keeps the library-sync content script alongside the store readers", () => {
     const manifest = JSON.parse(
       readFileSync(join(extensionRoot, "manifest.json"), "utf8"),
     ) as {
       content_scripts?: Array<{ matches?: string[]; js?: string[]; type?: string }>;
     };
     const scripts = manifest.content_scripts ?? [];
-    assert.equal(scripts.length, 4, "manifest must include the Amazon Books reader");
+    assert.equal(scripts.length, 5, "manifest must include the library-sync reader");
     for (const entry of scripts) {
       assert.equal(entry.type, undefined, "MV3 content_scripts must not set type: module");
       assert.ok(entry.js?.[0]?.startsWith("dist/content/"));
@@ -112,6 +112,7 @@ describe("MV3 cart behavior inside existing content IIFEs", () => {
       "dist/content/fanza-doujin.js",
       "dist/content/fanza-books.js",
       "dist/content/amazon-books.js",
+      "dist/content/library.js",
     ]);
   });
 

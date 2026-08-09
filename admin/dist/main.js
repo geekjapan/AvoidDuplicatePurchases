@@ -10,8 +10,106 @@ var SOURCES = [
   "fanza_doujin",
   "fanza_books",
   "fanza_video",
-  "fanza_dlsoft"
+  "fanza_dlsoft",
+  "amazon",
+  "ebookjapan",
+  "kobo"
 ];
+var LIBRARY_SOURCES = ["amazon", "ebookjapan", "kobo"];
+var LIBRARY_ITEM_STATES = [
+  "purchased",
+  "free",
+  "rental",
+  "sample",
+  "preview",
+  "subscription",
+  "gift",
+  "reservation",
+  "unknown"
+];
+function parseCredentialFreeHttpsUrl(value) {
+  try {
+    const url2 = new URL(value);
+    if (url2.protocol !== "https:" || url2.username !== "" || url2.password !== "" || url2.port !== "") {
+      return null;
+    }
+    return url2;
+  } catch {
+    return null;
+  }
+}
+function hasOnlyPositiveQuery(url2, name) {
+  const values = url2.searchParams.getAll(name);
+  if (values.length > 1 || values[0] === void 0 || !/^[1-9]\d*$/.test(values[0])) {
+    return false;
+  }
+  for (const key2 of url2.searchParams.keys()) {
+    if (key2 !== name)
+      return false;
+  }
+  return true;
+}
+function isCanonicalLibraryPageUrl(source, value) {
+  const url2 = parseCredentialFreeHttpsUrl(value);
+  if (!url2 || url2.hash !== "")
+    return false;
+  switch (source) {
+    case "amazon":
+      return url2.hostname === "www.amazon.co.jp" && (url2.pathname === "/hz/mycd/digital-console/contentlist/booksAll" || url2.pathname === "/hz/mycd/digital-console/contentlist/booksAll/") && (url2.search === "" || hasOnlyPositiveQuery(url2, "pageNumber"));
+    case "ebookjapan":
+      return url2.hostname === "ebookjapan.yahoo.co.jp" && (url2.pathname === "/bookshelf" || url2.pathname === "/bookshelf/") && (url2.search === "" || hasOnlyPositiveQuery(url2, "page"));
+    case "kobo":
+      return url2.hostname === "books.rakuten.co.jp" && /^\/e-book\/kobo\/library(?:\/page\/[1-9]\d*)?\/?$/.test(url2.pathname) && url2.search === "";
+  }
+}
+function isLibraryCid(source, cid) {
+  switch (source) {
+    case "amazon":
+      return /^[A-Z0-9]{10}$/.test(cid);
+    case "ebookjapan":
+      return /^[A-Za-z0-9]+$/.test(cid);
+    case "kobo":
+      return /^[A-Za-z0-9_-]+$/.test(cid);
+  }
+}
+function canonicalLibraryProductUrl(source, cid, value) {
+  const url2 = parseCredentialFreeHttpsUrl(value);
+  if (!url2 || url2.search !== "" || url2.hash !== "" || !isLibraryCid(source, cid)) {
+    return null;
+  }
+  switch (source) {
+    case "amazon": {
+      if (url2.hostname !== "www.amazon.co.jp")
+        return null;
+      const match = /^\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Za-z0-9]{10})\/?$/i.exec(url2.pathname);
+      if (!match || match[1].toUpperCase() !== cid)
+        return null;
+      const path = url2.pathname.endsWith("/") ? url2.pathname.slice(0, -1) : url2.pathname;
+      return `${url2.origin}${path}`;
+    }
+    case "ebookjapan": {
+      if (url2.hostname !== "ebookjapan.yahoo.co.jp")
+        return null;
+      const match = /^\/books\/\d+\/([A-Za-z0-9]+)\/?$/.exec(url2.pathname);
+      if (!match || match[1] !== cid)
+        return null;
+      const path = url2.pathname.endsWith("/") ? url2.pathname : `${url2.pathname}/`;
+      return `${url2.origin}${path}`;
+    }
+    case "kobo": {
+      if (url2.hostname !== "books.rakuten.co.jp")
+        return null;
+      const match = /^\/rk\/([A-Za-z0-9_-]+)\/?$/.exec(url2.pathname);
+      if (!match || match[1] !== cid)
+        return null;
+      const path = url2.pathname.endsWith("/") ? url2.pathname.slice(0, -1) : url2.pathname;
+      return `${url2.origin}${path}`;
+    }
+  }
+}
+function isCanonicalLibraryProductUrl(source, cid, value) {
+  return canonicalLibraryProductUrl(source, cid, value) !== null;
+}
 
 // ../node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -14529,6 +14627,8 @@ config(en_default());
 
 // ../shared/dist/api.js
 var SourceSchema = external_exports.enum(SOURCES);
+var LibrarySourceSchema = external_exports.enum(LIBRARY_SOURCES);
+var LibraryItemStateSchema = external_exports.enum(LIBRARY_ITEM_STATES);
 var NonEmptyString = external_exports.string().min(1).refine((s) => s.trim().length > 0, { message: "must not be blank" });
 var LookupItemSchema = external_exports.object({
   source: SourceSchema.optional(),
@@ -14566,10 +14666,21 @@ var ImportResponseSchema = external_exports.object({
   inserted: external_exports.number().int().nonnegative(),
   updated: external_exports.number().int().nonnegative()
 });
+var SyncOutcomeSchema = external_exports.object({
+  ok: external_exports.boolean(),
+  counts: external_exports.object({
+    inserted: external_exports.number().int().nonnegative(),
+    updated: external_exports.number().int().nonnegative()
+  }).strict(),
+  error: external_exports.string().nullable(),
+  fetched: external_exports.number().int().nonnegative().nullable(),
+  recordedAt: external_exports.string().datetime()
+}).strict();
 var SyncStateResponseSchema = external_exports.object({
   cursor: external_exports.string().nullable(),
-  lastSyncedAt: external_exports.string().datetime().nullable()
-});
+  lastSyncedAt: external_exports.string().datetime().nullable(),
+  latestOutcome: SyncOutcomeSchema.nullable()
+}).strict();
 var CandidatePairSchema = external_exports.object({
   id: external_exports.number().int(),
   a: external_exports.object({
@@ -14625,6 +14736,82 @@ var ImageProvenanceSchema = external_exports.enum([
 ]);
 var ProductUrlProvenanceSchema = external_exports.enum(["store_canonical", "verified_derived"]);
 var PurchasedAtPrecisionSchema = external_exports.enum(["second", "day", "unknown"]);
+var MoneySchema = external_exports.object({
+  amountMinor: external_exports.number().int().nonnegative().safe(),
+  currency: external_exports.string().regex(/^[A-Z]{3}$/),
+  taxStatus: external_exports.enum(["included", "excluded", "unknown"])
+}).strict();
+var CurrentPriceSchema = external_exports.object({
+  amountMinor: external_exports.number().int().nonnegative().safe(),
+  currency: external_exports.string().regex(/^[A-Z]{3}$/),
+  taxStatus: external_exports.enum(["included", "excluded", "unknown"]),
+  observedAt: external_exports.string().datetime(),
+  provenance: external_exports.enum(["store_product_metadata", "store_library_metadata"])
+}).strict();
+var PriceObservationSchema = external_exports.object({
+  regular: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable(),
+  sale: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable(),
+  coupon: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable(),
+  observedAt: external_exports.string().datetime()
+}).strict();
+var PriceObservationRequestSchema = external_exports.object({
+  source: SourceSchema,
+  cid: NonEmptyString,
+  pageUrl: AbsoluteHttpsUrl,
+  regular: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable(),
+  sale: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable(),
+  coupon: MoneySchema.extend({ currency: external_exports.literal("JPY") }).nullable()
+}).strict();
+var PriceObservationResponseSchema = external_exports.object({
+  ok: external_exports.literal(true),
+  priceObservation: PriceObservationSchema
+}).strict();
+var LibraryImportItemSchema = external_exports.object({
+  cid: NonEmptyString,
+  title: NonEmptyString,
+  state: LibraryItemStateSchema,
+  maker: NonEmptyString.nullable().optional(),
+  seriesId: NonEmptyString.nullable().optional(),
+  imageUrl: AbsoluteHttpUrl.nullable().optional(),
+  productUrl: AbsoluteHttpsUrl.nullable().optional()
+}).strict();
+var LibraryImportRequestSchema = external_exports.object({
+  source: LibrarySourceSchema,
+  pageUrl: AbsoluteHttpsUrl,
+  items: external_exports.array(LibraryImportItemSchema).min(1).max(100)
+}).strict().superRefine((request, ctx) => {
+  if (!isCanonicalLibraryPageUrl(request.source, request.pageUrl)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["pageUrl"],
+      message: "pageUrl is not a canonical provider library URL"
+    });
+  }
+  request.items.forEach((item, index) => {
+    if (!isLibraryCid(request.source, item.cid)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items", index, "cid"],
+        message: "cid does not match the provider format"
+      });
+    }
+    if (item.productUrl !== void 0 && item.productUrl !== null && !isCanonicalLibraryProductUrl(request.source, item.cid, item.productUrl)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items", index, "productUrl"],
+        message: "productUrl is not a canonical product URL for the CID"
+      });
+    }
+  });
+});
+var LibraryImportByStateSchema = external_exports.object(Object.fromEntries(LIBRARY_ITEM_STATES.map((state) => [state, external_exports.number().int().nonnegative()]))).strict();
+var LibraryImportResponseSchema = external_exports.object({
+  observed: external_exports.number().int().nonnegative(),
+  inserted: external_exports.number().int().nonnegative(),
+  updated: external_exports.number().int().nonnegative(),
+  /** Per-state observed counts; the server always emits every state key. */
+  byState: LibraryImportByStateSchema
+}).strict();
 var ListingsQuerySchema = external_exports.object({
   q: external_exports.string().optional(),
   source: SourceSchema.optional(),
@@ -14647,13 +14834,30 @@ var ListingSchema = external_exports.object({
   productUrlProvenance: ProductUrlProvenanceSchema.nullable(),
   purchasedAt: external_exports.string().nullable(),
   purchasedAtPrecision: PurchasedAtPrecisionSchema,
-  purchasePrice: external_exports.null(),
-  currentPrice: external_exports.null()
+  purchasePrice: MoneySchema.nullable(),
+  currentPrice: CurrentPriceSchema.nullable(),
+  /** Visible-DOM three-tier observation; null when never recorded. */
+  priceObservation: PriceObservationSchema.nullable()
+}).strict().superRefine((listing, ctx) => {
+  if (listing.imageUrl === null !== (listing.imageProvenance === null)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["imageProvenance"],
+      message: "imageUrl and imageProvenance must be present together"
+    });
+  }
+  if (listing.productUrl === null !== (listing.productUrlProvenance === null)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["productUrlProvenance"],
+      message: "productUrl and productUrlProvenance must be present together"
+    });
+  }
 });
 var ListingsResponseSchema = external_exports.object({
   listings: external_exports.array(ListingSchema),
   total: external_exports.number().int().nonnegative().optional()
-});
+}).strict();
 var ManualListingRequestSchema = external_exports.object({
   url: external_exports.string().url()
 });
@@ -14911,13 +15115,49 @@ function errorMessage2(err) {
   return err instanceof Error ? err.message : String(err);
 }
 function purchasedAtLabel(listing) {
-  if (!listing.purchasedAt) return "\u672A\u53D6\u5F97";
+  if (!listing.purchasedAt || listing.purchasedAtPrecision === "unknown") {
+    return "\u672A\u53D6\u5F97";
+  }
   if (listing.purchasedAtPrecision === "day") return listing.purchasedAt;
   if (listing.purchasedAtPrecision === "second") {
     const date5 = new Date(listing.purchasedAt);
     if (!Number.isNaN(date5.getTime())) return date5.toLocaleString();
   }
-  return listing.purchasedAt;
+  return "\u672A\u53D6\u5F97";
+}
+function taxStatusLabel(status) {
+  if (status === "included") return "\u7A0E\u8FBC";
+  if (status === "excluded") return "\u7A0E\u5225";
+  return "\u7A0E\u533A\u5206\u4E0D\u660E";
+}
+function moneyLabel(money) {
+  return `${money.currency} ${money.amountMinor}\uFF08${taxStatusLabel(money.taxStatus)}\u30FB\u6700\u5C0F\u5358\u4F4D\uFF09`;
+}
+function purchasePriceLabel(listing) {
+  return listing.purchasePrice ? moneyLabel(listing.purchasePrice) : "\u672A\u53D6\u5F97";
+}
+function currentPriceLabel(listing) {
+  if (!listing.currentPrice) return "\u672A\u53D6\u5F97";
+  return `${moneyLabel(listing.currentPrice)}\uFF08\u53D6\u5F97\u6642\u523B: ${listing.currentPrice.observedAt}\uFF09`;
+}
+function tierLabel(money) {
+  return money ? moneyLabel(money) : "\u672A\u53D6\u5F97";
+}
+function priceObservationLabel(listing) {
+  const obs = listing.priceObservation;
+  if (!obs) {
+    return [
+      "\u5B9A\u4FA1/\u30B5\u30FC\u30AF\u30EB\u8A2D\u5B9A\u4FA1\u683C: \u672A\u53D6\u5F97",
+      "\u30BB\u30FC\u30EB/\u30AD\u30E3\u30F3\u30DA\u30FC\u30F3\u4FA1\u683C: \u672A\u53D6\u5F97",
+      "\u30AF\u30FC\u30DD\u30F3\u9069\u7528\u5F8C\u8868\u793A\u4FA1\u683C: \u672A\u53D6\u5F97"
+    ].join(" / ");
+  }
+  return [
+    `\u5B9A\u4FA1/\u30B5\u30FC\u30AF\u30EB\u8A2D\u5B9A\u4FA1\u683C: ${tierLabel(obs.regular)}`,
+    `\u30BB\u30FC\u30EB/\u30AD\u30E3\u30F3\u30DA\u30FC\u30F3\u4FA1\u683C: ${tierLabel(obs.sale)}`,
+    `\u30AF\u30FC\u30DD\u30F3\u9069\u7528\u5F8C\u8868\u793A\u4FA1\u683C: ${tierLabel(obs.coupon)}`,
+    `\u89B3\u6E2C\u6642\u523B: ${obs.observedAt}`
+  ].join(" / ");
 }
 function imageForListing(listing) {
   const host = el2("div", { className: "listing-image" });
@@ -14948,14 +15188,14 @@ function productLinkForListing(listing) {
 async function renderLibrary(root) {
   root.replaceChildren(el2("div", { className: "panel" }, [
     el2("h2", { textContent: "\u30E9\u30A4\u30D6\u30E9\u30EA" }),
-    el2("p", { className: "muted", textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u3067\u691C\u7D22\u3057\u3001\u6B63\u898F work \u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059\u3002" })
+    el2("p", { className: "muted", textContent: "\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u30FBcid \u3067\u691C\u7D22\u3057\u3001\u6B63\u898F work \u5358\u4F4D\u3067\u8868\u793A\u3057\u307E\u3059\u3002" })
   ]));
   const filters = el2("div", { className: "filters" });
   const qLabel = el2("label", { for: "filter-q", textContent: "\u30BF\u30A4\u30C8\u30EB\u691C\u7D22" });
   const qInput = el2("input", {
     id: "filter-q",
     type: "search",
-    placeholder: "\u691C\u7D22\uFF08\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\uFF09",
+    placeholder: "\u691C\u7D22\uFF08\u30BF\u30A4\u30C8\u30EB\u30FB\u30E1\u30FC\u30AB\u30FC\u30FB\u30BD\u30FC\u30B9\u30FBcid\uFF09",
     "data-testid": "filter-q",
     "aria-label": "\u30BF\u30A4\u30C8\u30EB\u691C\u7D22"
   });
@@ -15170,8 +15410,12 @@ async function renderLibrary(root) {
               el2("div", { className: "muted", textContent: listing.maker ?? "\u672A\u53D6\u5F97" }),
               el2("div", { className: "muted", textContent: `\u8CFC\u5165\u65E5: ${purchasedAtLabel(listing)}` }),
               el2("div", { className: "muted" }, [
-                "\u8CFC\u5165\u4FA1\u683C: \u672A\u53D6\u5F97 / \u73FE\u5728\u4FA1\u683C: \u672A\u53D6\u5F97"
+                `\u8CFC\u5165\u4FA1\u683C: ${purchasePriceLabel(listing)} / \u73FE\u5728\u4FA1\u683C: ${currentPriceLabel(listing)}`
               ]),
+              el2("div", {
+                className: "muted",
+                textContent: priceObservationLabel(listing)
+              }),
               el2("div", { className: "muted listing-product-link" }, [
                 "\u5546\u54C1: ",
                 productLinkForListing(listing)
@@ -15248,7 +15492,7 @@ async function fetchSyncState(source) {
   const res = await fetch(`/api/sync-state/${encodeURIComponent(source)}`);
   const text = await res.text();
   if (!res.ok) throw new Error(`\u540C\u671F\u72B6\u614B\u306E\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F (${source}): ${text}`);
-  return JSON.parse(text);
+  return SyncStateResponseSchema.parse(JSON.parse(text));
 }
 async function postRematch() {
   const res = await fetch("/api/rematch", {

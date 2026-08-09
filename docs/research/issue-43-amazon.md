@@ -153,3 +153,16 @@ Creators API をメタデータ補完に使う案も、現時点では採用候�
 - 公式規約にはマーケットプレイスごとの差がある。ここでは Amazon.co.jp の地域・ASIN・貸出資料と、参照可能だった Amazon の英語圏消費者規約を併用した。Amazon.co.jp の実装を公開する前に、日本向けの最新 Kindle Terms と Conditions of Use の確認を実施する。
 
 **実装着手条件:** Amazon が個人ライブラリ取得を明示的に許可する公式 API / エクスポート、または Amazon の明示的な許可が確認できること。利用者自身の許可と非公開クラウドの選択だけではこの条件を満たさない。そこまでは、Issue #43 は研究結果をもって取得経路未確定と扱い、購入済み推測を伴うコードを追加しない。
+
+## 実装メモ（2026-08-08、Issue #43 reader 実装）
+
+上記の調査は研究時点の結論であり、変更しない。本実装はユーザー承認記録（`.orca/workflows/dom-sync-20260808/decisions/browser-dom-and-price-scope.md`）と可視 DOM 観測記録（同 `visible-dom-selector-observations.md`）に基づき、承認された範囲だけを実装する。
+
+- **登録**: `extension/src/content/amazon-library.ts` の `amazonLibraryPageReader`（`source: "amazon"`）を foundation の `LibraryPageReader` registry へ登録（`library.ts` のブラウザ実行時ガード内）。これは 2026-08-08 に承認された「ユーザー起点・同一ブラウザ・可視 DOM のみ」のローカル観測スコープを有効にするもので、Amazon の公式 API / エクスポート許可や規約適合を意味しない。provider authority は別の人間・法務ゲートとして残り、バックグラウンド巡回、非公開 API、認証情報の読み取り、破壊的操作はこの登録では有効にならない。旧 `amazon-books.ts`（旧プロトコル）は変更しない。
+- **URL ゲート**: HTTPS + `www.amazon.co.jp` + `/hz/mycd/digital-console/contentlist/booksAll`（接頭辞サブパス可）。`pageNumber` は無指定または単一の正の整数を許可する。追跡・ソート等の未知の query key は入口 URL では受け付けるが、読取結果・ページ遷移 URL の canonical 形では除去し、`pageNumber` だけを残す。資格情報・ハッシュ・不正な `pageNumber` は不許可。ゲート外は `login`。
+- **行境界**: `tr` 内の `#content-title-<ASIN>` から、ちょうど 10 桁の大文字英数字 ASIN のみ受理。`<ASIN>:KindleEBook` 等の一括操作チェックボックス系・変形 ID・重複・`tr` 外は無視する。`#content-author-<ASIN>` は `maker` へ、行内の可視 `img` は絶対 http(s)・資格情報なしのときだけ `imageUrl` へ保持する。
+- **状態写像（保守的）**: `#content-acquired-date-<ASIN>` の可視ラベルが `取得日:` で始まるときだけ `purchased`。`レンタル日:` または可視の返却/利用終了操作 `#RETURN_CONTENT_ACTION_<ASIN>` の存在は `rental`。Prime / subscription / sample / 不明・欠落ラベルは `unknown` のまま昇格しない。タイトルや行の存在だけから所有を推定しない。
+- **商品 URL**: 行内の実在する可視 HTTPS プロダクト詳細リンク（`/dp/` または `/gp/product/`・`/gp/aw/d/` 形状、資格情報なし）があるときだけ `productUrl` を保持し、ASIN から Amazon 商品 URL を合成しない。価格フィールドは一切出力しない。
+- **ページング**: 可視 `#pagination` 内の `#page-RIGHT_PAGE[aria-label="Next"]` または現在ページより大きい `#page-<N>` アンカーの存在が「次ページあり」の唯一の根拠。次 URL は既存の `?pageNumber=<現在+1>` ルートで生成し、visited/max-page ガードは background の共通層が適用する。手動クリック・非表示 API は使わない。
+- **ページ状態**: `#CONTENT_COUNT`（`NのうちAからBまでの商品を表示しています`）と行の双方が無ければ `page_not_ready`、`N=0` は `empty`、カウントが存在しても可視行が一致しなければ失敗側に倒して `page_not_ready` とする。
+- **残課題**: 取得日・既読バッジの値は現行 `LibraryImportItem` スキーマ（日付フィールドなし）のため状態判定にのみ使い、日付文字列自体は保存されない。これは共通スキーマの拡張待ち。

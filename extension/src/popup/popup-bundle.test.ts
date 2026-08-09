@@ -59,7 +59,7 @@ describe("MV3 popup browser bundle", () => {
 
     assert.deepEqual(unresolved, [], "popup has unresolved module edges");
     const popup = readFileSync(entry, "utf8");
-    assert.match(popup, /statusEl\.textContent = connected \?/);
+    assert.match(popup, /textContent = connected \?/);
     assert.match(popup, /"status connected"/);
     assert.match(popup, /"status disconnected"/);
   });

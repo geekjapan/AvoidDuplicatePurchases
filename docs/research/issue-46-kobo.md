@@ -6,6 +6,7 @@
 ## 結論
 
 - 日本向けの対象サービスは、楽天IDでログインする楽天Kobo電子書籍ストア（`books.rakuten.co.jp/e-book/`）とする。購入本は楽天IDに紐づくマイライブラリで確認できる。[楽天Koboとは？](https://books.rakuten.co.jp/info/introduction/e-book/index-sp.html)
+- 2026-08-08 の認証済み可視DOM観測で、ライブラリ開始URLは `https://books.rakuten.co.jp/e-book/kobo/library/` と確定した。旧 `/e-book/mylibrary/` は not-found。ページングは `/e-book/kobo/library/page/<n>`（例: 次の30件）。一時的な `code` クエリは永続化しない。
 - Kobo Plus は購入ではなく購読アクセスである。公式の Available Countries 一覧に日本はなく、日本向けに有効な Kobo Plus と断定できないため、v1 では `unknown / unsupported until verified` とする。[Kobo Plus: Common questions](https://help.kobo.com/hc/en-us/articles/360018976153-Kobo-Plus-Common-questions)
 - Kobo の「購入」はコンテンツ所有権ではなく、アカウントに紐づくアクセスライセンスである。購入済み、無料、プレビュー、Kobo Plus、予約、アーカイブを別状態にする。[Privacy Policy](https://authorize.kobo.com/terms/privacypolicy)、[購入特約](https://books.rakuten.co.jp/info/e-book/purchaseagreement/index-sp.html)
 - 正規に確認できる購入履歴の経路は、ログイン後の公式 UI（Kobo.com の Purchase History）である。しかし Terms は page-scrape、robot、spider、data mining 等を禁止する。購入履歴・My Books の自動収集を許可された経路とは判断できず、Kobo の明示的許可、公式 API、または公式 export 仕様が確認されるまで実装対象にしない。[Purchase History](https://help.kobo.com/hc/en-us/articles/360017753854-View-your-audiobook-and-eBook-purchase-history)、[Terms of Use](https://authorize.kobo.com/terms/termsofuse)

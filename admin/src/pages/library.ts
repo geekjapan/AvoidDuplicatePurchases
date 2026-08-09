@@ -37,13 +37,66 @@ function errorMessage(err: unknown): string {
 }
 
 function purchasedAtLabel(listing: Listing): string {
-  if (!listing.purchasedAt) return "未取得";
+  if (!listing.purchasedAt || listing.purchasedAtPrecision === "unknown") {
+    return "未取得";
+  }
   if (listing.purchasedAtPrecision === "day") return listing.purchasedAt;
   if (listing.purchasedAtPrecision === "second") {
     const date = new Date(listing.purchasedAt);
     if (!Number.isNaN(date.getTime())) return date.toLocaleString();
   }
-  return listing.purchasedAt;
+  return "未取得";
+}
+
+function taxStatusLabel(status: "included" | "excluded" | "unknown"): string {
+  if (status === "included") return "税込";
+  if (status === "excluded") return "税別";
+  return "税区分不明";
+}
+
+function moneyLabel(money: {
+  amountMinor: number;
+  currency: string;
+  taxStatus: "included" | "excluded" | "unknown";
+}): string {
+  // Keep minor units explicit; the UI must not assume currency exponents.
+  return `${money.currency} ${money.amountMinor}（${taxStatusLabel(money.taxStatus)}・最小単位）`;
+}
+
+function purchasePriceLabel(listing: Listing): string {
+  return listing.purchasePrice ? moneyLabel(listing.purchasePrice) : "未取得";
+}
+
+function currentPriceLabel(listing: Listing): string {
+  if (!listing.currentPrice) return "未取得";
+  return `${moneyLabel(listing.currentPrice)}（取得時刻: ${listing.currentPrice.observedAt}）`;
+}
+
+function tierLabel(
+  money: {
+    amountMinor: number;
+    currency: string;
+    taxStatus: "included" | "excluded" | "unknown";
+  } | null,
+): string {
+  return money ? moneyLabel(money) : "未取得";
+}
+
+function priceObservationLabel(listing: Listing): string {
+  const obs = listing.priceObservation;
+  if (!obs) {
+    return [
+      "定価/サークル設定価格: 未取得",
+      "セール/キャンペーン価格: 未取得",
+      "クーポン適用後表示価格: 未取得",
+    ].join(" / ");
+  }
+  return [
+    `定価/サークル設定価格: ${tierLabel(obs.regular)}`,
+    `セール/キャンペーン価格: ${tierLabel(obs.sale)}`,
+    `クーポン適用後表示価格: ${tierLabel(obs.coupon)}`,
+    `観測時刻: ${obs.observedAt}`,
+  ].join(" / ");
 }
 
 function imageForListing(listing: Listing): HTMLElement {
@@ -77,7 +130,7 @@ function productLinkForListing(listing: Listing): Node {
 export async function renderLibrary(root: HTMLElement): Promise<void> {
   root.replaceChildren(el("div", { className: "panel" }, [
     el("h2", { textContent: "ライブラリ" }),
-    el("p", { className: "muted", textContent: "タイトル・メーカー・ソースで検索し、正規 work 単位で表示します。" }),
+    el("p", { className: "muted", textContent: "タイトル・メーカー・ソース・cid で検索し、正規 work 単位で表示します。" }),
   ]));
 
   const filters = el("div", { className: "filters" });
@@ -86,7 +139,7 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
   const qInput = el("input", {
     id: "filter-q",
     type: "search",
-    placeholder: "検索（タイトル・メーカー・ソース）",
+    placeholder: "検索（タイトル・メーカー・ソース・cid）",
     "data-testid": "filter-q",
     "aria-label": "タイトル検索",
   });
@@ -327,8 +380,12 @@ export async function renderLibrary(root: HTMLElement): Promise<void> {
               el("div", { className: "muted", textContent: listing.maker ?? "未取得" }),
               el("div", { className: "muted", textContent: `購入日: ${purchasedAtLabel(listing)}` }),
               el("div", { className: "muted" }, [
-                "購入価格: 未取得 / 現在価格: 未取得",
+                `購入価格: ${purchasePriceLabel(listing)} / 現在価格: ${currentPriceLabel(listing)}`,
               ]),
+              el("div", {
+                className: "muted",
+                textContent: priceObservationLabel(listing),
+              }),
               el("div", { className: "muted listing-product-link" }, [
                 "商品: ",
                 productLinkForListing(listing),
