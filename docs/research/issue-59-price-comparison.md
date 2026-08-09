@@ -57,7 +57,7 @@ Related: [#45 priceObservation](./issue-45-library-contract.md),
 | Grouping | workId in library | Anchor source+cid + relation evidence | workId among #59 sources |
 | Fetch | Manual / extension observation | Synthetic related import contract | Read listings API only |
 
-#47 remains a separate route（関連比較）. This issue must not weaken that surface or the library priceObservation display.
+Issue #47 remains a separate route（関連比較）. This issue must not weaken that surface or the library priceObservation display.
 
 ## Synthetic fixture coverage (admin tests)
 
