@@ -7,15 +7,18 @@ const BASKETS_URL = "https://www.dmm.co.jp/dc/doujin/api/baskets/";
 const NonBlankString = z.string().trim().min(1);
 
 /**
- * Basket-only canonical schema for FANZA Doujin cart API
+ * Basket-only schema for FANZA Doujin cart API
  * (prototype/fanza/README.md GET /dc/doujin/api/baskets/).
  *
  * - content_id is required (trimmed non-blank).
  * - mylibrary camelCase contentId/productId-only shapes are rejected.
  * - product_id, when present, must be non-blank and equal to content_id.
- * - blank secondary fields reject the whole item (and thus the payload).
+ * - blank secondary product_id rejects the item.
  * - error_code accepts only canonical success string "0" (numeric 0 rejected).
- * - unknown keys / wrong types fail closed → silent empty rows.
+ * - Unknown *extra* keys are stripped (live basket items grow fields; README
+ *   documents trailing ellipsis). Wrong types / wrong shapes still fail closed
+ *   → silent empty / unavailable. Root cause of #57 cart-gate miss: `.strict()`
+ *   treated evolving basket JSON as unusable and fail-opened purchase.
  */
 const DoujinBasketItemSchema = z
   .object({
@@ -33,20 +36,17 @@ const DoujinBasketItemSchema = z
     campaign_info: z.record(z.string(), z.unknown()).optional(),
     coupon_info: z.record(z.string(), z.unknown()).optional(),
   })
-  .strict()
   .refine(
     (item) => item.product_id === undefined || item.product_id === item.content_id,
     { message: "product_id must match content_id when present" },
   );
 
-const DoujinBasketPayloadSchema = z
-  .object({
-    // Canonical success only: string "0". Numeric 0 / other codes rejected.
-    error_code: z.literal("0").optional(),
-    error_message: z.array(z.unknown()).optional(),
-    data: z.array(DoujinBasketItemSchema),
-  })
-  .strict();
+const DoujinBasketPayloadSchema = z.object({
+  // Canonical success only: string "0". Numeric 0 / other codes rejected.
+  error_code: z.literal("0").optional(),
+  error_message: z.array(z.unknown()).optional(),
+  data: z.array(DoujinBasketItemSchema),
+});
 
 function findDoujinRowHost(doc: Document, cid: string): HTMLElement | null {
   const divs = doc.querySelectorAll<HTMLElement>("div");

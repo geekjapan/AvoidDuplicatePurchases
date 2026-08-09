@@ -119,30 +119,21 @@ describe("cart row parsers", () => {
     assert.notEqual(rows[0]!.host, doc.body);
   });
 
-  it("rejects Doujin payload with unknown keys / wrong types / blank cid", () => {
+  it("strips unknown Doujin keys but rejects wrong types / blank cid", () => {
     const html = readFileSync(join(fixtures, "fanza-doujin-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(
       html,
       "https://www.dmm.co.jp/dc/doujin/-/basket/",
     );
-    // Unknown item key
-    assert.deepEqual(
-      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
-        error_code: "0",
-        error_message: [],
-        data: [{ content_id: "d_900001", title: "x", extra: true }],
-      }),
-      [],
-    );
-    // Unknown top-level key
-    assert.deepEqual(
-      parseDoujinCartRowsFromPayload(doc as unknown as Document, {
-        error_code: "0",
-        data: [{ content_id: "d_900001", title: "x" }],
-        unexpected_top: 1,
-      }),
-      [],
-    );
+    // Extra item / top-level keys: strip and keep content_id (#57 API shape).
+    const withExtras = parseDoujinCartRowsFromPayload(doc as unknown as Document, {
+      error_code: "0",
+      error_message: [],
+      data: [{ content_id: "d_900001", title: "x", extra: true, is_discount: true }],
+      unexpected_top: 1,
+    });
+    assert.equal(withExtras.length, 1);
+    assert.equal(withExtras[0]!.cid, "d_900001");
     // Wrong types
     assert.deepEqual(
       parseDoujinCartRowsFromPayload(doc as unknown as Document, {
@@ -236,16 +227,16 @@ describe("cart row parsers", () => {
     );
   });
 
-  it("rejects Books payload with unknown keys / wrong types / blank product ids", () => {
+  it("strips Books extra keys; rejects wrong types / blank product ids", () => {
     const html = readFileSync(join(fixtures, "fanza-books-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(html, "https://book.dmm.co.jp/basket/");
-    assert.deepEqual(
-      parseBooksCartRowsFromPayload(doc as unknown as Document, {
-        product_ids: ["b100xxxxx01001"],
-        extra: 1,
-      }),
-      [],
-    );
+    // Extra top-level keys must not drop product_ids (#57 API shape).
+    const withExtras = parseBooksCartRowsFromPayload(doc as unknown as Document, {
+      product_ids: ["b100xxxxx01001"],
+      extra: 1,
+    });
+    assert.equal(withExtras.length, 1);
+    assert.equal(withExtras[0]!.cid, "b100xxxxx01001");
     assert.deepEqual(
       parseBooksCartRowsFromPayload(doc as unknown as Document, {
         product_ids: [123],

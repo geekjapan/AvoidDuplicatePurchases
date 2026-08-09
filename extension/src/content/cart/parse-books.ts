@@ -6,12 +6,14 @@ const PRODUCT_IDS_URL = "https://book.dmm.co.jp/ajax/bff/basket_product_ids/";
 
 const NonBlankString = z.string().trim().min(1);
 
-/** Strict local schema for FANZA Books basket product-ids payload (cart trust boundary). */
-const BooksProductIdsPayloadSchema = z
-  .object({
-    product_ids: z.array(NonBlankString),
-  })
-  .strict();
+/**
+ * FANZA Books basket product-ids payload (cart trust boundary).
+ * Extra top-level keys are stripped — only product_ids is required.
+ * Wrong types / missing product_ids still fail closed.
+ */
+const BooksProductIdsPayloadSchema = z.object({
+  product_ids: z.array(NonBlankString),
+});
 
 function readBooksRowFromDom(doc: Document, cid: string): CartRow | null {
   const items = doc.querySelectorAll<HTMLElement>("div");

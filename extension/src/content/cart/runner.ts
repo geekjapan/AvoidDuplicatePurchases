@@ -11,13 +11,15 @@ import {
 import type { LookupHit } from "../types.js";
 import { interventionToCartSource, isCartInterventionPage } from "./page-kind.js";
 import { mountCartWarning } from "./warning.js";
-import type { CartLookupItem, CartRow } from "./types.js";
+import type { CartCidLoadResult, CartLookupItem, CartRow } from "./types.js";
 
 export type CartRowParser = (doc: Document) => CartRow[] | Promise<CartRow[]>;
 
 export type LookupFn = (
   items: CartLookupItem[],
 ) => Promise<LookupHit[] | null>;
+
+export type CartCidLoader = () => Promise<CartCidLoadResult>;
 
 function readPathname(doc: Document): string {
   const loc = doc.location;
@@ -35,6 +37,15 @@ function readPathname(doc: Document): string {
 export interface RunCartPageOptions {
   /** Optional session store for cross-page gate state (tests inject a Map shim). */
   gateStore?: GateStateStore | null;
+  /**
+   * Optional live basket cid loader (FANZA basket APIs).
+   *
+   * When provided, whole-cart purchase gate is driven by these cids + lookup,
+   * even if DOM product-row hosts are missing (React SPA timing / host attrs).
+   * Row warnings still require exact hosts from parseRows. Loader failure
+   * (`unavailable`) fail-opens and does not fall back to hostless empty rows.
+   */
+  loadCartCids?: CartCidLoader;
 }
 
 /**
@@ -59,14 +70,39 @@ export async function runCartPage(
       // Silent: no rows, no error banner, no unhandled rejection.
       return 0;
     }
-    if (rows.length === 0) return 0;
 
-    const items = rows.map((row) => ({
-      source,
-      cid: row.cid,
-      title: row.title,
-      maker: row.maker ?? undefined,
-    }));
+    // Resolve cids for gate/lookup: prefer live basket API when wired (FANZA).
+    let cids: string[];
+    if (options.loadCartCids) {
+      let loaded: CartCidLoadResult;
+      try {
+        loaded = await options.loadCartCids();
+      } catch {
+        return 0;
+      }
+      // Live basket failure must not treat empty DOM as empty cart.
+      if (!Array.isArray(loaded)) return 0;
+      cids = loaded.map((c) => c.trim()).filter(Boolean);
+      if (cids.length === 0) {
+        applyConfirmedDuplicateGate(doc, source, "cart", [], options.gateStore);
+        return 0;
+      }
+    } else {
+      // DLsite (DOM-only): no rows → nothing to gate.
+      if (rows.length === 0) return 0;
+      cids = rows.map((row) => row.cid);
+    }
+
+    const rowByCid = new Map(rows.map((row) => [row.cid, row]));
+    const items: CartLookupItem[] = cids.map((cid) => {
+      const row = rowByCid.get(cid);
+      return {
+        source,
+        cid,
+        title: row?.title ?? cid,
+        maker: row?.maker ?? undefined,
+      };
+    });
 
     let results: LookupHit[] | null;
     try {
@@ -84,7 +120,12 @@ export async function runCartPage(
       doc,
     });
 
-    const confirmed = new Set(collectConfirmedDuplicateCids(rows, results));
+    const confirmed = new Set(
+      collectConfirmedDuplicateCids(
+        cids.map((cid) => ({ cid })),
+        results,
+      ),
+    );
 
     const refreshGate = (): void => {
       applyConfirmedDuplicateGate(
@@ -97,23 +138,24 @@ export async function runCartPage(
     };
 
     let warned = 0;
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = 0; i < cids.length; i++) {
       const hit = results[i];
       if (!hit || !isConfirmedDuplicate(hit)) continue;
-      const row = rows[i]!;
+      const cid = cids[i]!;
+      const row = rowByCid.get(cid);
       // Only exact product-row hosts (parsers already skip unmatched / body).
-      if (!row.host || row.host === doc.body) continue;
+      if (!row?.host || row.host === doc.body) continue;
       mountCartWarning(
         doc,
         row,
         hit,
         deleter,
-        (cid) => {
-          confirmed.delete(cid);
+        (removedCid) => {
+          confirmed.delete(removedCid);
           refreshGate();
         },
-        (cid) => {
-          confirmed.add(cid);
+        (restoredCid) => {
+          confirmed.add(restoredCid);
           refreshGate();
         },
       );
