@@ -20,6 +20,7 @@ const LIBRARY_ERROR_MESSAGES: Record<string, string> = {
   library_batch_too_large: "1ページの件数が上限を超えました",
   library_page_url_invalid: "ライブラリページのURLが不正です",
   library_max_pages_exceeded: "ページ数が上限を超えました",
+  library_invalid_poll_config: "ライブラリ同期の待機設定が不正です",
   library_rematch_failed: "蔵書の再突合に失敗しました",
   library_mark_synced_failed: "同期完了の記録に失敗しました",
   protocol: "サーバー応答の形式が不正です",
@@ -39,10 +40,40 @@ export function transportFailureMessage(label: string): string {
   return `${label} 同期失敗: ${librarySyncError("network")}`;
 }
 
+export interface SyncControl {
+  disabled: boolean;
+}
+
+/** Serialize all popup sync actions and keep their controls in one state. */
+export function createSyncControlGate(controls: SyncControl[]) {
+  let inFlight = false;
+  return {
+    tryStart(): boolean {
+      if (inFlight) return false;
+      inFlight = true;
+      for (const control of controls) control.disabled = true;
+      return true;
+    },
+    release(): void {
+      inFlight = false;
+      for (const control of controls) control.disabled = false;
+    },
+  };
+}
+
 function bootPopup(): void {
   const statusEl = document.getElementById("server-status");
   const resultEl = document.getElementById("sync-result");
   const syncBtn = document.getElementById("sync-btn") as HTMLButtonElement | null;
+  const libraryButtonEntries = LIBRARY_BUTTONS.flatMap((entry) => {
+    const button = document.getElementById(entry.id) as HTMLButtonElement | null;
+    return button ? [{ entry, button }] : [];
+  });
+  const syncControls: SyncControl[] = [
+    ...(syncBtn ? [syncBtn] : []),
+    ...libraryButtonEntries.map(({ button }) => button),
+  ];
+  const syncGate = createSyncControlGate(syncControls);
 
   async function refreshStatus(): Promise<void> {
     if (!statusEl) return;
@@ -62,10 +93,9 @@ function bootPopup(): void {
   async function runLibrarySync(
     source: string,
     label: string,
-    button: HTMLButtonElement,
   ): Promise<void> {
+    if (!syncGate.tryStart()) return;
     if (resultEl) resultEl.textContent = `${label} 同期中…（ライブラリのタブを操作します）`;
-    button.disabled = true;
     try {
       const reply = (await chrome.runtime.sendMessage({
         type: MSG_LIBRARY_SYNC,
@@ -95,22 +125,25 @@ function bootPopup(): void {
       // context). Surface a local error and let finally restore the button.
       if (resultEl) resultEl.textContent = transportFailureMessage(label);
     } finally {
-      button.disabled = false;
-      await refreshStatus();
+      try {
+        await refreshStatus();
+      } finally {
+        syncGate.release();
+      }
     }
   }
 
-  for (const entry of LIBRARY_BUTTONS) {
-    const button = document.getElementById(entry.id) as HTMLButtonElement | null;
-    if (!button) continue;
-    button.addEventListener("click", () => runLibrarySync(entry.source, entry.label, button));
+  for (const { entry, button } of libraryButtonEntries) {
+    button.addEventListener("click", () => {
+      void runLibrarySync(entry.source, entry.label);
+    });
   }
 
   if (syncBtn) {
     syncBtn.textContent = "全ソース同期";
     syncBtn.addEventListener("click", async () => {
+      if (!syncGate.tryStart()) return;
       if (resultEl) resultEl.textContent = "同期中…";
-      syncBtn.disabled = true;
       try {
         const reply = (await chrome.runtime.sendMessage({ type: MSG_SYNC })) as {
           ok?: boolean;
@@ -139,8 +172,11 @@ function bootPopup(): void {
       } catch {
         if (resultEl) resultEl.textContent = transportFailureMessage("全ソース");
       } finally {
-        syncBtn.disabled = false;
-        await refreshStatus();
+        try {
+          await refreshStatus();
+        } finally {
+          syncGate.release();
+        }
       }
     });
   }

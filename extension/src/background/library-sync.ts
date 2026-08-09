@@ -23,7 +23,8 @@ export const DEFAULT_MAX_PAGES = 100;
 
 export interface LibrarySyncOutcome {
   ok: boolean;
-  source: LibrarySource;
+  /** Null only when the message was rejected before a provider was selected. */
+  source: LibrarySource | null;
   /** Fully read pages (ready/empty). */
   pages: number;
   observed: number;
@@ -53,13 +54,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Reuse a tab already on the provider origin, else open the start URL. */
-async function getOrCreateTab(startUrl: string): Promise<number | null> {
+export async function getOrCreateTab(startUrl: string): Promise<number | null> {
   try {
     const origin = new URL(startUrl).origin;
     const tabs = await chrome.tabs.query({});
-    const existing = tabs.find(
-      (tab) => typeof tab.id === "number" && tab.url?.startsWith(origin),
-    );
+    const existing = tabs.find((tab) => {
+      if (typeof tab.id !== "number" || !tab.url) return false;
+      try {
+        return new URL(tab.url).origin === origin;
+      } catch {
+        return false;
+      }
+    });
     if (existing?.id !== undefined && existing.id !== null) return existing.id;
     const created = await chrome.tabs.create({ url: startUrl });
     return created.id ?? null;
@@ -180,6 +186,14 @@ export async function runLibrarySync(
   if (!Number.isSafeInteger(maxPages) || maxPages <= 0) {
     return { ...base, error: "library_max_pages_exceeded" };
   }
+  if (
+    !Number.isSafeInteger(pollIntervalMs) ||
+    pollIntervalMs <= 0 ||
+    !Number.isSafeInteger(readinessTimeoutMs) ||
+    readinessTimeoutMs <= 0
+  ) {
+    return { ...base, error: "library_invalid_poll_config" };
+  }
 
   const tabId = await getTab(provider.startUrl);
   if (tabId === null || tabId === undefined) return { ...base, error: "library_no_tab" };
@@ -209,6 +223,9 @@ export async function runLibrarySync(
     // canonical library URL. Wrong host, wrong path, or retained query/hash
     // values fail closed before the page is counted or imported.
     if (!isCanonicalLibraryPageUrl(source, reply.pageUrl)) {
+      return { ...outcome, error: "library_page_url_invalid" };
+    }
+    if (reply.pageUrl !== pageUrl) {
       return { ...outcome, error: "library_page_url_invalid" };
     }
 
@@ -246,6 +263,8 @@ export async function runLibrarySync(
     } catch {
       return { ...outcome, error: "library_rematch_failed" };
     }
+  }
+  if (outcome.pages > 0) {
     try {
       if (!(await markSynced(source))) {
         return { ...outcome, error: "library_mark_synced_failed" };

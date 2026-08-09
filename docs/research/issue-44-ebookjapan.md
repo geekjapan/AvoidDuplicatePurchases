@@ -69,7 +69,7 @@ LINEヤフーのプライバシーポリシーは、購入したサービス等�
 - **シェル認識**: 観測済みの `h1.heading__main`、`ul.tab-menu-list`、`#wd_temp_shelf-main`、`.shelf-control__amount` が揃うまで `page_not_ready`。空本棚は `.zero-message.zero-message--shelf` の可視テキスト `本がありません` のみで `empty`。
 - **タブ境界**: アクティブタブが `購入済み` のときだけ purchased へ写像する。`無料読書履歴` は `free` に留め、購入済みへ昇格しない。アクティブ判定不能・別タブは `page_not_ready`（fail closed）。
 - **項目境界**: 観測契約に非空アイテム markup が無いため、棚内の実在する可視 HTTPS 商品リンク（`/books/<titleId>/<publicationCd>/`、research #44 の公開 URL 形）だけを境界にする。`publicationCd` を暫定 `cid`、リンク可視テキスト（または img alt）を title とする。商品リンクが無ければ推測せず `page_not_ready`。URL の title/ID からの合成はしない。
-- **状態写像（保守的）**: 購入済みタブ上の商品リンクは `purchased`。可視テキストに レンタル / 立ち読み・サンプル / ギフト / 予約 / 読み放題 / 無料 があれば各非購入状態へ倒す。タイトル存在だけでは所有にしない。価格フィールドは出力しない。
+- **状態写像（保守的）**: 無料読書履歴タブは `free`、購入済みタブ上の商品リンクは `purchased` とする。現時点で観測済みの項目 markup に専用の状態要素がないため、タイトルやリンク文言に含まれる レンタル / 立ち読み・サンプル / ギフト / 予約 / 読み放題 / 無料 を状態判定へ使わない（購入済みタイトルの文言を誤って非購入扱いにしない）。専用 status 要素を観測・承認するまで、複数のアクティブタブや判定不能なタブは `page_not_ready` に倒す。価格フィールドは出力しない。
 - **画像・商品 URL**: 絶対 http(s)・資格情報なしの `img[src]` のみ `imageUrl`。`productUrl` は実在する HTTPS ebookjapan 商品リンクの origin+path のみ。
-- **ページング**: 可視の同一ホスト bookshelf リンク（`?page=N` または「次」系テキスト）があるときだけ次 URL を返す。visited/max-page ガードは background 共通層。非表示 API・手動ページ送りは使わない。
+- **ページング**: 可視の同一ホスト bookshelf リンクに正の `?page=N` が明示されているときだけ次 URL を返す。ラベルだけから次ページを合成しない。visited/max-page ガードは background 共通層。非表示 API・手動ページ送りは使わない。
 - **残課題**: 非空アイテムの安定したカード markup（著者/出版社セレクタ、バッジ位置、ページャ DOM）は観測契約に未収録。実棚の追加観測で境界を厚くできるが、未観測セレクタの推測は行わない。

@@ -7,14 +7,6 @@ const BOOKSHELF_PATH = "/bookshelf";
 /** Public product path; cid is the trailing publicationCd (research #44). */
 const PRODUCT_PATH = /^\/books\/\d+\/([A-Za-z0-9]+)\/?$/;
 const ACTIVE_CLASS = /\b(?:is-)?(?:active|current|selected)\b/i;
-const NON_PURCHASED_MARKERS: Array<{ re: RegExp; state: LibraryDomItem["state"] }> = [
-  { re: /レンタル/, state: "rental" },
-  { re: /立ち読み|試し読み|サンプル|trial|sample/i, state: "sample" },
-  { re: /予約/, state: "reservation" },
-  { re: /ギフト|プレゼント|gift/i, state: "gift" },
-  { re: /読み放題|サブスク|subscription/i, state: "subscription" },
-  { re: /無料/, state: "free" },
-];
 
 /** Minimal visible-DOM view; satisfied by both `Document` and the test MockDocument. */
 interface EbookjapanElement {
@@ -131,11 +123,13 @@ function activeShelfTab(doc: EbookjapanDocument): ShelfTab {
     ...visibleElements(menu.querySelectorAll("li")),
     ...visibleElements(menu.querySelectorAll("a")),
   ];
-  const active = tabs.find(isActiveTab);
-  if (!active) return "unknown";
-  const label = textOf(active);
-  if (label.includes("購入済み")) return "purchased";
-  if (label.includes("無料読書履歴")) return "free_history";
+  const activeLabels = tabs.filter(isActiveTab).map(textOf);
+  const hasPurchased = activeLabels.some((label) => label.includes("購入済み"));
+  const hasFreeHistory = activeLabels.some((label) => label.includes("無料読書履歴"));
+  if (hasPurchased && hasFreeHistory) return "unknown";
+  if (hasPurchased) return "purchased";
+  if (hasFreeHistory) return "free_history";
+  if (activeLabels.length === 0) return "unknown";
   return "other";
 }
 
@@ -185,16 +179,12 @@ function imageUrlOf(root: EbookjapanElement): string | null {
   return null;
 }
 
-function stateFromVisibleEvidence(
-  root: EbookjapanElement,
-  tab: ShelfTab,
-): LibraryDomItem["state"] {
+function stateFromVisibleEvidence(tab: ShelfTab): LibraryDomItem["state"] {
   if (tab === "free_history") return "free";
-  const blob = textOf(root);
-  for (const marker of NON_PURCHASED_MARKERS) {
-    if (marker.re.test(blob)) return marker.state;
-  }
-  // Explicit purchased-tab shelf evidence only; title alone never owns.
+  // The observed markup has no dedicated item-status element. Do not scan
+  // title/link text for markers: a purchased title can contain words such as
+  // 無料, 予約, or ギフト. Until a status element is observed, the purchased
+  // tab is the only available shelf-level evidence.
   if (tab === "purchased") return "purchased";
   return "unknown";
 }
@@ -250,7 +240,7 @@ function buildItems(
     const item: LibraryDomItem = {
       cid,
       title,
-      state: stateFromVisibleEvidence(anchor, tab),
+      state: stateFromVisibleEvidence(tab),
     };
     const imageUrl = imageUrlOf(anchor);
     if (imageUrl) item.imageUrl = imageUrl;
@@ -263,7 +253,9 @@ function buildItems(
 
 /**
  * Next URL only when a visible same-host bookshelf control proves a later
- * page. Accepts `?page=N` links or a control whose text is a next-page cue.
+ * page. Accepts only visible same-path links with an explicit positive
+ * `?page=N` query; a text label without a page number is not enough to invent
+ * a navigation target.
  */
 function nextPageUrlOf(doc: EbookjapanDocument, pageUrl: string): string | null {
   const currentPage = pageFromUrl(pageUrl) ?? 1;
@@ -288,13 +280,9 @@ function nextPageUrlOf(doc: EbookjapanDocument, pageUrl: string): string | null 
     }
     if (!isBookshelfPath(url.pathname)) continue;
     const pageParam = pageQueryValueOf(url);
-    const labeledNext = /次|next/i.test(textOf(anchor));
     if (pageParam !== null) {
       const n = Number(pageParam);
       if (n > currentPage && (best === null || n < best)) best = n;
-    } else if (labeledNext && url.search === "") {
-      const n = currentPage + 1;
-      if (best === null || n < best) best = n;
     }
   }
   if (best === null) return null;

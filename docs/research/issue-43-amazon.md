@@ -158,8 +158,8 @@ Creators API をメタデータ補完に使う案も、現時点では採用候�
 
 上記の調査は研究時点の結論であり、変更しない。本実装はユーザー承認記録（`.orca/workflows/dom-sync-20260808/decisions/browser-dom-and-price-scope.md`）と可視 DOM 観測記録（同 `visible-dom-selector-observations.md`）に基づき、承認された範囲だけを実装する。
 
-- **登録**: `extension/src/content/amazon-library.ts` の `amazonLibraryPageReader`（`source: "amazon"`）を foundation の `LibraryPageReader` registry へ登録（`library.ts` のブラウザ実行時ガード内）。旧 `amazon-books.ts`（旧プロトコル）は変更しない。
-- **URL ゲート**: HTTPS + `www.amazon.co.jp` + `/hz/mycd/digital-console/contentlist/booksAll`（接頭辞サブパス可）+ 任意の正の整数 `pageNumber` クエリのみ。資格情報・ハッシュ付きは不許可。他クエリ（追跡・ソート等）はページ遷移の原因ではないため通過させるが、全ページ URL は `pageNumber` のみの canonical 形へ正規化する。ゲート外は `login`。
+- **登録**: `extension/src/content/amazon-library.ts` の `amazonLibraryPageReader`（`source: "amazon"`）を foundation の `LibraryPageReader` registry へ登録（`library.ts` のブラウザ実行時ガード内）。これは 2026-08-08 に承認された「ユーザー起点・同一ブラウザ・可視 DOM のみ」のローカル観測スコープを有効にするもので、Amazon の公式 API / エクスポート許可や規約適合を意味しない。provider authority は別の人間・法務ゲートとして残り、バックグラウンド巡回、非公開 API、認証情報の読み取り、破壊的操作はこの登録では有効にならない。旧 `amazon-books.ts`（旧プロトコル）は変更しない。
+- **URL ゲート**: HTTPS + `www.amazon.co.jp` + `/hz/mycd/digital-console/contentlist/booksAll`（接頭辞サブパス可）。`pageNumber` は無指定または単一の正の整数を許可する。追跡・ソート等の未知の query key は入口 URL では受け付けるが、読取結果・ページ遷移 URL の canonical 形では除去し、`pageNumber` だけを残す。資格情報・ハッシュ・不正な `pageNumber` は不許可。ゲート外は `login`。
 - **行境界**: `tr` 内の `#content-title-<ASIN>` から、ちょうど 10 桁の大文字英数字 ASIN のみ受理。`<ASIN>:KindleEBook` 等の一括操作チェックボックス系・変形 ID・重複・`tr` 外は無視する。`#content-author-<ASIN>` は `maker` へ、行内の可視 `img` は絶対 http(s)・資格情報なしのときだけ `imageUrl` へ保持する。
 - **状態写像（保守的）**: `#content-acquired-date-<ASIN>` の可視ラベルが `取得日:` で始まるときだけ `purchased`。`レンタル日:` または可視の返却/利用終了操作 `#RETURN_CONTENT_ACTION_<ASIN>` の存在は `rental`。Prime / subscription / sample / 不明・欠落ラベルは `unknown` のまま昇格しない。タイトルや行の存在だけから所有を推定しない。
 - **商品 URL**: 行内の実在する可視 HTTPS プロダクト詳細リンク（`/dp/` または `/gp/product/`・`/gp/aw/d/` 形状、資格情報なし）があるときだけ `productUrl` を保持し、ASIN から Amazon 商品 URL を合成しない。価格フィールドは一切出力しない。

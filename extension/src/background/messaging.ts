@@ -146,7 +146,7 @@ export function registerMessaging(): void {
           ok: false,
           outcome: {
             ok: false,
-            source: LIBRARY_SOURCES[0],
+            source: null,
             pages: 0,
             observed: 0,
             inserted: 0,

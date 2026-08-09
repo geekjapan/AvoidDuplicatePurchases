@@ -122,11 +122,19 @@ null/未取得.
   followed. Explicit visible `プレビュー`/`preview` evidence maps to the
   `preview` state; `立ち読み`/`試し読み`/`サンプル`/`sample`/`trial` map to
   `sample`; the selected 立ち読み版 view stays `sample` as a whole and the
-  purchased view stays `purchased` unless a non-purchased marker applies.
+  purchased view stays `purchased` unless a dedicated, observed non-purchased
+  status element applies.
+- `src/content/ebookjapan-library.ts`: the active purchased tab is the
+  ownership boundary; a conflicting purchased/free-history tab state fails
+  closed, and the current observed markup has no dedicated status element, so
+  title/link text cannot override `purchased`. The explicit free-history tab
+  maps to `free`.
 - `src/popup/popup.ts` / `popup.html`: three user-triggered entry points
-  (Amazon Kindle / ebookjapan / Kobo 同期). Clicking one only navigates and
-  reads the library DOM — no login, purchase, cart, coupon, or other
-  external mutation is initiated.
+  (Amazon Kindle / ebookjapan / Kobo 同期) under the explicit human scope
+  delta recorded above. Clicking one only navigates and reads the library DOM
+  — no login, purchase, cart, coupon, or other external mutation is initiated.
+  This user-scope authorization is not provider permission or official
+  ownership authority; that remains a separate human/legal gate.
 - `manifest.json`: **origin-level** `host_permissions`
   (`https://www.amazon.co.jp/*`, `https://ebookjapan.yahoo.co.jp/*`,
   `https://books.rakuten.co.jp/*`) because Chrome MV3 ignores the path

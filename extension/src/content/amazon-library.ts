@@ -101,6 +101,12 @@ function textOf(element: AmazonLibraryElement | null | undefined): string {
   return element === null || element === undefined ? "" : visibleTextOf(element).trim();
 }
 
+function isDisabled(element: AmazonLibraryElement): boolean {
+  if (element.getAttribute("aria-disabled")?.toLowerCase() === "true") return true;
+  if (element.getAttribute("disabled") !== null) return true;
+  return /\bdisabled\b/i.test(element.getAttribute("class") ?? "");
+}
+
 /**
  * Free markers (visible free / 無料). Distinct from an explicit purchased
  * zero-price row, which carries 取得日 without these markers.
@@ -236,9 +242,10 @@ function hasLaterVisiblePage(
 ): boolean {
   const pagination = visibleDocumentElementById(doc, "pagination");
   if (!pagination) return false;
-  if (visibleDescendant(pagination, '#page-RIGHT_PAGE[aria-label="Next"]')) return true;
+  const next = visibleDescendant(pagination, '#page-RIGHT_PAGE[aria-label="Next"]');
+  if (next && !isDisabled(next)) return true;
   for (const anchor of Array.from(pagination.querySelectorAll('[id^="page-"]'))) {
-    if (!isVisible(anchor)) continue;
+    if (!isVisible(anchor) || isDisabled(anchor)) continue;
     const pageNumber = Number(anchor.id.slice("page-".length));
     if (Number.isSafeInteger(pageNumber) && pageNumber > currentPageNumber) {
       return true;

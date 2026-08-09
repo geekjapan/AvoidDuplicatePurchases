@@ -653,4 +653,24 @@ describe("Amazon library reader (DOM library-sync protocol)", () => {
     }
     assert.equal(hiddenNextReply.nextPageUrl, PAGE_2);
   });
+
+  it("does not treat disabled visible pager controls as proof of another page", () => {
+    const disabledNextDoc = new MockDocument();
+    addCount(disabledNextDoc, 2);
+    addRow(disabledNextDoc, ASIN, { label: "Prime Reading" });
+    const pager = addPagination(disabledNextDoc, ["page-1", "page-RIGHT_PAGE"], "Next");
+    const next = pager.querySelector("#page-RIGHT_PAGE");
+    assert.ok(next);
+    next.setAttribute("aria-disabled", "true");
+    assert.equal(readAmazonLibraryPage(disabledNextDoc, PAGE_1).nextPageUrl, null);
+
+    const disabledNumberDoc = new MockDocument();
+    addCount(disabledNumberDoc, 2);
+    addRow(disabledNumberDoc, ASIN, { label: "Prime Reading" });
+    const numberPager = addPagination(disabledNumberDoc, ["page-1", "page-2"]);
+    const pageTwo = numberPager.querySelector("#page-2");
+    assert.ok(pageTwo);
+    pageTwo.setAttribute("class", "disabled");
+    assert.equal(readAmazonLibraryPage(disabledNumberDoc, PAGE_1).nextPageUrl, null);
+  });
 });

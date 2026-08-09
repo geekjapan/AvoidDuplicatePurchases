@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  getOrCreateTab,
   runLibrarySync,
   type LibrarySyncDeps,
 } from "./library-sync.js";
@@ -124,6 +125,7 @@ describe("background DOM library sync", () => {
 
   it("treats an empty library as a successful zero-item sync", async () => {
     let rematchCalls = 0;
+    let markSyncedCalls = 0;
     const outcome = await runLibrarySync("kobo", {
       ...depsWith(async () => ({
         ok: true,
@@ -139,6 +141,10 @@ describe("background DOM library sync", () => {
         rematchCalls++;
         return true;
       },
+      markSynced: async () => {
+        markSyncedCalls++;
+        return true;
+      },
     });
     assert.deepEqual(outcome, {
       ok: true,
@@ -149,6 +155,7 @@ describe("background DOM library sync", () => {
       updated: 0,
     });
     assert.equal(rematchCalls, 0, "no successful batch → no rematch");
+    assert.equal(markSyncedCalls, 1, "a fully read empty page still advances sync state");
   });
 
   it("waits for content-script readiness across page_not_ready polls", async () => {
@@ -185,6 +192,27 @@ describe("background DOM library sync", () => {
     });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.error, "library_readiness_timeout");
+  });
+
+  it("rejects invalid polling configuration before opening a tab", async () => {
+    for (const overrides of [
+      { pollIntervalMs: 0 },
+      { pollIntervalMs: -1 },
+      { pollIntervalMs: 1.5 },
+      { readinessTimeoutMs: 0 },
+      { readinessTimeoutMs: -1 },
+    ]) {
+      let opened = false;
+      const outcome = await runLibrarySync("amazon", {
+        ...overrides,
+        getOrCreateTab: async () => {
+          opened = true;
+          return 7;
+        },
+      });
+      assert.equal(outcome.error, "library_invalid_poll_config");
+      assert.equal(opened, false);
+    }
   });
 
   it("returns immediately when readiness poll receives ok:false", async () => {
@@ -272,10 +300,14 @@ describe("background DOM library sync", () => {
     let rematchCalls = 0;
     let markSyncedCalls = 0;
     let page = 1;
+    let currentPageUrl = AMAZON_START;
     const outcome = await runLibrarySync("amazon", {
       ...depsWith(async () =>
-        ready([ITEM], `${AMAZON_START}?pageNumber=${++page}`, AMAZON_START),
+        ready([ITEM], `${AMAZON_START}?pageNumber=${++page}`, currentPageUrl),
       ),
+      navigateTab: async (_tabId, url) => {
+        currentPageUrl = url;
+      },
       maxPages: 3,
       rematch: async () => {
         rematchCalls++;
@@ -336,6 +368,16 @@ describe("background DOM library sync", () => {
     assert.equal(importCalls, 0);
     assert.equal(rematchCalls, 0);
 
+    const mismatched = await runLibrarySync("amazon", {
+      ...depsWith(async () => ready([ITEM], null, PAGE_2)),
+      importBatch: async () => {
+        throw new Error("must not import");
+      },
+    });
+    assert.equal(mismatched.ok, false);
+    assert.equal(mismatched.error, "library_page_url_invalid");
+    assert.equal(mismatched.pages, 0);
+
     const wrongPath = await runLibrarySync("kobo", {
       ...depsWith(async () =>
         ready([ITEM], null, "https://books.rakuten.co.jp/e-book/mylibrary/"),
@@ -394,24 +436,32 @@ describe("background DOM library sync", () => {
   });
 
   it("accepts canonical pagination for every library source", async () => {
+    let ebookjapanPageUrl = EBOOKJAPAN_START;
     const ebookjapan = await runLibrarySync("ebookjapan", {
       ...depsWith(async () =>
-        ready([ITEM], `${EBOOKJAPAN_START}?page=2`, EBOOKJAPAN_START),
+        ready([ITEM], `${EBOOKJAPAN_START}?page=2`, ebookjapanPageUrl),
       ),
+      navigateTab: async (_tabId, url) => {
+        ebookjapanPageUrl = url;
+      },
       markSynced: async () => true,
     });
     assert.equal(ebookjapan.ok, true);
     assert.equal(ebookjapan.pages, 2);
     assert.equal(ebookjapan.observed, 2);
 
+    let koboPageUrl = KOBO_START;
     const kobo = await runLibrarySync("kobo", {
       ...depsWith(async () =>
         ready(
           [ITEM],
           "https://books.rakuten.co.jp/e-book/kobo/library/page/2",
-          KOBO_START,
+          koboPageUrl,
         ),
       ),
+      navigateTab: async (_tabId, url) => {
+        koboPageUrl = url;
+      },
       markSynced: async () => true,
     });
     assert.equal(kobo.ok, true);
@@ -427,6 +477,43 @@ describe("background DOM library sync", () => {
     });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.error, "library_unknown_provider");
+  });
+
+  it("reuses only a tab whose parsed origin exactly matches the provider", async () => {
+    const chromeGlobal = globalThis as { chrome?: unknown };
+    const originalChrome = chromeGlobal.chrome;
+    let created = 0;
+    chromeGlobal.chrome = {
+      tabs: {
+        query: async () => [
+          { id: 1, url: "https://books.rakuten.co.jp.evil.example/" },
+          { id: 2, url: KOBO_START },
+        ],
+        create: async () => {
+          created++;
+          return { id: 3 };
+        },
+      },
+    };
+    try {
+      assert.equal(await getOrCreateTab(KOBO_START), 2);
+      assert.equal(created, 0);
+
+      chromeGlobal.chrome = {
+        tabs: {
+          query: async () => [{ id: 1, url: "https://books.rakuten.co.jp.evil.example/" }],
+          create: async () => {
+            created++;
+            return { id: 3 };
+          },
+        },
+      };
+      assert.equal(await getOrCreateTab(KOBO_START), 3);
+      assert.equal(created, 1);
+    } finally {
+      if (originalChrome === undefined) delete chromeGlobal.chrome;
+      else chromeGlobal.chrome = originalChrome;
+    }
   });
 
   it("fails closed when no tab is available", async () => {

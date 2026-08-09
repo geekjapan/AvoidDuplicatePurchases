@@ -79,8 +79,9 @@ async function handleLibraryRoute(
     try {
       const counts = importLibraryBatch(ctx.db, parsed.source, parsed.pageUrl, parsed.items);
       json(res, 200, LibraryImportResponseSchema.parse(counts));
-    } catch {
-      validationError(res);
+    } catch (error) {
+      console.error("library import failed", error);
+      json(res, 500, { error: "import_failed" });
     }
     return true;
   }

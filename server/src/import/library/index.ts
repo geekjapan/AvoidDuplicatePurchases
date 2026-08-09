@@ -100,7 +100,10 @@ export function importLibraryBatch(
 ): LibraryImportCounts {
   const now = new Date().toISOString();
   const counts = emptyLibraryImportCounts();
-  db.exec("BEGIN");
+  // A savepoint works both at the top level and when a caller already owns a
+  // transaction. The name is constant and contains no user input.
+  const savepoint = "adp_library_import";
+  db.exec(`SAVEPOINT ${savepoint}`);
   try {
     for (const item of items) {
       const result = upsertLibraryObservation(db, source, item, pageUrl, now);
@@ -109,9 +112,18 @@ export function importLibraryBatch(
       if (result === "inserted") counts.inserted++;
       else counts.updated++;
     }
-    db.exec("COMMIT");
+    db.exec(`RELEASE SAVEPOINT ${savepoint}`);
   } catch (error) {
-    db.exec("ROLLBACK");
+    try {
+      db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    } catch {
+      // Preserve the original import failure if rollback itself fails.
+    }
+    try {
+      db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+    } catch {
+      // The savepoint may already have been released by SQLite.
+    }
     throw error;
   }
   return counts;

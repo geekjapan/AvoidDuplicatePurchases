@@ -6,6 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { openDatabase } from "../src/db.js";
 import { handleApi } from "../src/http.js";
 import { upsertFanzaListing } from "../src/import/fanza/common.js";
+import { importLibraryBatch } from "../src/import/library/index.js";
 import type { DatabaseSync } from "node:sqlite";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -292,7 +293,10 @@ describe("DOM library-sync import", () => {
   });
 
   it("rejects invalid batches at the API boundary", async () => {
-    const base = { source: "kobo", pageUrl: "https://books.rakuten.co.jp/e-book/" };
+    const base = {
+      source: "kobo",
+      pageUrl: "https://books.rakuten.co.jp/e-book/kobo/library/",
+    };
     const items = [{ cid: "K1", title: "t", state: "purchased" }];
 
     // Non-library source and unknown state.
@@ -344,6 +348,44 @@ describe("DOM library-sync import", () => {
       ).status,
       400,
     );
+  });
+
+  it("reports persistence failures as 500 after the request has passed validation", async () => {
+    const failedDb = openDatabase(":memory:").sqlite;
+    const started = await startTestServer(failedDb);
+    failedDb.close();
+    try {
+      const response = await request(started.port, "POST", "/api/import/library", {
+        source: "kobo",
+        pageUrl: "https://books.rakuten.co.jp/e-book/kobo/library/",
+        items: [{ cid: "KFAIL01", title: "t", state: "unknown" }],
+      });
+      assert.deepEqual(response, { status: 500, json: { error: "import_failed" } });
+    } finally {
+      started.server.close();
+    }
+  });
+
+  it("uses a savepoint when the caller already owns a transaction", () => {
+    const nestedDb = openDatabase(":memory:").sqlite;
+    try {
+      nestedDb.exec("BEGIN");
+      const counts = importLibraryBatch(
+        nestedDb,
+        "kobo",
+        "https://books.rakuten.co.jp/e-book/kobo/library/",
+        [{ cid: "KNEST01", title: "t", state: "unknown" }],
+      );
+      assert.equal(counts.observed, 1);
+      nestedDb.exec("ROLLBACK");
+      assert.equal(
+        (nestedDb.prepare("SELECT COUNT(*) AS count FROM library_observation").get() as { count: number })
+          .count,
+        0,
+      );
+    } finally {
+      nestedDb.close();
+    }
   });
 
   it("reads and marks sync state for the three library sources", async () => {

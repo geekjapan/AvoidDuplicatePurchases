@@ -347,7 +347,7 @@ describe("ebookjapan library reader (DOM library-sync protocol)", () => {
     ]);
   });
 
-  it("keeps rental/sample/gift/reservation/ambiguous markers non-purchased and never infers ownership from the title alone", () => {
+  it("does not let title or link text override purchased-tab evidence", () => {
     const doc = new MockDocument();
     const shelf = addShell(doc, { amount: "5冊" });
     addItem(doc, shelf, { cid: "A00RENTAL01", title: "Synthetic", badge: "レンタル中" });
@@ -359,15 +359,29 @@ describe("ebookjapan library reader (DOM library-sync protocol)", () => {
     const reply = readEbookjapanLibraryPage(doc, PAGE_1);
     assert.equal(reply.ok, true);
     if (!reply.ok || reply.state !== "ready") throw new Error("expected ready");
-    assert.deepEqual(
-      reply.items.map((item) => [item.cid, item.state]),
-      [
-        ["A00RENTAL01", "rental"],
-        ["A00SAMPLE01", "sample"],
-        ["A00GIFT0001", "gift"],
-        ["A00RESERV01", "reservation"],
-      ],
-    );
+    assert.deepEqual(reply.items.map((item) => [item.cid, item.state]), [
+      ["A00RENTAL01", "purchased"],
+      ["A00SAMPLE01", "purchased"],
+      ["A00GIFT0001", "purchased"],
+      ["A00RESERV01", "purchased"],
+    ]);
+  });
+
+  it("fails closed when purchased and free-history tabs are both active", () => {
+    const doc = new MockDocument();
+    const shelf = addShell(doc, { activeTab: "purchased", amount: "1冊" });
+    addItem(doc, shelf);
+    const menu = doc.querySelector(".tab-menu-list");
+    assert.ok(menu);
+    const tabs = menu.querySelectorAll("li");
+    const freeTab = tabs[1];
+    assert.ok(freeTab);
+    freeTab.className = "is-active";
+    assert.deepEqual(readEbookjapanLibraryPage(doc, PAGE_1), {
+      ok: true,
+      state: "page_not_ready",
+      pageUrl: PAGE_1,
+    });
   });
 
   it("fails closed when the active tab is not the purchased shelf", () => {
@@ -520,6 +534,17 @@ describe("ebookjapan library reader (DOM library-sync protocol)", () => {
     el(doc, doc.body, "a", { href: `${PAGE_1}?page=1`, text: "1" });
     el(doc, doc.body, "a", { href: "https://evil.example.com/bookshelf/?page=2", text: "2" });
     const reply = readEbookjapanLibraryPage(doc, PAGE_2);
+    assert.equal(reply.ok, true);
+    if (!reply.ok || reply.state !== "ready") throw new Error("expected ready");
+    assert.equal(reply.nextPageUrl, null);
+  });
+
+  it("does not synthesize a next URL from a bare next label", () => {
+    const doc = new MockDocument();
+    const shelf = addShell(doc, { amount: "30冊" });
+    addItem(doc, shelf);
+    el(doc, doc.body, "a", { href: "/bookshelf/", text: "次へ" });
+    const reply = readEbookjapanLibraryPage(doc, PAGE_1);
     assert.equal(reply.ok, true);
     if (!reply.ok || reply.state !== "ready") throw new Error("expected ready");
     assert.equal(reply.nextPageUrl, null);

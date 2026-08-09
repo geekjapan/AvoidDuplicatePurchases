@@ -105,6 +105,7 @@ describe("library import schemas", () => {
   it("requires an absolute https page URL and a bounded batch", () => {
     const base = {
       source: "kobo",
+      pageUrl: "https://books.rakuten.co.jp/e-book/kobo/library/",
       items: [VALID_ITEM],
     };
     assert.throws(() =>
@@ -120,7 +121,6 @@ describe("library import schemas", () => {
     assert.throws(() =>
       LibraryImportRequestSchema.parse({
         ...base,
-        pageUrl: "https://books.rakuten.co.jp/e-book/",
         items: Array.from({ length: 101 }, (_, i) => ({ ...VALID_ITEM, cid: `CID${i}` })),
       }),
     );

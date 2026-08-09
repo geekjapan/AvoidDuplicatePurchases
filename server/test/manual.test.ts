@@ -383,6 +383,36 @@ describe("manual re-registration preserves enriched fields (idempotent)", () => 
   });
 });
 
+describe("manual purchasedAt display precision", () => {
+  it("suppresses a stored timestamp when its precision is unknown", async () => {
+    const db = openDatabase(":memory:").sqlite;
+    const { server, port } = await startTestServer(db, async () => null);
+    try {
+      const first = await request(port, "POST", "/api/listings/manual", {
+        url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000002.html",
+      });
+      assert.equal(first.status, 201);
+      db.prepare(
+        `UPDATE listing SET purchased_at = ?, purchased_at_precision = 'unknown'
+         WHERE source = 'dlsite' AND cid = 'RJ000002'`,
+      ).run("2026-01-03");
+
+      const current = await request(port, "POST", "/api/listings/manual", {
+        url: "https://www.dlsite.com/maniax/work/=/product_id/RJ000002.html",
+      });
+      assert.equal(current.status, 200);
+      const listing = (current.json as {
+        listing: { purchasedAt: string | null; purchasedAtPrecision: string };
+      }).listing;
+      assert.equal(listing.purchasedAt, null);
+      assert.equal(listing.purchasedAtPrecision, "unknown");
+    } finally {
+      server.close();
+      db.close();
+    }
+  });
+});
+
 describe("productFetcher trust boundary + atomic upsert", () => {
   it("sanitizeProductImageUrl rejects non-http(s) and malformed values", () => {
     assert.equal(sanitizeProductImageUrl("https://img.example/a.jpg"), "https://img.example/a.jpg");

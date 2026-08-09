@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { librarySyncError, transportFailureMessage } from "./popup.js";
+import {
+  createSyncControlGate,
+  librarySyncError,
+  transportFailureMessage,
+} from "./popup.js";
 
 describe("popup transport failure messaging", () => {
   it("maps runtime transport rejections to a local recoverable error string", () => {
@@ -18,6 +22,10 @@ describe("librarySyncError mapping", () => {
     assert.equal(librarySyncError("protocol"), "サーバー応答の形式が不正です");
     assert.equal(librarySyncError("library_page_url_invalid"), "ライブラリページのURLが不正です");
     assert.equal(librarySyncError("library_max_pages_exceeded"), "ページ数が上限を超えました");
+    assert.equal(
+      librarySyncError("library_invalid_poll_config"),
+      "ライブラリ同期の待機設定が不正です",
+    );
     assert.equal(librarySyncError("library_rematch_failed"), "蔵書の再突合に失敗しました");
     assert.equal(librarySyncError("library_mark_synced_failed"), "同期完了の記録に失敗しました");
     assert.equal(librarySyncError("library_unknown_provider"), "未対応のプロバイダです");
@@ -45,5 +53,25 @@ describe("librarySyncError mapping", () => {
     assert.equal(librarySyncError("library_secret_leak"), "同期に失敗しました");
     assert.doesNotMatch(librarySyncError("totally_unknown_internal_code"), /totally_unknown/);
     assert.doesNotMatch(librarySyncError("library_secret_leak"), /library_secret_leak/);
+  });
+});
+
+describe("popup sync control gate", () => {
+  it("blocks overlapping actions and releases every control after completion", () => {
+    const controls = [{ disabled: false }, { disabled: false }];
+    const gate = createSyncControlGate(controls);
+
+    assert.equal(gate.tryStart(), true);
+    assert.deepEqual(
+      controls.map((control) => control.disabled),
+      [true, true],
+    );
+    assert.equal(gate.tryStart(), false);
+    gate.release();
+    assert.deepEqual(
+      controls.map((control) => control.disabled),
+      [false, false],
+    );
+    assert.equal(gate.tryStart(), true);
   });
 });

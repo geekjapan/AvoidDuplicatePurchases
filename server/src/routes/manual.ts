@@ -405,7 +405,8 @@ async function handleManualRoute(
         maker: finalRow.maker_name,
         seriesId: finalRow.series_id,
         ...display,
-        purchasedAt: finalRow.purchased_at,
+        purchasedAt:
+          finalRow.purchased_at_precision === "unknown" ? null : finalRow.purchased_at,
         purchasedAtPrecision: finalRow.purchased_at_precision,
         purchasePrice: null,
         currentPrice: null,
