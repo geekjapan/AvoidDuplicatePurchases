@@ -353,6 +353,47 @@ function dlsiteWork1ColLiveSearchDoc(): MockDocument {
 }
 
 /**
+ * DLsite's responsive/list renderer can use div rows instead of table rows.
+ * Keep the same stable work_1col title/maker structure without relying on
+ * legacy search_result classes or a table-specific element name.
+ */
+function dlsiteDivWork1ColSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const table = doc.createElement("div");
+  table.className = "work_1col_table n_worklist";
+  const row = doc.createElement("div");
+  row.className = "work_1col";
+  row.setAttribute("data-list_item_product_id", "RJ01652658");
+
+  const title = doc.createElement("dt");
+  title.className = "work_name";
+  const titleA = doc.createElement("a") as MockElement;
+  titleA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  titleA.setAttribute("href", titleA.href);
+  titleA.setAttribute("title", "完堕ち義母とザコマン後輩");
+  titleA.textContent = "完堕ち義母とザコマン後輩";
+  title.appendChild(titleA);
+
+  const maker = doc.createElement("dd");
+  maker.className = "maker_name";
+  const makerA = doc.createElement("a") as MockElement;
+  makerA.href =
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG48610.html";
+  makerA.setAttribute("href", makerA.href);
+  makerA.textContent = "ろまあぽ";
+  maker.appendChild(makerA);
+
+  row.appendChild(title);
+  row.appendChild(maker);
+  table.appendChild(row);
+  doc.body.appendChild(table);
+  return doc;
+}
+
+/**
  * Live FANZA search card shape: multi-author block under tileListTtl__txt--author
  * ("circle / creator 他"). DLsite-origin → FANZA-search must still emit the product
  * and prefer the circle (article=maker) for makerMatchKey alignment.
@@ -744,6 +785,21 @@ describe("discovery search readers", () => {
       false,
       "cart/wishlist URLs must remain rejected",
     );
+  });
+
+  it("reads DLsite div work_1col rows used by the responsive list renderer", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteDivWork1ColSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
   });
 
   it("reads live-like FANZA multi-author cards (DLsite-origin → FANZA-search path)", () => {
