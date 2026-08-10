@@ -89,6 +89,108 @@ function dlsiteSearchDoc(): MockDocument {
   return doc;
 }
 
+/**
+ * Modern / attribute-diff DLsite search DOM:
+ * - no `search_result_img_box_inner` / `data-list_item_product_id`
+ * - cards identified by structure (article) + canonical maniax product links
+ * - page-level product links outside result cards must not become candidates
+ */
+function dlsiteModernSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "フォレスティア の検索結果 | DLsite";
+
+  // Page-wide navigation / recommend link — must NOT be a candidate.
+  const nav = doc.createElement("nav");
+  const navA = doc.createElement("a") as MockElement;
+  navA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ999888.html";
+  navA.setAttribute(
+    "href",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ999888.html",
+  );
+  navA.textContent = "おすすめ作品";
+  nav.appendChild(navA);
+  doc.body.appendChild(nav);
+
+  const results = doc.createElement("div");
+  results.className = "search_work_list_modern";
+
+  const addCard = (
+    cid: string,
+    title: string,
+    maker: string,
+    href: string,
+    circleHref: string,
+  ): void => {
+    const card = doc.createElement("article");
+    // Deliberately omit legacy classes and data-list_item_product_id.
+
+    const thumb = doc.createElement("a") as MockElement;
+    thumb.href = href;
+    thumb.setAttribute("href", href);
+    const img = doc.createElement("img");
+    img.setAttribute("alt", title);
+    thumb.appendChild(img);
+
+    const titleWrap = doc.createElement("div");
+    const titleA = doc.createElement("a") as MockElement;
+    titleA.href = href;
+    titleA.setAttribute("href", href);
+    titleA.textContent = title;
+    titleWrap.appendChild(titleA);
+
+    const makerWrap = doc.createElement("div");
+    const makerA = doc.createElement("a") as MockElement;
+    makerA.href = circleHref;
+    makerA.setAttribute("href", circleHref);
+    makerA.textContent = maker;
+    makerWrap.appendChild(makerA);
+
+    card.appendChild(thumb);
+    card.appendChild(titleWrap);
+    card.appendChild(makerWrap);
+    results.appendChild(card);
+  };
+
+  addCard(
+    "RJ01221027",
+    "フォレスティア",
+    "サークル森",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221027.html",
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG00001.html",
+  );
+  addCard(
+    "RJ01221028",
+    "フォレスティア 別版",
+    "別サークル",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221028.html",
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG00002.html",
+  );
+  // Non-maniax floor product link inside a card must be rejected.
+  addCard(
+    "RJ01221029",
+    "プロフロア",
+    "他",
+    "https://www.dlsite.com/pro/work/=/product_id/RJ01221029.html",
+    "https://www.dlsite.com/pro/circle/profile/=/maker_id/RG00003.html",
+  );
+  // Card with product link but no maker text → fail-closed drop.
+  const noMaker = doc.createElement("article");
+  const noMakerA = doc.createElement("a") as MockElement;
+  noMakerA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221030.html";
+  noMakerA.setAttribute(
+    "href",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221030.html",
+  );
+  noMakerA.textContent = "メーカー欠落";
+  noMaker.appendChild(noMakerA);
+  results.appendChild(noMaker);
+
+  doc.body.appendChild(results);
+  return doc;
+}
+
 function fanzaSearchDoc(): MockDocument {
   const doc = new MockDocument();
   doc.title = "フォレスティア の検索結果 - FANZA同人";
@@ -189,6 +291,43 @@ describe("discovery search readers", () => {
       reply.candidates.some((c) => c.cid === "RJ012347" || c.cid === "RJ012348"),
       false,
       "non-maniax DLsite floors must be rejected",
+    );
+  });
+
+  it("reads modern DLsite result cards via canonical product URLs without legacy attrs", () => {
+    const doc = dlsiteModernSearchDoc();
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      doc as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 2);
+    assert.equal(reply.candidates[0]!.cid, "RJ01221027");
+    assert.equal(reply.candidates[0]!.title, "フォレスティア");
+    assert.equal(reply.candidates[0]!.maker, "サークル森");
+    assert.equal(
+      reply.candidates[0]!.productUrl,
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ01221027.html",
+    );
+    assert.equal(reply.candidates[1]!.cid, "RJ01221028");
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ999888"),
+      false,
+      "page-wide product links outside result cards must not be candidates",
+    );
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ01221029"),
+      false,
+      "non-maniax floors must be rejected",
+    );
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ01221030"),
+      false,
+      "cards without maker must fail closed",
     );
   });
 
