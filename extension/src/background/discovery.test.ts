@@ -139,6 +139,82 @@ describe("background discovery orchestrator", () => {
     assert.equal(discoverySessionCountForTests(), 0);
   });
 
+  it("tries a shorter search query after the full title returns empty", async () => {
+    resetDiscoverySessionsForTests();
+    const liveTitle =
+      "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～";
+    const candidate: DiscoveryCandidate = {
+      targetSource: "dlsite",
+      cid: "RJ01652658",
+      title:
+        "【2周年記念110円/ドスケベ差分イラスト付き】 完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう ～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～",
+      maker: "ろまあぽ",
+      productUrl: "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html",
+      rank: 1,
+    };
+    const created: string[] = [];
+    const navigated: string[] = [];
+    const notified: unknown[] = [];
+    let searchReads = 0;
+
+    await runDiscoveryStart(
+      baseStart({
+        sessionId: "sess-fallback",
+        title: liveTitle,
+        maker: "ろまあぽ",
+      }),
+      7,
+      {
+        ...depsWith(),
+        createTempTab: async (url) => {
+          created.push(url);
+          return 42;
+        },
+        navigateTab: async (_tabId, url) => {
+          navigated.push(url);
+        },
+        notifyOrigin: async (_tabId, message) => {
+          notified.push(message);
+        },
+        readSearch: async () => {
+          searchReads++;
+          if (searchReads === 1) {
+            return {
+              ok: true,
+              state: "empty",
+              pageUrl: "https://www.dlsite.com/maniax/fsr/=/keyword/full/",
+              candidates: [],
+            };
+          }
+          return readySearch([candidate]);
+        },
+        readProduct: async () =>
+          readyProduct({
+            pageUrl: candidate.productUrl,
+            cid: candidate.cid,
+            title: candidate.title,
+            maker: candidate.maker,
+          }),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 40));
+
+    assert.equal(created.length, 1);
+    assert.ok(decodeURIComponent(created[0]!).includes(liveTitle));
+    assert.ok(
+      navigated.some((url) =>
+        decodeURIComponent(url).includes("完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう"),
+      ),
+    );
+    const compares = notified.filter(
+      (message) =>
+        (message as { type?: string; kind?: string }).type === MSG_DISCOVERY_RESULT &&
+        (message as { kind?: string }).kind === "compare",
+    );
+    assert.equal(compares.length, 1);
+    assert.equal(discoverySessionCountForTests(), 0);
+  });
+
   it("ambiguous candidates show picker and do not auto-open product", async () => {
     resetDiscoverySessionsForTests();
     const notified: unknown[] = [];

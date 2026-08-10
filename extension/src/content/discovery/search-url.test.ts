@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildDiscoverySearchUrls,
   buildDiscoverySearchUrl,
   counterpartSource,
   DLSITE_TITLE_CODEPOINT_LIMIT,
@@ -71,6 +72,20 @@ describe("discovery search URL builder", () => {
   it("maps counterparts for wave-1 only", () => {
     assert.equal(counterpartSource("dlsite"), "fanza_doujin");
     assert.equal(counterpartSource("fanza_doujin"), "dlsite");
+  });
+
+  it("creates fallback keywords for a long cross-store title", () => {
+    const title =
+      "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～";
+    const result = buildDiscoverySearchUrls("dlsite", title);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+
+    const keywords = result.queries.map((query) => query.keyword);
+    assert.ok(keywords.includes(title));
+    assert.ok(keywords.includes("完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう"));
+    assert.ok(keywords.some((keyword) => keyword.startsWith("完堕ち義母とザコマン後輩")));
+    assert.ok(new Set(keywords).size >= 3);
   });
 
   it("truncates on code-point boundary for surrogate pairs", () => {

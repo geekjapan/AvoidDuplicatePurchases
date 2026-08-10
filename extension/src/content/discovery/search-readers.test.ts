@@ -500,6 +500,35 @@ function fanzaSearchDoc(): MockDocument {
   return doc;
 }
 
+function fanzaClasslessSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 - FANZA同人";
+
+  // Result card with no legacy productList classes. The canonical detail link
+  // and list-item boundary are the stable signals that remain.
+  const article = doc.createElement("article");
+  const product = doc.createElement("a") as MockElement;
+  const productUrl = "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_733274/";
+  product.href = productUrl;
+  product.setAttribute("href", productUrl);
+  product.textContent = "クラス変更作品";
+
+  const title = doc.createElement("h3");
+  title.textContent = "クラス変更作品";
+
+  const maker = doc.createElement("a") as MockElement;
+  maker.href =
+    "https://www.dmm.co.jp/dc/doujin/-/list/=/article=maker/id=42/";
+  maker.setAttribute("href", maker.href);
+  maker.textContent = "サークル森";
+
+  article.appendChild(product);
+  article.appendChild(title);
+  article.appendChild(maker);
+  doc.body.appendChild(article);
+  return doc;
+}
+
 describe("discovery search readers", () => {
   it("reads DLsite search cards with cid/title/maker and dedupes CID", () => {
     const doc = dlsiteSearchDoc();
@@ -584,6 +613,22 @@ describe("discovery search readers", () => {
       reply.candidates.some((c) => c.cid.includes("evil") || c.cid.includes("wish")),
       false,
     );
+  });
+
+  it("reads FANZA detail links from classless result-card boundaries", () => {
+    const reply = readDiscoverySearchPage(
+      "fanza_doujin",
+      fanzaClasslessSearchDoc() as unknown as Document,
+      "https://www.dmm.co.jp/dc/doujin/-/list/narrow/=/word=test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "d_733274");
+    assert.equal(reply.candidates[0]!.title, "クラス変更作品");
+    assert.equal(reply.candidates[0]!.maker, "サークル森");
   });
 
   it("reports age_gate without auto-click", () => {
