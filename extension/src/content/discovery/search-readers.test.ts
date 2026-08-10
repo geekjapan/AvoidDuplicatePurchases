@@ -89,6 +89,168 @@ function dlsiteSearchDoc(): MockDocument {
   return doc;
 }
 
+/**
+ * Modern / attribute-diff DLsite search DOM:
+ * - no `search_result_img_box_inner` / `data-list_item_product_id`
+ * - cards identified by structure (article) + canonical maniax product links
+ * - page-level product links outside result cards must not become candidates
+ */
+function dlsiteModernSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "フォレスティア の検索結果 | DLsite";
+
+  // Page-wide navigation / recommend link — must NOT be a candidate.
+  const nav = doc.createElement("nav");
+  const navA = doc.createElement("a") as MockElement;
+  navA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ999888.html";
+  navA.setAttribute(
+    "href",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ999888.html",
+  );
+  navA.textContent = "おすすめ作品";
+  nav.appendChild(navA);
+  doc.body.appendChild(nav);
+
+  const results = doc.createElement("div");
+  results.className = "search_work_list_modern";
+
+  const addCard = (
+    cid: string,
+    title: string,
+    maker: string,
+    href: string,
+    circleHref: string,
+  ): void => {
+    const card = doc.createElement("article");
+    // Deliberately omit legacy classes and data-list_item_product_id.
+
+    const thumb = doc.createElement("a") as MockElement;
+    thumb.href = href;
+    thumb.setAttribute("href", href);
+    const img = doc.createElement("img");
+    img.setAttribute("alt", title);
+    thumb.appendChild(img);
+
+    const titleWrap = doc.createElement("div");
+    const titleA = doc.createElement("a") as MockElement;
+    titleA.href = href;
+    titleA.setAttribute("href", href);
+    titleA.textContent = title;
+    titleWrap.appendChild(titleA);
+
+    const makerWrap = doc.createElement("div");
+    const makerA = doc.createElement("a") as MockElement;
+    makerA.href = circleHref;
+    makerA.setAttribute("href", circleHref);
+    makerA.textContent = maker;
+    makerWrap.appendChild(makerA);
+
+    card.appendChild(thumb);
+    card.appendChild(titleWrap);
+    card.appendChild(makerWrap);
+    results.appendChild(card);
+  };
+
+  addCard(
+    "RJ01221027",
+    "フォレスティア",
+    "サークル森",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221027.html",
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG00001.html",
+  );
+  addCard(
+    "RJ01221028",
+    "フォレスティア 別版",
+    "別サークル",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221028.html",
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG00002.html",
+  );
+  // Non-maniax floor product link inside a card must be rejected.
+  addCard(
+    "RJ01221029",
+    "プロフロア",
+    "他",
+    "https://www.dlsite.com/pro/work/=/product_id/RJ01221029.html",
+    "https://www.dlsite.com/pro/circle/profile/=/maker_id/RG00003.html",
+  );
+  // Card with product link but no maker text → fail-closed drop.
+  const noMaker = doc.createElement("article");
+  const noMakerA = doc.createElement("a") as MockElement;
+  noMakerA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221030.html";
+  noMakerA.setAttribute(
+    "href",
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01221030.html",
+  );
+  noMakerA.textContent = "メーカー欠落";
+  noMaker.appendChild(noMakerA);
+  results.appendChild(noMaker);
+
+  doc.body.appendChild(results);
+  return doc;
+}
+
+/**
+ * Chrome regions (nav/header/footer/aside) that wrap product links in ul>li.
+ * These must not become search candidates even with title + maker present.
+ */
+function dlsiteChromeListProductDoc(chromeTag: "nav" | "header" | "footer" | "aside"): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "フォレスティア の検索結果 | DLsite";
+
+  const chrome = doc.createElement(chromeTag);
+  const ul = doc.createElement("ul");
+  const li = doc.createElement("li");
+
+  const productHref =
+    chromeTag === "nav"
+      ? "https://www.dlsite.com/maniax/work/=/product_id/RJ999777.html"
+      : chromeTag === "footer"
+        ? "https://www.dlsite.com/maniax/work/=/product_id/RJ999666.html"
+        : chromeTag === "header"
+          ? "https://www.dlsite.com/maniax/work/=/product_id/RJ999555.html"
+          : "https://www.dlsite.com/maniax/work/=/product_id/RJ999444.html";
+
+  const productA = doc.createElement("a") as MockElement;
+  productA.href = productHref;
+  productA.setAttribute("href", productHref);
+  productA.textContent = "クロム作品";
+
+  const makerA = doc.createElement("a") as MockElement;
+  makerA.href = "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG99999.html";
+  makerA.setAttribute(
+    "href",
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG99999.html",
+  );
+  makerA.textContent = "クロムサークル";
+
+  li.appendChild(productA);
+  li.appendChild(makerA);
+  ul.appendChild(li);
+  chrome.appendChild(ul);
+  doc.body.appendChild(chrome);
+  return doc;
+}
+
+/** Search URL page with only chrome list items (no product links, no results shell). */
+function dlsiteNavListOnlySearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索中 | DLsite";
+  const nav = doc.createElement("nav");
+  const ul = doc.createElement("ul");
+  const li = doc.createElement("li");
+  const home = doc.createElement("a") as MockElement;
+  home.href = "https://www.dlsite.com/maniax/";
+  home.setAttribute("href", "https://www.dlsite.com/maniax/");
+  home.textContent = "ホーム";
+  li.appendChild(home);
+  ul.appendChild(li);
+  nav.appendChild(ul);
+  doc.body.appendChild(nav);
+  return doc;
+}
+
 function fanzaSearchDoc(): MockDocument {
   const doc = new MockDocument();
   doc.title = "フォレスティア の検索結果 - FANZA同人";
@@ -192,6 +354,43 @@ describe("discovery search readers", () => {
     );
   });
 
+  it("reads modern DLsite result cards via canonical product URLs without legacy attrs", () => {
+    const doc = dlsiteModernSearchDoc();
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      doc as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 2);
+    assert.equal(reply.candidates[0]!.cid, "RJ01221027");
+    assert.equal(reply.candidates[0]!.title, "フォレスティア");
+    assert.equal(reply.candidates[0]!.maker, "サークル森");
+    assert.equal(
+      reply.candidates[0]!.productUrl,
+      "https://www.dlsite.com/maniax/work/=/product_id/RJ01221027.html",
+    );
+    assert.equal(reply.candidates[1]!.cid, "RJ01221028");
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ999888"),
+      false,
+      "page-wide product links outside result cards must not be candidates",
+    );
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ01221029"),
+      false,
+      "non-maniax floors must be rejected",
+    );
+    assert.equal(
+      reply.candidates.some((c) => c.cid === "RJ01221030"),
+      false,
+      "cards without maker must fail closed",
+    );
+  });
+
   it("reads FANZA doujin productList cards and rejects lookalike hosts", () => {
     const doc = fanzaSearchDoc();
     const reply = readDiscoverySearchPage(
@@ -237,5 +436,55 @@ describe("discovery search readers", () => {
     );
     assert.equal(reply.ok, true);
     if (reply.ok) assert.equal(reply.state, "page_not_ready");
+  });
+
+  it("rejects product links under nav/header/footer/aside ul>li as candidates", () => {
+    const cases: Array<{
+      tag: "nav" | "header" | "footer" | "aside";
+      cid: string;
+    }> = [
+      { tag: "nav", cid: "RJ999777" },
+      { tag: "footer", cid: "RJ999666" },
+      { tag: "header", cid: "RJ999555" },
+      { tag: "aside", cid: "RJ999444" },
+    ];
+    for (const { tag, cid } of cases) {
+      const doc = dlsiteChromeListProductDoc(tag);
+      const reply = readDiscoverySearchPage(
+        "dlsite",
+        doc as unknown as Document,
+        "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+      );
+      assert.equal(reply.ok, true, `${tag}: reply.ok`);
+      if (!reply.ok) return;
+      assert.equal(
+        reply.state === "ready" ? reply.candidates.length : 0,
+        0,
+        `${tag}: chrome list product must not become a candidate`,
+      );
+      if (reply.state === "ready") {
+        assert.equal(
+          reply.candidates.some((c) => c.cid === cid),
+          false,
+          `${tag}: cid ${cid} must not appear`,
+        );
+      }
+    }
+  });
+
+  it("keeps page_not_ready when only nav list chrome exists on search URL", () => {
+    const doc = dlsiteNavListOnlySearchDoc();
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      doc as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(
+      reply.state,
+      "page_not_ready",
+      "bare chrome li must not flip zero-candidate search pages to empty",
+    );
   });
 });

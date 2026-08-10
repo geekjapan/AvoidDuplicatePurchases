@@ -82,60 +82,226 @@ function findDescendants(
   return allElements(root).filter(predicate);
 }
 
-function readDlsiteSearchCandidates(doc: Document, pageUrl: string): DiscoveryCandidate[] {
-  // Portable selection (MockDocument + live DOM): class + data attribute filters.
-  const items = findDescendants(doc, (el) => {
+/** True when el is a plausible single search-result card root (not page chrome). */
+function isDlsiteResultCardRoot(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  if (tag === "li" || tag === "article") return true;
+  if ((el.getAttribute("role") ?? "").toLowerCase() === "listitem") return true;
+  // Legacy DLsite list card class (with or without data-list_item_product_id).
+  if (hasClass(el, "search_result_img_box_inner") || hasClass(el, "search_result_img_box")) {
+    return true;
+  }
+  return false;
+}
+
+/** Regions that host page chrome (nav/recommend/footer lists), not search results. */
+function isPageChromeRegion(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  return tag === "header" || tag === "nav" || tag === "footer" || tag === "aside";
+}
+
+/**
+ * Stop climbing at document / layout shells so whole-page containers never
+ * become a "card". Chrome regions also stop the climb (and reject the link).
+ */
+function isCardClimbBoundary(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  return (
+    tag === "html" ||
+    tag === "body" ||
+    tag === "head" ||
+    tag === "main" ||
+    isPageChromeRegion(el)
+  );
+}
+
+function hasPageChromeRegionAncestor(el: Element): boolean {
+  let parent: Element | null = el.parentElement;
+  while (parent) {
+    if (isPageChromeRegion(parent)) return true;
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
+/** Known legacy search-list shell classes (empty-results signal when present). */
+function isDlsiteLegacySearchShell(el: Element): boolean {
+  return (
+    hasClass(el, "n_worklist") ||
+    hasClass(el, "search_result") ||
+    hasClass(el, "search_result_img_box_inner") ||
+    hasClass(el, "search_result_img_box")
+  );
+}
+
+function anchorHref(el: Element): string {
+  return el.getAttribute("href") ?? (el as HTMLAnchorElement).href ?? "";
+}
+
+function collectValidatedProductInCard(
+  card: Element,
+  pageUrl: string,
+): { productUrl: string; cid: string; anchors: Element[] } | null {
+  const anchors = findDescendants(card, (el) => el.tagName.toLowerCase() === "a");
+  const byCid = new Map<string, { productUrl: string; anchors: Element[] }>();
+
+  for (const a of anchors) {
+    const href = anchorHref(a);
+    if (!href.includes("/work/=/product_id/")) continue;
+    const validated = validateProductUrl("dlsite", href, pageUrl);
+    if (!validated) continue;
+    const existing = byCid.get(validated.cid);
+    if (existing) {
+      existing.anchors.push(a);
+    } else {
+      byCid.set(validated.cid, { productUrl: validated.productUrl, anchors: [a] });
+    }
+  }
+
+  // Ambiguous multi-product card → fail closed.
+  if (byCid.size !== 1) return null;
+  const [cid, data] = [...byCid.entries()][0]!;
+  return { cid, productUrl: data.productUrl, anchors: data.anchors };
+}
+
+/**
+ * Climb from a product anchor to the nearest result-card root.
+ * Page-wide links under nav/header/footer/aside (including listitem chrome)
+ * and bare document shells without a card root are rejected.
+ */
+function resolveDlsiteResultCard(anchor: Element): Element | null {
+  let current: Element | null = anchor;
+  while (current) {
+    if (isPageChromeRegion(current)) return null;
+    if (isDlsiteResultCardRoot(current)) {
+      // li/article under chrome lists are not result cards.
+      if (hasPageChromeRegionAncestor(current)) return null;
+      return current;
+    }
+    const parent: Element | null = current.parentElement;
+    if (!parent || isCardClimbBoundary(parent)) return null;
+    current = parent;
+  }
+  return null;
+}
+
+function readDlsiteTitleFromCard(
+  card: Element,
+  productAnchors: Element[],
+): string | null {
+  const workNameAnchor = findDescendant(card, (el) => {
+    if (el.tagName.toLowerCase() !== "a") return false;
+    const parent = el.parentElement;
+    return Boolean(
+      parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "work_name"),
+    );
+  });
+  if (workNameAnchor) {
+    const titleAttr = workNameAnchor.getAttribute("title")?.trim() ?? "";
+    const titleText = visibleTextOf(workNameAnchor).trim();
+    const title = (titleAttr || titleText).trim();
+    if (title) return title;
+  }
+
+  // Prefer product anchors that expose visible title text (skip thumb-only links).
+  for (const a of productAnchors) {
+    if (!isVisible(a)) continue;
+    const titleAttr = a.getAttribute("title")?.trim() ?? "";
+    const titleText = visibleTextOf(a).trim();
+    const title = (titleAttr || titleText).trim();
+    if (title) return title;
+  }
+
+  // Fall back to img alt on a product anchor inside the card.
+  for (const a of productAnchors) {
+    const img = findDescendant(a, (el) => el.tagName.toLowerCase() === "img");
+    const alt = img?.getAttribute("alt")?.trim() ?? "";
+    if (alt) return alt;
+  }
+  return null;
+}
+
+function readDlsiteMakerFromCard(card: Element): string | null {
+  const makerEl =
+    findDescendant(card, (el) => {
+      if (el.tagName.toLowerCase() === "a") {
+        const parent = el.parentElement;
+        return Boolean(
+          parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "maker_name"),
+        );
+      }
+      return el.tagName.toLowerCase() === "dd" && hasClass(el, "maker_name");
+    }) ?? null;
+  if (makerEl) {
+    const text = visibleTextOf(makerEl).trim();
+    if (text) return text;
+  }
+
+  // Modern markup: circle / maker profile links inside the card.
+  const circleAnchor = findDescendant(card, (el) => {
+    if (el.tagName.toLowerCase() !== "a") return false;
+    if (!isVisible(el)) return false;
+    const href = anchorHref(el);
+    return /\/circle\//i.test(href) || /maker_id/i.test(href);
+  });
+  if (circleAnchor) {
+    const text = visibleTextOf(circleAnchor).trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function collectDlsiteResultCards(doc: Document): Element[] {
+  // Legacy: fixed class + data-list_item_product_id (backward compatible).
+  const legacy = findDescendants(doc, (el) => {
     if (el.tagName.toLowerCase() !== "li") return false;
     if (!hasClass(el, "search_result_img_box_inner")) return false;
     return Boolean(el.getAttribute("data-list_item_product_id")?.trim());
   });
+  if (legacy.length > 0) return legacy;
 
+  // Modern / attribute-diff: cards that own a validated maniax product link.
+  // Discover via product anchors so we never treat bare page-wide links as cards.
+  const productAnchors = findDescendants(doc, (el) => {
+    if (el.tagName.toLowerCase() !== "a") return false;
+    const href = anchorHref(el);
+    return href.includes("/maniax/work/=/product_id/") || href.includes("/work/=/product_id/");
+  });
+
+  const cards: Element[] = [];
+  const seen = new Set<Element>();
+  for (const anchor of productAnchors) {
+    const card = resolveDlsiteResultCard(anchor);
+    if (!card || seen.has(card)) continue;
+    seen.add(card);
+    cards.push(card);
+  }
+  return cards;
+}
+
+function readDlsiteSearchCandidates(doc: Document, pageUrl: string): DiscoveryCandidate[] {
+  const items = collectDlsiteResultCards(doc);
   const out: DiscoveryCandidate[] = [];
   const seen = new Set<string>();
 
   for (const item of items) {
     if (!isVisible(item)) continue;
+
+    const product = collectValidatedProductInCard(item, pageUrl);
+    if (!product) continue;
+
+    let cid = product.cid;
     const rawId = item.getAttribute("data-list_item_product_id")?.trim().toUpperCase() ?? "";
-
-    const productAnchor = findDescendant(item, (el) => {
-      if (el.tagName.toLowerCase() !== "a") return false;
-      const href = el.getAttribute("href") ?? (el as HTMLAnchorElement).href ?? "";
-      return href.includes("/work/=/product_id/");
-    }) as HTMLAnchorElement | null;
-    if (!productAnchor) continue;
-
-    const href = productAnchor.getAttribute("href") ?? productAnchor.href ?? "";
-    const validated = validateProductUrl("dlsite", href, pageUrl);
-    if (!validated) continue;
-
-    let cid = validated.cid;
-    if (rawId && isValidDlsiteWorkno(rawId) && rawId === validated.cid) {
+    if (rawId && isValidDlsiteWorkno(rawId) && rawId === product.cid) {
       cid = rawId;
     }
     if (seen.has(cid)) continue;
 
-    const titleAnchor =
-      (findDescendant(item, (el) => {
-        if (el.tagName.toLowerCase() !== "a") return false;
-        const parent = el.parentElement;
-        return Boolean(parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "work_name"));
-      }) as HTMLAnchorElement | null) ?? productAnchor;
-
-    const titleAttr = titleAnchor.getAttribute("title")?.trim();
-    const titleText = visibleTextOf(titleAnchor).trim();
-    const title = (titleAttr || titleText).trim();
+    // Title/maker only from visible card text; missing either → fail closed.
+    const title = readDlsiteTitleFromCard(item, product.anchors);
     if (!title) continue;
-
-    const makerEl =
-      findDescendant(item, (el) => {
-        if (el.tagName.toLowerCase() === "a") {
-          const parent = el.parentElement;
-          return Boolean(parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "maker_name"));
-        }
-        return el.tagName.toLowerCase() === "dd" && hasClass(el, "maker_name");
-      }) ?? null;
-    const makerText = makerEl ? visibleTextOf(makerEl).trim() : "";
-    const maker = makerText || null;
+    const maker = readDlsiteMakerFromCard(item);
+    if (!maker) continue;
 
     seen.add(cid);
     out.push({
@@ -143,7 +309,7 @@ function readDlsiteSearchCandidates(doc: Document, pageUrl: string): DiscoveryCa
       cid,
       title,
       maker,
-      productUrl: validated.productUrl,
+      productUrl: product.productUrl,
       rank: out.length + 1,
     });
     if (out.length >= DISCOVERY_SEARCH_CANDIDATE_CAP) break;
@@ -258,13 +424,12 @@ export function readDiscoverySearchPage(
   if (candidates.length === 0) {
     const hasContainer =
       targetSource === "dlsite"
-        ? findDescendants(doc, (el) => {
-            return (
-              hasClass(el, "n_worklist") ||
-              hasClass(el, "search_result") ||
-              hasClass(el, "search_result_img_box_inner")
-            );
-          }).length > 0
+        ? // Never treat bare li/article as shell evidence (chrome pages always have them).
+          // Require legacy list classes and/or a card that owns a validated maniax product.
+          findDescendants(doc, isDlsiteLegacySearchShell).length > 0 ||
+          collectDlsiteResultCards(doc).some(
+            (card) => collectValidatedProductInCard(card, pageUrl) !== null,
+          )
         : findDescendants(doc, (el) => {
             return hasClass(el, "productList") || hasClass(el, "productList__item");
           }).length > 0;
