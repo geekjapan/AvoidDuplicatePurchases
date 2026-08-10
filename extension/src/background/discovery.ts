@@ -60,6 +60,7 @@ type SessionRecord = {
 export type DiscoveryDeps = {
   createTempTab?: (url: string) => Promise<number | null>;
   navigateTab?: (tabId: number, url: string) => Promise<void>;
+  activateTab?: (tabId: number) => Promise<void>;
   closeTab?: (tabId: number) => Promise<void>;
   readSearch?: (
     tabId: number,
@@ -95,10 +96,14 @@ function clearExpiryTimer(session: SessionRecord, deps: DiscoveryDeps): void {
   }
 }
 
-/** Always create a new background tab — never hijack user tabs. */
+/**
+ * Always create a dedicated user-visible tab — never hijack an existing tab.
+ * DLsite defers its result cards in inactive tabs, so the user-triggered
+ * comparison must activate the temporary tab until observation completes.
+ */
 export async function createTempTab(url: string): Promise<number | null> {
   try {
-    const created = await chrome.tabs.create({ url, active: false });
+    const created = await chrome.tabs.create({ url, active: true });
     return created.id ?? null;
   } catch {
     return null;
@@ -107,6 +112,14 @@ export async function createTempTab(url: string): Promise<number | null> {
 
 async function navigateTab(tabId: number, url: string): Promise<void> {
   await chrome.tabs.update(tabId, { url });
+}
+
+async function activateTab(tabId: number): Promise<void> {
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {
+    // origin tab may have closed while discovery was running
+  }
 }
 
 async function closeTab(tabId: number): Promise<void> {
@@ -169,6 +182,7 @@ async function waitForSearch(
   tabId: number,
   targetSource: DiscoverySource,
   deps: DiscoveryDeps,
+  previousPageUrl?: string,
 ): Promise<DiscoverySearchReply | null> {
   const read = deps.readSearch ?? readSearch;
   const poll = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -178,10 +192,35 @@ async function waitForSearch(
   while (Date.now() < deadline) {
     last = await read(tabId, targetSource);
     if (last !== null && !last.ok) return last;
+    if (
+      last?.ok &&
+      previousPageUrl !== undefined &&
+      sameSearchPage(last.pageUrl, previousPageUrl)
+    ) {
+      last = null;
+      await sleep(poll);
+      continue;
+    }
     if (last && last.ok && last.state !== "page_not_ready") return last;
     await sleep(poll);
   }
   return last;
+}
+
+function sameSearchPage(actual: string, expected: string): boolean {
+  try {
+    const left = new URL(actual);
+    const right = new URL(expected);
+    return (
+      left.protocol === right.protocol &&
+      left.hostname === right.hostname &&
+      left.port === right.port &&
+      left.pathname === right.pathname &&
+      left.search === right.search
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function waitForProduct(
@@ -204,12 +243,17 @@ async function waitForProduct(
   return last;
 }
 
-async function cleanupSession(session: SessionRecord, deps: DiscoveryDeps): Promise<void> {
+async function cleanupSession(
+  session: SessionRecord,
+  deps: DiscoveryDeps,
+): Promise<void> {
   clearExpiryTimer(session, deps);
   const closer = deps.closeTab ?? closeTab;
   for (const id of session.tempTabIds) {
     await closer(id);
   }
+  const activate = deps.activateTab ?? activateTab;
+  await activate(session.originTabId);
   session.tempTabIds.clear();
   sessions.delete(session.sessionId);
   session.phase = "done";
@@ -524,8 +568,8 @@ export async function runDiscoveryStart(
       const navigate = deps.navigateTab ?? navigateTab;
       const searchDeadline = Date.now() + (deps.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
       const candidatesByCid = new Map<string, DiscoveryCandidate>();
-      let searchPageSeen = false;
       let pageNotReady = false;
+      let previousSearchPageUrl: string | null = null;
 
       for (let queryIndex = 0; queryIndex < built.queries.length; queryIndex++) {
         const query = built.queries[queryIndex]!;
@@ -536,10 +580,15 @@ export async function runDiscoveryStart(
         }
 
         const remaining = Math.max(1, searchDeadline - Date.now());
-        const search = await waitForSearch(tabId, targetSource, {
-          ...deps,
-          readinessTimeoutMs: remaining,
-        });
+        const search = await waitForSearch(
+          tabId,
+          targetSource,
+          {
+            ...deps,
+            readinessTimeoutMs: remaining,
+          },
+          queryIndex > 0 ? previousSearchPageUrl ?? undefined : undefined,
+        );
         if (!search) {
           pageNotReady = true;
           break;
@@ -556,8 +605,8 @@ export async function runDiscoveryStart(
           await fail(session, "discovery_age_gate", deps);
           return;
         }
+        previousSearchPageUrl = search.pageUrl;
         if (search.state === "empty") {
-          searchPageSeen = true;
           continue;
         }
         if (search.state === "page_not_ready") {
@@ -569,7 +618,6 @@ export async function runDiscoveryStart(
           break;
         }
 
-        searchPageSeen = true;
         mergeDiscoveryCandidates(candidatesByCid, search.candidates);
 
         // Stop early when a fallback already produced a strict exact match.
@@ -581,7 +629,7 @@ export async function runDiscoveryStart(
         if (earlyScored.kind === "unique_exact") break;
       }
 
-      if (!searchPageSeen && pageNotReady) {
+      if (pageNotReady) {
         await fail(session, "discovery_search_timeout", deps);
         return;
       }
@@ -653,6 +701,8 @@ export async function runDiscoveryStart(
         await closer(id);
         session.tempTabIds.delete(id);
       }
+      const activate = deps.activateTab ?? activateTab;
+      await activate(originTabId);
     } catch (err) {
       await fail(session, "discovery_receiver_not_ready", deps, String(err));
     }

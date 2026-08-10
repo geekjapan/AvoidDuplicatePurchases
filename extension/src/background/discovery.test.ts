@@ -80,6 +80,7 @@ function depsWith(partial: Partial<DiscoveryDeps> = {}): DiscoveryDeps {
   return {
     createTempTab: async () => 42,
     navigateTab: async () => {},
+    activateTab: async () => {},
     closeTab: async (id) => {
       closed.push(id);
     },
@@ -99,6 +100,7 @@ describe("background discovery orchestrator", () => {
     const closed: number[] = [];
     const notified: unknown[] = [];
     const created: string[] = [];
+    const activated: number[] = [];
 
     const reply = await runDiscoveryStart(baseStart(), 7, {
       ...depsWith(),
@@ -108,6 +110,9 @@ describe("background discovery orchestrator", () => {
       },
       closeTab: async (id) => {
         closed.push(id);
+      },
+      activateTab: async (id) => {
+        activated.push(id);
       },
       notifyOrigin: async (_tabId, message) => {
         notified.push(message);
@@ -136,6 +141,7 @@ describe("background discovery orchestrator", () => {
     assert.equal(result.targetCid, "RJ012345");
     assert.equal(result.targetTiers.regular?.amountMinor, 990);
     assert.ok(closed.includes(42));
+    assert.deepEqual(activated, [7]);
     assert.equal(discoverySessionCountForTests(), 0);
   });
 
@@ -155,6 +161,8 @@ describe("background discovery orchestrator", () => {
     const created: string[] = [];
     const navigated: string[] = [];
     const notified: unknown[] = [];
+    const encodedSlashPage = "https://www.dlsite.com/maniax/fsr/=/keyword/a%2Fb/";
+    const literalSlashPage = "https://www.dlsite.com/maniax/fsr/=/keyword/a/b/";
     let searchReads = 0;
 
     await runDiscoveryStart(
@@ -182,11 +190,22 @@ describe("background discovery orchestrator", () => {
             return {
               ok: true,
               state: "empty",
-              pageUrl: "https://www.dlsite.com/maniax/fsr/=/keyword/full/",
+              pageUrl: encodedSlashPage,
               candidates: [],
             };
           }
-          return readySearch([candidate]);
+          if (searchReads === 2) {
+            return {
+              ok: true,
+              state: "empty",
+              pageUrl: encodedSlashPage,
+              candidates: [],
+            };
+          }
+          return {
+            ...readySearch([candidate]),
+            pageUrl: literalSlashPage,
+          };
         },
         readProduct: async () =>
           readyProduct({
@@ -200,6 +219,7 @@ describe("background discovery orchestrator", () => {
     await new Promise((r) => setTimeout(r, 40));
 
     assert.equal(created.length, 1);
+    assert.ok(searchReads >= 3, "stale prior-page response must be ignored after navigation");
     assert.ok(decodeURIComponent(created[0]!).includes(liveTitle));
     assert.ok(
       navigated.some((url) =>
@@ -212,6 +232,54 @@ describe("background discovery orchestrator", () => {
         (message as { kind?: string }).kind === "compare",
     );
     assert.equal(compares.length, 1);
+    assert.equal(discoverySessionCountForTests(), 0);
+  });
+
+  it("times out when fallback navigation never leaves the prior search page", async () => {
+    resetDiscoverySessionsForTests();
+    const created: string[] = [];
+    const navigated: string[] = [];
+    const notified: unknown[] = [];
+
+    await runDiscoveryStart(
+      baseStart({
+        sessionId: "sess-stale-fallback",
+        title:
+          "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～",
+        maker: "ろまあぽ",
+      }),
+      7,
+      {
+        ...depsWith(),
+        readinessTimeoutMs: 50,
+        pollIntervalMs: 1,
+        createTempTab: async (url) => {
+          created.push(url);
+          return 42;
+        },
+        navigateTab: async (_tabId, url) => {
+          navigated.push(url);
+        },
+        notifyOrigin: async (_tabId, message) => {
+          notified.push(message);
+        },
+        readSearch: async () => ({
+          ok: true,
+          state: "empty",
+          pageUrl: created[0]!,
+          candidates: [],
+        }),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 90));
+
+    assert.ok(navigated.length > 0);
+    const failure = notified.find(
+      (message) =>
+        (message as { type?: string; ok?: boolean }).type === MSG_DISCOVERY_RESULT &&
+        (message as { ok?: boolean }).ok === false,
+    ) as { failureCode?: string } | undefined;
+    assert.equal(failure?.failureCode, "discovery_search_timeout");
     assert.equal(discoverySessionCountForTests(), 0);
   });
 

@@ -82,10 +82,37 @@ function findDescendants(
   return allElements(root).filter(predicate);
 }
 
+function hasDlsiteSearchShellAncestor(el: Element): boolean {
+  let parent: Element | null = el.parentElement;
+  while (parent) {
+    if (isPageChromeRegion(parent)) return false;
+    if (isDlsiteLegacySearchShell(parent)) return true;
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
 /** True when el is a plausible single search-result card root (not page chrome). */
 function isDlsiteResultCardRoot(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === "li" || tag === "article") return true;
+  // The thumbnail renderer uses a bare <dl> for each result under the
+  // n_worklist shell. Depending on the renderer, the shell marker is either
+  // on the parent list or on the result <dl> itself. Restrict this fallback to
+  // those known shell markers so recommendation and footer definition lists
+  // cannot become product cards.
+  if (
+    tag === "dl" &&
+    (isDlsiteLegacySearchShell(el) ||
+      hasDlsiteSearchShellAncestor(el) ||
+      // The current signed-in renderer can omit the shell class entirely and
+      // expose the visible result as a bare definition list. The caller still
+      // requires a validated product link, title, and maker, while chrome
+      // ancestors are rejected by resolveDlsiteResultCard.
+      !hasPageChromeRegionAncestor(el))
+  ) {
+    return true;
+  }
   // Live list view (show_type=1/2): table.work_1col_table > tr[data-list_item_product_id].
   // The responsive renderer uses the same row contract on a div instead of a
   // table row. A work_1col block is also a card boundary when the data marker
@@ -150,6 +177,13 @@ function isDlsiteLegacySearchShell(el: Element): boolean {
   );
 }
 
+/** A result shell is rendered before async cards; only explicit zero-result text is terminal. */
+function hasDlsiteExplicitNoResults(doc: Document): boolean {
+  const zeroResultText = /(?:0\s*件中\s*0\s*[～〜~-]\s*0\s*件目|該当する作品は見つかりませんでした|条件に一致する作品は見つかりませんでした|検索条件に一致する作品はありません|作品が見つかりませんでした)/u;
+  const text = doc.body ? visibleTextOf(doc.body).replace(/\s+/g, " ").trim() : "";
+  return zeroResultText.test(text);
+}
+
 function anchorHref(el: Element): string {
   return el.getAttribute("href") ?? (el as HTMLAnchorElement).href ?? "";
 }
@@ -212,7 +246,9 @@ function readDlsiteTitleFromCard(
   card: Element,
   productAnchors: Element[],
 ): string | null {
-  const workNameAnchor = findDescendant(card, (el) => {
+  const isEllipsized = (value: string): boolean =>
+    /(?:\.\.\.|…)[\s]*$/u.test(value);
+  const titleAnchors = findDescendants(card, (el) => {
     if (el.tagName.toLowerCase() !== "a") return false;
     // Live package cards wrap the title anchor in div.multiline_truncate under
     // dd.work_name; list view uses dt.work_name > a. Climb past thin wrappers.
@@ -225,21 +261,26 @@ function readDlsiteTitleFromCard(
     }
     return false;
   });
-  if (workNameAnchor) {
-    const titleAttr = workNameAnchor.getAttribute("title")?.trim() ?? "";
-    const titleText = visibleTextOf(workNameAnchor).trim();
+  const candidates: string[] = [];
+  const seenAnchors = new Set<Element>();
+  for (const anchor of [...titleAnchors, ...productAnchors]) {
+    if (seenAnchors.has(anchor) || !isVisible(anchor)) continue;
+    seenAnchors.add(anchor);
+    const titleAttr = anchor.getAttribute("title")?.trim() ?? "";
+    const titleText = visibleTextOf(anchor).trim();
     const title = (titleAttr || titleText).trim();
-    if (title) return title;
+    if (title) candidates.push(title);
   }
 
-  // Prefer product anchors that expose visible title text (skip thumb-only links).
-  for (const a of productAnchors) {
-    if (!isVisible(a)) continue;
-    const titleAttr = a.getAttribute("title")?.trim() ?? "";
-    const titleText = visibleTextOf(a).trim();
-    const title = (titleAttr || titleText).trim();
-    if (title) return title;
-  }
+  // The first live thumbnail link may be CSS-ellipsized while a later link in
+  // the same card contains the complete title. Prefer a complete title, then
+  // the longest remaining title, instead of locking onto DOM order.
+  candidates.sort((left, right) => {
+    const ellipsizedOrder = Number(isEllipsized(left)) - Number(isEllipsized(right));
+    if (ellipsizedOrder !== 0) return ellipsizedOrder;
+    return right.length - left.length;
+  });
+  if (candidates[0]) return candidates[0];
 
   // Fall back to img alt on a product anchor inside the card.
   for (const a of productAnchors) {
@@ -251,25 +292,41 @@ function readDlsiteTitleFromCard(
 }
 
 function readDlsiteMakerFromCard(card: Element): string | null {
+  const normalizeMakerText = (
+    value: string,
+    stripContributorSuffix: boolean,
+  ): string => {
+    const trimmed = value.replace(/\s*他\s*$/u, "").trim();
+    if (!stripContributorSuffix) return trimmed;
+    return (trimmed.split(/\s+[\uFF0F/]\s+/u, 1)[0] ?? trimmed).trim();
+  };
+
   const makerEl =
     findDescendant(card, (el) => {
+      // Thumbnail/list renderers use a generic div or span for the same
+      // stable maker_name contract. Do not make the result depend on whether
+      // the renderer chose dd/dt.
+      if (hasClass(el, "maker_name")) return true;
+      // Some signed-in DLsite renderers use a semantic class variant instead
+      // of the legacy maker_name class and expose the value as plain text.
+      // Keep this scoped to maker/circle/author tokens; arbitrary card text
+      // is never accepted as maker evidence.
+      const semanticClass = classListOf(el).join(" ");
+      if (/(?:maker|circle|author)/i.test(semanticClass)) return true;
+      if (el.getAttribute("itemprop")?.toLowerCase() === "author") return true;
       if (el.tagName.toLowerCase() === "a") {
         const parent = el.parentElement;
         return Boolean(
           parent &&
-            (parent.tagName.toLowerCase() === "dd" || parent.tagName.toLowerCase() === "dt") &&
             hasClass(parent, "maker_name"),
         );
       }
-      return (
-        (el.tagName.toLowerCase() === "dd" || el.tagName.toLowerCase() === "dt") &&
-        hasClass(el, "maker_name")
-      );
+      return false;
     }) ?? null;
   if (makerEl) {
     // Prefer the first circle/maker profile link text (ignore trailing noise).
     if (makerEl.tagName.toLowerCase() === "a") {
-      const text = visibleTextOf(makerEl).trim();
+      const text = normalizeMakerText(visibleTextOf(makerEl), false);
       if (text) return text;
     } else {
       const makerLink = findDescendant(makerEl, (el) => {
@@ -279,11 +336,11 @@ function readDlsiteMakerFromCard(card: Element): string | null {
         return /\/circle\//i.test(href) || /maker_id/i.test(href);
       });
       if (makerLink) {
-        const text = visibleTextOf(makerLink).trim();
+        const text = normalizeMakerText(visibleTextOf(makerLink), false);
         if (text) return text;
       }
       const text = visibleTextOf(makerEl).trim();
-      if (text) return text;
+      if (text) return normalizeMakerText(text, true);
     }
   }
 
@@ -295,7 +352,7 @@ function readDlsiteMakerFromCard(card: Element): string | null {
     return /\/circle\//i.test(href) || /maker_id/i.test(href);
   });
   if (circleAnchor) {
-    const text = visibleTextOf(circleAnchor).trim();
+    const text = normalizeMakerText(visibleTextOf(circleAnchor), false);
     if (text) return text;
   }
   return null;
@@ -547,17 +604,16 @@ export function readDiscoverySearchPage(
       : readFanzaDoujinSearchCandidates(doc, pageUrl);
 
   if (candidates.length === 0) {
+    if (targetSource === "dlsite") {
+      if (hasDlsiteExplicitNoResults(doc)) {
+        return { ok: true, state: "empty", pageUrl: safe, candidates: [] };
+      }
+      return { ok: true, state: "page_not_ready", pageUrl: safe };
+    }
     const hasContainer =
-      targetSource === "dlsite"
-        ? // Never treat bare li/article as shell evidence (chrome pages always have them).
-          // Require legacy list classes and/or a card that owns a validated maniax product.
-          findDescendants(doc, isDlsiteLegacySearchShell).length > 0 ||
-          collectDlsiteResultCards(doc).some(
-            (card) => collectValidatedProductInCard(card, pageUrl) !== null,
-          )
-        : findDescendants(doc, (el) => {
-            return hasClass(el, "productList") || hasClass(el, "productList__item");
-          }).length > 0 || collectFanzaResultCards(doc).length > 0;
+      findDescendants(doc, (el) => {
+        return hasClass(el, "productList") || hasClass(el, "productList__item");
+      }).length > 0 || collectFanzaResultCards(doc).length > 0;
     if (!hasContainer) {
       return { ok: true, state: "page_not_ready", pageUrl: safe };
     }
