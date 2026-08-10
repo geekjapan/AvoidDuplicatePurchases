@@ -21,7 +21,7 @@ import {
 } from "../messages.js";
 import { scoreDiscoveryCandidates } from "../content/discovery/identity.js";
 import {
-  buildDiscoverySearchUrl,
+  buildDiscoverySearchUrls,
   counterpartSource,
 } from "../content/discovery/search-url.js";
 import { approvedStoreHttpsUrl } from "../content/banner.js";
@@ -304,6 +304,17 @@ function toAllowed(c: DiscoveryCandidate): AllowedCandidate | null {
   };
 }
 
+function mergeDiscoveryCandidates(
+  byCid: Map<string, DiscoveryCandidate>,
+  candidates: readonly DiscoveryCandidate[],
+): void {
+  for (const candidate of candidates) {
+    const key = `${candidate.targetSource}:${candidate.cid}`;
+    if (byCid.has(key)) continue;
+    byCid.set(key, { ...candidate, rank: byCid.size + 1 });
+  }
+}
+
 function findAllowed(
   session: SessionRecord,
   msg: { cid: string; productUrl: string; targetSource: DiscoverySource },
@@ -460,7 +471,7 @@ export async function runDiscoveryStart(
   await cancelSessionsForOriginTab(originTabId, msg.sessionId, deps);
 
   const targetSource = counterpartSource(msg.source);
-  const built = buildDiscoverySearchUrl(targetSource, msg.title);
+  const built = buildDiscoverySearchUrls(targetSource, msg.title);
   if (!built.ok) {
     return {
       ok: false,
@@ -497,35 +508,80 @@ export async function runDiscoveryStart(
         message: "相手ストアを検索しています…",
       });
 
-      const tabId = await create(built.url);
+      const firstQuery = built.queries[0];
+      if (!firstQuery) {
+        await fail(session, "discovery_invalid_request", deps);
+        return;
+      }
+
+      const tabId = await create(firstQuery.url);
       if (tabId === null) {
         await fail(session, "discovery_no_tab", deps);
         return;
       }
       session.tempTabIds.add(tabId);
 
-      const search = await waitForSearch(tabId, targetSource, deps);
-      if (!search) {
-        await fail(session, "discovery_search_timeout", deps);
-        return;
+      const navigate = deps.navigateTab ?? navigateTab;
+      const searchDeadline = Date.now() + (deps.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
+      const candidatesByCid = new Map<string, DiscoveryCandidate>();
+      let searchPageSeen = false;
+      let pageNotReady = false;
+
+      for (let queryIndex = 0; queryIndex < built.queries.length; queryIndex++) {
+        const query = built.queries[queryIndex]!;
+        if (queryIndex > 0) {
+          const remaining = searchDeadline - Date.now();
+          if (remaining <= 0) break;
+          await navigate(tabId, query.url);
+        }
+
+        const remaining = Math.max(1, searchDeadline - Date.now());
+        const search = await waitForSearch(tabId, targetSource, {
+          ...deps,
+          readinessTimeoutMs: remaining,
+        });
+        if (!search) {
+          pageNotReady = true;
+          break;
+        }
+        if (!search.ok) {
+          await fail(session, "discovery_receiver_not_ready", deps, search.error);
+          return;
+        }
+        if (search.state === "login") {
+          await fail(session, "discovery_login_required", deps);
+          return;
+        }
+        if (search.state === "age_gate") {
+          await fail(session, "discovery_age_gate", deps);
+          return;
+        }
+        if (search.state === "empty") {
+          searchPageSeen = true;
+          continue;
+        }
+        if (search.state === "page_not_ready") {
+          pageNotReady = true;
+          break;
+        }
+        if (search.state !== "ready") {
+          pageNotReady = true;
+          break;
+        }
+
+        searchPageSeen = true;
+        mergeDiscoveryCandidates(candidatesByCid, search.candidates);
+
+        // Stop early when a fallback already produced a strict exact match.
+        const earlyScored = scoreDiscoveryCandidates(
+          { title: session.originTitle, maker: session.originMaker },
+          [...candidatesByCid.values()],
+          10,
+        );
+        if (earlyScored.kind === "unique_exact") break;
       }
-      if (!search.ok) {
-        await fail(session, "discovery_receiver_not_ready", deps, search.error);
-        return;
-      }
-      if (search.state === "login") {
-        await fail(session, "discovery_login_required", deps);
-        return;
-      }
-      if (search.state === "age_gate") {
-        await fail(session, "discovery_age_gate", deps);
-        return;
-      }
-      if (search.state === "empty") {
-        await fail(session, "discovery_no_match", deps);
-        return;
-      }
-      if (search.state !== "ready") {
+
+      if (!searchPageSeen && pageNotReady) {
         await fail(session, "discovery_search_timeout", deps);
         return;
       }
@@ -539,7 +595,7 @@ export async function runDiscoveryStart(
 
       const scored = scoreDiscoveryCandidates(
         { title: session.originTitle, maker: session.originMaker },
-        search.candidates,
+        [...candidatesByCid.values()],
         10,
       );
 

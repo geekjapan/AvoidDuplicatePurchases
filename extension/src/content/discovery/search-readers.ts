@@ -364,25 +364,69 @@ function readDlsiteSearchCandidates(doc: Document, pageUrl: string): DiscoveryCa
   return out;
 }
 
+function isFanzaResultCardRoot(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  if (tag === "li" || tag === "article") return true;
+  if ((el.getAttribute("role") ?? "").toLowerCase() === "listitem") return true;
+  return hasClass(el, "productList__item");
+}
+
+function hasFanzaChromeAncestor(el: Element): boolean {
+  let parent: Element | null = el.parentElement;
+  while (parent) {
+    if (isPageChromeRegion(parent)) return true;
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
+function resolveFanzaResultCard(anchor: Element): Element | null {
+  let current: Element | null = anchor;
+  while (current) {
+    if (isPageChromeRegion(current)) return null;
+    if (isFanzaResultCardRoot(current)) {
+      return hasFanzaChromeAncestor(current) ? null : current;
+    }
+    const parent: Element | null = current.parentElement;
+    if (!parent || isCardClimbBoundary(parent)) return null;
+    current = parent;
+  }
+  return null;
+}
+
+function collectFanzaResultCards(doc: Document): Element[] {
+  const cards: Element[] = [];
+  const seen = new Set<Element>();
+  const add = (card: Element | null): void => {
+    if (!card || seen.has(card)) return;
+    seen.add(card);
+    cards.push(card);
+  };
+
+  // Current/legacy FANZA result shell.
+  for (const card of findDescendants(doc, (el) => {
+    return el.tagName.toLowerCase() === "li" && hasClass(el, "productList__item");
+  })) {
+    add(card);
+  }
+
+  // If the result shell changes class names, keep using a validated canonical
+  // detail link plus a list-item boundary. Navigation/recommendation chrome is
+  // rejected by resolveFanzaResultCard.
+  for (const anchor of findDescendants(doc, (el) => {
+    if (el.tagName.toLowerCase() !== "a") return false;
+    return anchorHref(el).includes("/dc/doujin/-/detail/=/cid=");
+  })) {
+    add(resolveFanzaResultCard(anchor));
+  }
+  return cards;
+}
+
 function readFanzaDoujinSearchCandidates(
   doc: Document,
   pageUrl: string,
 ): DiscoveryCandidate[] {
-  // Prefer items under productList containers; fall back to class-only items.
-  const listRoots = findDescendants(doc, (el) => {
-    if (el.tagName.toLowerCase() !== "ul") return false;
-    return hasClass(el, "productList") && hasClass(el, "fn-productList");
-  });
-  const itemPool: Element[] =
-    listRoots.length > 0
-      ? listRoots.flatMap((root) =>
-          findDescendants(root, (el) => {
-            return el.tagName.toLowerCase() === "li" && hasClass(el, "productList__item");
-          }),
-        )
-      : findDescendants(doc, (el) => {
-          return el.tagName.toLowerCase() === "li" && hasClass(el, "productList__item");
-        });
+  const itemPool = collectFanzaResultCards(doc);
 
   const out: DiscoveryCandidate[] = [];
   const seen = new Set<string>();
@@ -406,6 +450,10 @@ function readFanzaDoujinSearchCandidates(
       findDescendant(item, (el) => hasClass(el, "tileListTtl__txt")) ?? null;
     let title = titleEl ? visibleTextOf(titleEl).trim() : "";
     if (!title) {
+      const titleAttr = productAnchor.getAttribute("title")?.trim() ?? "";
+      title = titleAttr || visibleTextOf(productAnchor).trim();
+    }
+    if (!title) {
       const img = findDescendant(item, (el) => el.tagName.toLowerCase() === "img");
       title = img?.getAttribute("alt")?.trim() ?? "";
     }
@@ -427,6 +475,14 @@ function readFanzaDoujinSearchCandidates(
         ? visibleTextOf(makerLink).trim()
         : visibleTextOf(makerEl).trim();
       maker = makerText || null;
+    }
+    if (!maker) {
+      const makerLink = findDescendant(item, (el) => {
+        if (el.tagName.toLowerCase() !== "a") return false;
+        if (!isVisible(el)) return false;
+        return /article=maker/i.test(anchorHref(el));
+      });
+      maker = makerLink ? visibleTextOf(makerLink).trim() || null : null;
     }
 
     seen.add(validated.cid);
@@ -492,7 +548,7 @@ export function readDiscoverySearchPage(
           )
         : findDescendants(doc, (el) => {
             return hasClass(el, "productList") || hasClass(el, "productList__item");
-          }).length > 0;
+          }).length > 0 || collectFanzaResultCards(doc).length > 0;
     if (!hasContainer) {
       return { ok: true, state: "page_not_ready", pageUrl: safe };
     }
