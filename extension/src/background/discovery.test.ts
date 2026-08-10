@@ -161,6 +161,8 @@ describe("background discovery orchestrator", () => {
     const created: string[] = [];
     const navigated: string[] = [];
     const notified: unknown[] = [];
+    const encodedSlashPage = "https://www.dlsite.com/maniax/fsr/=/keyword/a%2Fb/";
+    const literalSlashPage = "https://www.dlsite.com/maniax/fsr/=/keyword/a/b/";
     let searchReads = 0;
 
     await runDiscoveryStart(
@@ -188,7 +190,7 @@ describe("background discovery orchestrator", () => {
             return {
               ok: true,
               state: "empty",
-              pageUrl: created[0]!,
+              pageUrl: encodedSlashPage,
               candidates: [],
             };
           }
@@ -196,13 +198,13 @@ describe("background discovery orchestrator", () => {
             return {
               ok: true,
               state: "empty",
-              pageUrl: created[0]!,
+              pageUrl: encodedSlashPage,
               candidates: [],
             };
           }
           return {
             ...readySearch([candidate]),
-            pageUrl: navigated.at(-1)!,
+            pageUrl: literalSlashPage,
           };
         },
         readProduct: async () =>

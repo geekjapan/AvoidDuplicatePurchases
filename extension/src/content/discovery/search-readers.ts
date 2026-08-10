@@ -180,11 +180,8 @@ function isDlsiteLegacySearchShell(el: Element): boolean {
 /** A result shell is rendered before async cards; only explicit zero-result text is terminal. */
 function hasDlsiteExplicitNoResults(doc: Document): boolean {
   const zeroResultText = /(?:0\s*件中\s*0\s*[～〜~-]\s*0\s*件目|該当する作品は見つかりませんでした|条件に一致する作品は見つかりませんでした|検索条件に一致する作品はありません|作品が見つかりませんでした)/u;
-  return findDescendants(doc, (el) => {
-    if (!isVisible(el)) return false;
-    const text = visibleTextOf(el).replace(/\s+/g, " ").trim();
-    return text.length > 0 && text.length <= 200 && zeroResultText.test(text);
-  }).length > 0;
+  const text = doc.body ? visibleTextOf(doc.body).replace(/\s+/g, " ").trim() : "";
+  return zeroResultText.test(text);
 }
 
 function anchorHref(el: Element): string {

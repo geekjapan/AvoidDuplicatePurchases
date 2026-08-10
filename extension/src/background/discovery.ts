@@ -215,7 +215,7 @@ function sameSearchPage(actual: string, expected: string): boolean {
       left.protocol === right.protocol &&
       left.hostname === right.hostname &&
       left.port === right.port &&
-      decodeURIComponent(left.pathname) === decodeURIComponent(right.pathname) &&
+      left.pathname === right.pathname &&
       left.search === right.search
     );
   } catch {
