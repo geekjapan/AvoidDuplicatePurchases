@@ -251,6 +251,23 @@ function dlsiteNavListOnlySearchDoc(): MockDocument {
   return doc;
 }
 
+function dlsiteLoadingResultShellDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+  const shell = doc.createElement("div");
+  shell.className = "n_worklist";
+  doc.body.appendChild(shell);
+  return doc;
+}
+
+function dlsiteExplicitEmptySearchDoc(): MockDocument {
+  const doc = dlsiteLoadingResultShellDoc();
+  const count = doc.createElement("div");
+  count.textContent = "条件に一致する作品は見つかりませんでした";
+  doc.body.appendChild(count);
+  return doc;
+}
+
 /**
  * Live DLsite list view (show_type=1/2) — the failing live-like shape:
  * - table.work_1col_table.n_worklist > tr[data-list_item_product_id] (class often empty/space)
@@ -390,6 +407,222 @@ function dlsiteDivWork1ColSearchDoc(): MockDocument {
   row.appendChild(maker);
   table.appendChild(row);
   doc.body.appendChild(table);
+  return doc;
+}
+
+/**
+ * DLsite thumbnail/list cards can expose maker_name on a generic div rather
+ * than the dd/dt nodes used by the work_1col renderer. This mirrors the
+ * visible one-result thumbnail layout used by the live search page.
+ */
+function dlsiteThumbnailSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const list = doc.createElement("ul");
+  list.className = "n_worklist";
+
+  const card = doc.createElement("li");
+  card.className = "search_result_img_box";
+
+  const productUrl =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  const product = doc.createElement("a") as MockElement;
+  product.href = productUrl;
+  product.setAttribute("href", productUrl);
+  const image = doc.createElement("img");
+  image.setAttribute(
+    "alt",
+    "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩",
+  );
+  product.appendChild(image);
+
+  const maker = doc.createElement("div");
+  maker.className = "maker_name";
+  maker.textContent = "ろまあぽ";
+
+  card.appendChild(product);
+  card.appendChild(maker);
+  list.appendChild(card);
+  doc.body.appendChild(list);
+  return doc;
+}
+
+/**
+ * The live thumbnail renderer exposes each result as a definition list under
+ * the n_worklist shell. The dl itself has no legacy card class.
+ */
+function dlsiteDefinitionListSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const shell = doc.createElement("div");
+  shell.className = "n_worklist";
+
+  const card = doc.createElement("dl");
+  const title = doc.createElement("dt");
+  const titleA = doc.createElement("a") as MockElement;
+  titleA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  titleA.setAttribute("href", titleA.href);
+  titleA.setAttribute(
+    "title",
+    "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩",
+  );
+  titleA.textContent = titleA.getAttribute("title")!;
+  title.appendChild(titleA);
+
+  const maker = doc.createElement("dd");
+  maker.className = "maker_name";
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+
+  card.appendChild(title);
+  card.appendChild(maker);
+  shell.appendChild(card);
+  doc.body.appendChild(shell);
+  return doc;
+}
+
+/**
+ * Some DLsite result renderings put the legacy search-shell marker directly
+ * on the result <dl>, rather than on a parent list element.
+ */
+function dlsiteDefinitionListSelfShellSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const card = doc.createElement("dl");
+  card.className = "n_worklist";
+
+  const title = doc.createElement("dt");
+  title.className = "work_name";
+  const titleA = doc.createElement("a") as MockElement;
+  titleA.href =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  titleA.setAttribute("href", titleA.href);
+  titleA.setAttribute(
+    "title",
+    "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩",
+  );
+  titleA.textContent = titleA.getAttribute("title")!;
+  title.appendChild(titleA);
+
+  const maker = doc.createElement("div");
+  maker.className = "maker_name";
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+
+  card.appendChild(title);
+  card.appendChild(maker);
+  doc.body.appendChild(card);
+  return doc;
+}
+
+/**
+ * The live result exposes two links for one work: the first is visually
+ * ellipsized and a later link contains the complete title.
+ */
+function dlsiteDefinitionListTruncatedTitleSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const card = doc.createElement("dl");
+  card.className = "n_worklist";
+
+  const fullTitle =
+    "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう ～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～";
+  const productUrl =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+
+  const truncated = doc.createElement("a") as MockElement;
+  truncated.href = productUrl;
+  truncated.setAttribute("href", productUrl);
+  truncated.textContent = `${fullTitle.slice(0, 32)}...`;
+
+  const complete = doc.createElement("a") as MockElement;
+  complete.href = productUrl;
+  complete.setAttribute("href", productUrl);
+  complete.textContent = fullTitle;
+
+  const maker = doc.createElement("div");
+  maker.className = "maker_name";
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+
+  card.appendChild(truncated);
+  card.appendChild(complete);
+  card.appendChild(maker);
+  doc.body.appendChild(card);
+  return doc;
+}
+
+/**
+ * A modern card can expose only the maker profile link, with the visible link
+ * label containing the circle followed by creator names. The reader must keep
+ * the circle portion for cross-store identity matching.
+ */
+function dlsiteModernMultiAuthorMakerSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const card = doc.createElement("article");
+  const productUrl =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  const product = doc.createElement("a") as MockElement;
+  product.href = productUrl;
+  product.setAttribute("href", productUrl);
+  product.textContent = "完堕ち義母とザコマン後輩";
+
+  const maker = doc.createElement("a") as MockElement;
+  const makerUrl =
+    "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG48610.html";
+  maker.href = makerUrl;
+  maker.setAttribute("href", makerUrl);
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+
+  card.appendChild(product);
+  card.appendChild(maker);
+  doc.body.appendChild(card);
+  return doc;
+}
+
+/** Current signed-in search can render a visible result as a bare <dl>. */
+function dlsiteBareDefinitionListSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const card = doc.createElement("dl");
+  const productUrl =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  const title = doc.createElement("a") as MockElement;
+  title.href = productUrl;
+  title.setAttribute("href", productUrl);
+  title.textContent = "完堕ち義母とザコマン後輩";
+  const maker = doc.createElement("div");
+  maker.className = "maker_name";
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+  card.appendChild(title);
+  card.appendChild(maker);
+  doc.body.appendChild(card);
+  return doc;
+}
+
+/** Signed-in DLsite cards can use a semantic work_maker class without a link. */
+function dlsiteSemanticMakerContainerSearchDoc(): MockDocument {
+  const doc = new MockDocument();
+  doc.title = "検索結果 | DLsite";
+
+  const card = doc.createElement("dl");
+  const productUrl =
+    "https://www.dlsite.com/maniax/work/=/product_id/RJ01652658.html";
+  const title = doc.createElement("a") as MockElement;
+  title.href = productUrl;
+  title.setAttribute("href", productUrl);
+  title.textContent = "完堕ち義母とザコマン後輩";
+  const maker = doc.createElement("div");
+  maker.className = "work_maker";
+  maker.textContent = "ろまあぽ / 秋山はるる 他";
+  card.appendChild(title);
+  card.appendChild(maker);
+  doc.body.appendChild(card);
   return doc;
 }
 
@@ -749,6 +982,28 @@ describe("discovery search readers", () => {
     );
   });
 
+  it("keeps page_not_ready while the DLsite result shell is still empty", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteLoadingResultShellDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "page_not_ready");
+  });
+
+  it("reports empty only after DLsite explicitly renders a zero-result count", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteExplicitEmptySearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/test/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "empty");
+  });
+
   it("reads live-like DLsite work_1col table rows (FANZA-origin → DLsite-search path)", () => {
     const doc = dlsiteWork1ColLiveSearchDoc();
     const reply = readDiscoverySearchPage(
@@ -799,6 +1054,109 @@ describe("discovery search readers", () => {
     if (reply.state !== "ready") return;
     assert.equal(reply.candidates.length, 1);
     assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+  });
+
+  it("reads DLsite thumbnail cards with generic maker_name containers", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteThumbnailSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+  });
+
+  it("reads DLsite definition-list cards under the search shell", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteDefinitionListSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+  });
+
+  it("reads a DLsite definition-list card whose shell marker is on the dl", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteDefinitionListSelfShellSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+  });
+
+  it("prefers a complete DLsite title over an earlier ellipsized link", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteDefinitionListTruncatedTitleSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(
+      reply.candidates[0]!.title,
+      "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう ～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～",
+    );
+  });
+
+  it("normalizes a multi-author DLsite maker profile link to its circle", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteModernMultiAuthorMakerSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+  });
+
+  it("reads a bare visible DLsite definition-list result", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteBareDefinitionListSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
+    assert.equal(reply.candidates[0]!.cid, "RJ01652658");
+  });
+
+  it("reads a semantic DLsite maker container without a profile link", () => {
+    const reply = readDiscoverySearchPage(
+      "dlsite",
+      dlsiteSemanticMakerContainerSearchDoc() as unknown as Document,
+      "https://www.dlsite.com/maniax/fsr/=/keyword/%E5%AE%8C%E5%A0%95%E3%81%A1/",
+    );
+    assert.equal(reply.ok, true);
+    if (!reply.ok) return;
+    assert.equal(reply.state, "ready");
+    if (reply.state !== "ready") return;
+    assert.equal(reply.candidates.length, 1);
     assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
   });
 

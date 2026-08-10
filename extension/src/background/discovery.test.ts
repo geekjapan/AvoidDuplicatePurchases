@@ -80,6 +80,7 @@ function depsWith(partial: Partial<DiscoveryDeps> = {}): DiscoveryDeps {
   return {
     createTempTab: async () => 42,
     navigateTab: async () => {},
+    activateTab: async () => {},
     closeTab: async (id) => {
       closed.push(id);
     },
@@ -99,6 +100,7 @@ describe("background discovery orchestrator", () => {
     const closed: number[] = [];
     const notified: unknown[] = [];
     const created: string[] = [];
+    const activated: number[] = [];
 
     const reply = await runDiscoveryStart(baseStart(), 7, {
       ...depsWith(),
@@ -108,6 +110,9 @@ describe("background discovery orchestrator", () => {
       },
       closeTab: async (id) => {
         closed.push(id);
+      },
+      activateTab: async (id) => {
+        activated.push(id);
       },
       notifyOrigin: async (_tabId, message) => {
         notified.push(message);
@@ -136,6 +141,7 @@ describe("background discovery orchestrator", () => {
     assert.equal(result.targetCid, "RJ012345");
     assert.equal(result.targetTiers.regular?.amountMinor, 990);
     assert.ok(closed.includes(42));
+    assert.deepEqual(activated, [7]);
     assert.equal(discoverySessionCountForTests(), 0);
   });
 
@@ -182,11 +188,22 @@ describe("background discovery orchestrator", () => {
             return {
               ok: true,
               state: "empty",
-              pageUrl: "https://www.dlsite.com/maniax/fsr/=/keyword/full/",
+              pageUrl: created[0]!,
               candidates: [],
             };
           }
-          return readySearch([candidate]);
+          if (searchReads === 2) {
+            return {
+              ok: true,
+              state: "empty",
+              pageUrl: created[0]!,
+              candidates: [],
+            };
+          }
+          return {
+            ...readySearch([candidate]),
+            pageUrl: navigated.at(-1)!,
+          };
         },
         readProduct: async () =>
           readyProduct({
@@ -200,6 +217,7 @@ describe("background discovery orchestrator", () => {
     await new Promise((r) => setTimeout(r, 40));
 
     assert.equal(created.length, 1);
+    assert.ok(searchReads >= 3, "stale prior-page response must be ignored after navigation");
     assert.ok(decodeURIComponent(created[0]!).includes(liveTitle));
     assert.ok(
       navigated.some((url) =>
