@@ -197,6 +197,7 @@ async function waitForSearch(
       previousPageUrl !== undefined &&
       sameSearchPage(last.pageUrl, previousPageUrl)
     ) {
+      last = null;
       await sleep(poll);
       continue;
     }
@@ -567,7 +568,6 @@ export async function runDiscoveryStart(
       const navigate = deps.navigateTab ?? navigateTab;
       const searchDeadline = Date.now() + (deps.readinessTimeoutMs ?? DEFAULT_READINESS_TIMEOUT_MS);
       const candidatesByCid = new Map<string, DiscoveryCandidate>();
-      let searchPageSeen = false;
       let pageNotReady = false;
       let previousSearchPageUrl: string | null = null;
 
@@ -607,7 +607,6 @@ export async function runDiscoveryStart(
         }
         previousSearchPageUrl = search.pageUrl;
         if (search.state === "empty") {
-          searchPageSeen = true;
           continue;
         }
         if (search.state === "page_not_ready") {
@@ -619,7 +618,6 @@ export async function runDiscoveryStart(
           break;
         }
 
-        searchPageSeen = true;
         mergeDiscoveryCandidates(candidatesByCid, search.candidates);
 
         // Stop early when a fallback already produced a strict exact match.
@@ -631,7 +629,7 @@ export async function runDiscoveryStart(
         if (earlyScored.kind === "unique_exact") break;
       }
 
-      if (!searchPageSeen && pageNotReady) {
+      if (pageNotReady) {
         await fail(session, "discovery_search_timeout", deps);
         return;
       }

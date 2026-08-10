@@ -233,6 +233,54 @@ describe("background discovery orchestrator", () => {
     assert.equal(discoverySessionCountForTests(), 0);
   });
 
+  it("times out when fallback navigation never leaves the prior search page", async () => {
+    resetDiscoverySessionsForTests();
+    const created: string[] = [];
+    const navigated: string[] = [];
+    const notified: unknown[] = [];
+
+    await runDiscoveryStart(
+      baseStart({
+        sessionId: "sess-stale-fallback",
+        title:
+          "【2周年記念110円/ドスケベ差分イラスト付き】完堕ち義母とザコマン後輩があなたのチンポを貪り喰らう～義母のガチ恋裏アリ強気メスをハメ堕としド下品3P交尾～",
+        maker: "ろまあぽ",
+      }),
+      7,
+      {
+        ...depsWith(),
+        readinessTimeoutMs: 50,
+        pollIntervalMs: 1,
+        createTempTab: async (url) => {
+          created.push(url);
+          return 42;
+        },
+        navigateTab: async (_tabId, url) => {
+          navigated.push(url);
+        },
+        notifyOrigin: async (_tabId, message) => {
+          notified.push(message);
+        },
+        readSearch: async () => ({
+          ok: true,
+          state: "empty",
+          pageUrl: created[0]!,
+          candidates: [],
+        }),
+      },
+    );
+    await new Promise((r) => setTimeout(r, 90));
+
+    assert.ok(navigated.length > 0);
+    const failure = notified.find(
+      (message) =>
+        (message as { type?: string; ok?: boolean }).type === MSG_DISCOVERY_RESULT &&
+        (message as { ok?: boolean }).ok === false,
+    ) as { failureCode?: string } | undefined;
+    assert.equal(failure?.failureCode, "discovery_search_timeout");
+    assert.equal(discoverySessionCountForTests(), 0);
+  });
+
   it("ambiguous candidates show picker and do not auto-open product", async () => {
     resetDiscoverySessionsForTests();
     const notified: unknown[] = [];
