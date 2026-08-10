@@ -295,10 +295,14 @@ function readDlsiteTitleFromCard(
 }
 
 function readDlsiteMakerFromCard(card: Element): string | null {
-  const normalizeMakerText = (value: string): string =>
-    (value.split(/\s*[\uFF0F/]\s*/u, 1)[0] ?? value)
-      .replace(/\s*他\s*$/u, "")
-      .trim();
+  const normalizeMakerText = (
+    value: string,
+    stripContributorSuffix: boolean,
+  ): string => {
+    const trimmed = value.replace(/\s*他\s*$/u, "").trim();
+    if (!stripContributorSuffix) return trimmed;
+    return (trimmed.split(/\s+[\uFF0F/]\s+/u, 1)[0] ?? trimmed).trim();
+  };
 
   const makerEl =
     findDescendant(card, (el) => {
@@ -325,7 +329,7 @@ function readDlsiteMakerFromCard(card: Element): string | null {
   if (makerEl) {
     // Prefer the first circle/maker profile link text (ignore trailing noise).
     if (makerEl.tagName.toLowerCase() === "a") {
-      const text = normalizeMakerText(visibleTextOf(makerEl).trim());
+      const text = normalizeMakerText(visibleTextOf(makerEl), false);
       if (text) return text;
     } else {
       const makerLink = findDescendant(makerEl, (el) => {
@@ -335,11 +339,11 @@ function readDlsiteMakerFromCard(card: Element): string | null {
         return /\/circle\//i.test(href) || /maker_id/i.test(href);
       });
       if (makerLink) {
-        const text = normalizeMakerText(visibleTextOf(makerLink).trim());
+        const text = normalizeMakerText(visibleTextOf(makerLink), false);
         if (text) return text;
       }
       const text = visibleTextOf(makerEl).trim();
-      if (text) return normalizeMakerText(text);
+      if (text) return normalizeMakerText(text, true);
     }
   }
 
@@ -351,7 +355,7 @@ function readDlsiteMakerFromCard(card: Element): string | null {
     return /\/circle\//i.test(href) || /maker_id/i.test(href);
   });
   if (circleAnchor) {
-    const text = normalizeMakerText(visibleTextOf(circleAnchor).trim());
+    const text = normalizeMakerText(visibleTextOf(circleAnchor), false);
     if (text) return text;
   }
   return null;

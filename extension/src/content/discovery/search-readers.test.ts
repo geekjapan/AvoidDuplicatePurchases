@@ -555,9 +555,8 @@ function dlsiteDefinitionListTruncatedTitleSearchDoc(): MockDocument {
 }
 
 /**
- * A modern card can expose only the maker profile link, with the visible link
- * label containing the circle followed by creator names. The reader must keep
- * the circle portion for cross-store identity matching.
+ * A modern card can expose only the maker profile link. A slash in that trusted
+ * profile label may be part of the formal circle name and must be preserved.
  */
 function dlsiteModernMultiAuthorMakerSearchDoc(): MockDocument {
   const doc = new MockDocument();
@@ -576,7 +575,7 @@ function dlsiteModernMultiAuthorMakerSearchDoc(): MockDocument {
     "https://www.dlsite.com/maniax/circle/profile/=/maker_id/RG48610.html";
   maker.href = makerUrl;
   maker.setAttribute("href", makerUrl);
-  maker.textContent = "ろまあぽ / 秋山はるる 他";
+  maker.textContent = "ろまあぽ／音声部";
 
   card.appendChild(product);
   card.appendChild(maker);
@@ -1118,7 +1117,7 @@ describe("discovery search readers", () => {
     );
   });
 
-  it("normalizes a multi-author DLsite maker profile link to its circle", () => {
+  it("preserves slashes in a DLsite maker profile link", () => {
     const reply = readDiscoverySearchPage(
       "dlsite",
       dlsiteModernMultiAuthorMakerSearchDoc() as unknown as Document,
@@ -1129,7 +1128,7 @@ describe("discovery search readers", () => {
     assert.equal(reply.state, "ready");
     if (reply.state !== "ready") return;
     assert.equal(reply.candidates.length, 1);
-    assert.equal(reply.candidates[0]!.maker, "ろまあぽ");
+    assert.equal(reply.candidates[0]!.maker, "ろまあぽ／音声部");
   });
 
   it("reads a bare visible DLsite definition-list result", () => {
