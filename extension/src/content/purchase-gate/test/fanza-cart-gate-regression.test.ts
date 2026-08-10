@@ -320,6 +320,93 @@ describe("FANZA cart purchase-gate regression (#57)", () => {
     assert.deepEqual(readConfirmedDuplicateCids("fanza_doujin", store), ["d_900001"]);
   });
 
+  it("gates live FANZA basket CTA labeled exactly レジへ進む (label mismatch probe)", async () => {
+    // Live FANZA basket uses 「レジへ進む」(へ), not the legacy 「レジに進む」(に).
+    // Banner can mount from confirmed cids while findPurchaseCtas misses this label.
+    const doc = buildCartFixtureDocument(
+      `<!doctype html><html><body></body></html>`,
+      "https://www.dmm.co.jp/dc/doujin/-/basket/",
+    );
+    const ctaBtn = doc.createElement("button");
+    ctaBtn.setAttribute("type", "button");
+    ctaBtn.textContent = "レジへ進む";
+    let navigated = false;
+    (
+      ctaBtn as unknown as {
+        onclick: ((this: unknown, ev?: { preventDefault?: () => void }) => void) | null;
+      }
+    ).onclick = () => {
+      navigated = true;
+    };
+    doc.body.appendChild(ctaBtn);
+
+    const store = memoryStore();
+    const payload = syntheticDoujinBasketPayload(true);
+    const hostlessRows = parseDoujinCartRowsFromPayload(
+      doc as unknown as Document,
+      payload,
+    );
+    assert.equal(hostlessRows.length, 0, "fixture intentionally has no row hosts");
+
+    const warned = await runCartPage(
+      "fanza_doujin",
+      doc as unknown as Document,
+      async () => hostlessRows,
+      async (items) =>
+        items.map((it) =>
+          it.cid === "d_900001"
+            ? { owned: true, other: [] }
+            : { owned: false, other: [] },
+        ),
+      {
+        gateStore: store,
+        loadCartCids: async () => ["d_900001", "d_100002"],
+      },
+    );
+
+    assert.equal(warned, 0);
+    assert.equal(
+      isPurchaseGateMounted(doc as unknown as Document),
+      true,
+      "confirmed duplicate must mount the gate banner",
+    );
+    const banner = doc.getElementById(ADP_GATE_BANNER_ID);
+    assert.ok(banner);
+    assert.match(banner!.textContent ?? "", /確定重複/);
+
+    assert.equal(
+      ctaBtn.getAttribute(ADP_GATED_ATTR),
+      "1",
+      "live レジへ進む CTA must be marked data-adp-gated=1",
+    );
+    assert.equal(
+      (ctaBtn as unknown as { disabled: boolean }).disabled,
+      true,
+      "live レジへ進む CTA must be disabled",
+    );
+    assert.equal(ctaBtn.getAttribute("aria-disabled"), "true");
+    assert.equal(ctaBtn.getAttribute("disabled"), "disabled");
+
+    navigated = false;
+    const gatedOnclick = (
+      ctaBtn as unknown as {
+        onclick: ((this: unknown, ev?: { preventDefault?: () => void }) => void) | null;
+      }
+    ).onclick;
+    assert.ok(gatedOnclick, "gate must install click intercept on CTA");
+    gatedOnclick.call(ctaBtn, {
+      preventDefault() {
+        /* mock */
+      },
+    });
+    assert.equal(
+      navigated,
+      false,
+      "gated click must not invoke the original checkout navigation handler",
+    );
+    assert.deepEqual(readConfirmedDuplicateCids("fanza_doujin", store), ["d_900001"]);
+  });
+
   it("blocks mixed cart when one confirmed duplicate remains; possible-only stays open", async () => {
     const doc = buildCartFixtureDocument(
       `<!doctype html><html><body>
