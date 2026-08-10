@@ -18,9 +18,11 @@ import { describe, it } from "node:test";
 import { buildCartFixtureDocument } from "../../cart/test/build-cart-fixture.js";
 import {
   fetchDoujinCartCids,
+  parseDoujinCartCidsFromPayload,
   parseDoujinCartRowsFromPayload,
 } from "../../cart/parse-doujin.js";
 import { runCartPage } from "../../cart/runner.js";
+import type { CartLookupItem } from "../../cart/types.js";
 import { ADP_CART_WARNING_CLASS } from "../../cart/warning.js";
 import { parseFixtureDocument } from "../../test/mock-document.js";
 import {
@@ -95,10 +97,173 @@ describe("FANZA cart purchase-gate regression (#57)", () => {
     try {
       const cids = await fetchDoujinCartCids();
       assert.ok(Array.isArray(cids), "extra fields must not mark basket unavailable");
-      assert.deepEqual(cids, ["d_900001", "d_100002"]);
+      assert.deepEqual(cids, [
+        {
+          cid: "d_900001",
+          title: "サンプル同人作品",
+          maker: "サークル名",
+        },
+        {
+          cid: "d_100002",
+          title: "未購入作品",
+          maker: "別サークル",
+        },
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("hostless live basket passes API title/maker to lookup and gates cross-store other", async () => {
+    // Live shape: content_id + title + maker_name with no data-content-id host.
+    const doc = buildCartFixtureDocument(
+      `<!doctype html><html><body></body></html>`,
+      "https://www.dmm.co.jp/dc/doujin/-/basket/",
+    );
+    const ctaBtn = doc.createElement("button");
+    ctaBtn.setAttribute("type", "button");
+    ctaBtn.textContent = "レジに進む";
+    doc.body.appendChild(ctaBtn);
+
+    const livePayload = {
+      error_code: "0" as const,
+      error_message: [] as unknown[],
+      data: [
+        {
+          content_id: "d_411042",
+          product_id: "d_411042",
+          title: "サンプル同人作品",
+          maker_name: "サークル名",
+        },
+      ],
+    };
+    const loaded = parseDoujinCartCidsFromPayload(livePayload);
+    assert.ok(Array.isArray(loaded));
+    assert.deepEqual(loaded, [
+      {
+        cid: "d_411042",
+        title: "サンプル同人作品",
+        maker: "サークル名",
+      },
+    ]);
+    assert.equal(
+      parseDoujinCartRowsFromPayload(doc as unknown as Document, livePayload).length,
+      0,
+      "fixture intentionally has no row hosts",
+    );
+
+    let seenItems: CartLookupItem[] = [];
+    const warned = await runCartPage(
+      "fanza_doujin",
+      doc as unknown as Document,
+      async () => [],
+      async (items) => {
+        seenItems = items;
+        // Cross-store other only when title/maker reach lookup (not cid-only).
+        return items.map((it) =>
+          it.cid === "d_411042" &&
+          it.title === "サンプル同人作品" &&
+          it.maker === "サークル名"
+            ? {
+                owned: false,
+                other: [
+                  {
+                    source: "dlsite",
+                    cid: "RJ123456",
+                    title: "サンプル同人作品",
+                    url: "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+                  },
+                ],
+              }
+            : { owned: false, other: [] },
+        );
+      },
+      {
+        gateStore: memoryStore(),
+        loadCartCids: async () => loaded,
+      },
+    );
+
+    assert.equal(warned, 0, "no row host → no row warning");
+    assert.equal(seenItems.length, 1);
+    assert.deepEqual(seenItems[0], {
+      source: "fanza_doujin",
+      cid: "d_411042",
+      title: "サンプル同人作品",
+      maker: "サークル名",
+    });
+    assert.equal(
+      isPurchaseGateMounted(doc as unknown as Document),
+      true,
+      "cross-store other with live metadata must gate basket CTA",
+    );
+    assert.equal(ctaBtn.getAttribute(ADP_GATED_ATTR), "1");
+  });
+
+  it("purchase-progress uses the same live metadata path for cross-store other", async () => {
+    const doc = parseFixtureDocument(
+      `<!doctype html><body>
+        <button type="button">注文を確定する</button>
+      </body>`,
+      "https://www.dmm.co.jp/dc/doujin/-/order/",
+    );
+    (doc.location as { pathname?: string }).pathname = "/dc/doujin/-/order/";
+    if (!doc.body.querySelector("button")) {
+      const btn = doc.createElement("button");
+      btn.setAttribute("type", "button");
+      btn.textContent = "注文を確定する";
+      doc.body.appendChild(btn);
+    }
+
+    let seenItems: CartLookupItem[] = [];
+    const result = await runPurchaseProgressPage(
+      "fanza_doujin",
+      doc as unknown as Document,
+      {
+        loadCartCids: async () => [
+          {
+            cid: "d_411042",
+            title: "サンプル同人作品",
+            maker: "サークル名",
+          },
+        ],
+        lookup: async (items) => {
+          seenItems = items;
+          return items.map((it) =>
+            it.cid === "d_411042" &&
+            it.title === "サンプル同人作品" &&
+            it.maker === "サークル名"
+              ? {
+                  owned: false,
+                  other: [
+                    {
+                      source: "dlsite",
+                      cid: "RJ123456",
+                      title: "サンプル同人作品",
+                      url: "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html",
+                    },
+                  ],
+                }
+              : { owned: false, other: [] },
+          );
+        },
+        store: memoryStore(),
+      },
+    );
+
+    assert.deepEqual(seenItems[0], {
+      source: "fanza_doujin",
+      cid: "d_411042",
+      title: "サンプル同人作品",
+      maker: "サークル名",
+    });
+    assert.equal(result.gated, true);
+    assert.equal(isPurchaseGateMounted(doc as unknown as Document), true);
+    assert.equal(
+      (doc.body.querySelector("button") as { getAttribute: (n: string) => string | null })
+        .getAttribute(ADP_GATED_ATTR),
+      "1",
+    );
   });
 
   it("gates FANZA basket with レジに進む even when row hosts are missing (DOM id probe)", async () => {

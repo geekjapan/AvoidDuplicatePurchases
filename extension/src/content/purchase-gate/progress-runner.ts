@@ -11,10 +11,14 @@ import {
   type GateStateStore,
 } from "./gate-state.js";
 import { isPurchaseProgressPage } from "./page-kind.js";
-import type { CartCidLoadResult } from "../cart/types.js";
+import {
+  normalizeCartCidLoad,
+  type CartCidLoadResult,
+  type CartLookupItem,
+} from "../cart/types.js";
 
 export type ProgressLookupFn = (
-  items: Array<{ source: InterventionSource; cid: string }>,
+  items: CartLookupItem[],
 ) => Promise<LookupHit[] | null>;
 
 export type CartCidLoader = () => Promise<CartCidLoadResult>;
@@ -36,7 +40,9 @@ function readPathname(doc: Document): string {
  * Fail-closed gate on purchase-progression pages (after cart, before payment complete).
  *
  * Strategy:
- * 1. Prefer live cart cid loader + lookup when provided (FANZA basket APIs / tests).
+ * 1. Prefer live cart loader + lookup when provided (FANZA basket APIs / tests).
+ *    Title/maker from the basket API are forwarded so cross-store matches work
+ *    without DOM product-row hosts.
  * 2. Fall back to session state written on the cart page only when no live loader
  *    exists (DLsite has no cart list API).
  * 3. Live basket or lookup failure / empty unknown → do not gate (fail-open).
@@ -69,7 +75,8 @@ export async function runPurchaseProgressPage(
       }
       // A live basket failure must not fall back to stale session cids.
       if (!Array.isArray(loaded)) return { gated: false, ctaCount: 0 };
-      if (loaded.length === 0) {
+      const items = normalizeCartCidLoad(loaded);
+      if (items.length === 0) {
         return applyConfirmedDuplicateGate(
           doc,
           source,
@@ -78,18 +85,23 @@ export async function runPurchaseProgressPage(
           options.store,
         );
       }
-      const cids = loaded;
+      const lookupItemsForGate: CartLookupItem[] = items.map((item) => ({
+        source,
+        cid: item.cid,
+        title: item.title ?? item.cid,
+        maker: item.maker ? item.maker : undefined,
+      }));
 
       let results: LookupHit[] | null;
       try {
-        results = await lookup(cids.map((cid) => ({ source, cid })));
+        results = await lookup(lookupItemsForGate);
       } catch {
         return { gated: false, ctaCount: 0 };
       }
       // Fail-open on lookup null (server down / unknown).
       if (!results) return { gated: false, ctaCount: 0 };
       const confirmed = collectConfirmedDuplicateCids(
-        cids.map((cid) => ({ cid })),
+        lookupItemsForGate.map((item) => ({ cid: item.cid })),
         results,
       );
       return applyConfirmedDuplicateGate(
@@ -115,7 +127,9 @@ export async function runPurchaseProgressPage(
     // Re-validate stored cids when lookup is available; fail-open if lookup null.
     let results: LookupHit[] | null;
     try {
-      results = await lookup(stored.map((cid) => ({ source, cid })));
+      results = await lookup(
+        stored.map((cid) => ({ source, cid, title: cid })),
+      );
     } catch {
       return { gated: false, ctaCount: 0 };
     }

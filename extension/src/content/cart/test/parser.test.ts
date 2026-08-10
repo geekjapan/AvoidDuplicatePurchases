@@ -9,6 +9,7 @@ import { parseDlsiteCartRows } from "../parse-dlsite.js";
 import {
   fetchDoujinCartCids,
   fetchDoujinCartRows,
+  parseDoujinCartCidsFromPayload,
   parseDoujinCartRowsFromPayload,
 } from "../parse-doujin.js";
 import {
@@ -409,5 +410,33 @@ describe("cart row parsers", () => {
     );
     assert.deepEqual(emptyDoujin, []);
     assert.deepEqual(emptyBooks, []);
+  });
+
+  it("preserves FANZA Doujin basket title/maker without DOM hosts (live metadata)", () => {
+    // Live GET /dc/doujin/api/baskets/ shape (redacted); hostless document.
+    const payload = {
+      error_code: "0" as const,
+      data: [
+        {
+          content_id: "d_411042",
+          product_id: "d_411042",
+          title: "サンプル同人作品",
+          maker_name: "サークル名",
+        },
+      ],
+    };
+    const items = parseDoujinCartCidsFromPayload(payload);
+    assert.ok(Array.isArray(items));
+    assert.deepEqual(items, [
+      {
+        cid: "d_411042",
+        title: "サンプル同人作品",
+        maker: "サークル名",
+      },
+    ]);
+    // Malformed → unavailable (fail-open path), not empty success.
+    assert.deepEqual(parseDoujinCartCidsFromPayload({ data: "nope" }), {
+      status: "unavailable",
+    });
   });
 });

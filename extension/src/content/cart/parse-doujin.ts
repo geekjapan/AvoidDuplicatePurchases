@@ -118,9 +118,29 @@ export async function fetchDoujinCartRows(
 }
 
 /**
- * Cids only (no DOM host matching). Used on purchase-progression pages where
- * basket row hosts may be absent.
+ * Live basket items without DOM host matching.
+ * Preserves content_id + title + maker_name for cross-store lookup when React
+ * product-row hosts (data-content-id / data-cid) are absent.
+ * Used by cart gate and purchase-progression pages.
  */
+export function parseDoujinCartCidsFromPayload(
+  payload: unknown,
+): CartCidLoadResult {
+  const parsed = DoujinBasketPayloadSchema.safeParse(payload);
+  if (!parsed.success) return { status: "unavailable" };
+  return parsed.data.data.map((item) => {
+    const cid = item.content_id;
+    const title = item.title?.trim() || undefined;
+    const maker = item.maker_name?.trim() || null;
+    return {
+      cid,
+      // Keep API title when present; callers fall back to cid for lookup title.
+      ...(title ? { title } : {}),
+      maker,
+    };
+  });
+}
+
 export async function fetchDoujinCartCids(
   fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<CartCidLoadResult> {
@@ -136,9 +156,7 @@ export async function fetchDoujinCartCids(
     } catch {
       return { status: "unavailable" };
     }
-    const parsed = DoujinBasketPayloadSchema.safeParse(payload);
-    if (!parsed.success) return { status: "unavailable" };
-    return parsed.data.data.map((item) => item.content_id);
+    return parseDoujinCartCidsFromPayload(payload);
   } catch {
     return { status: "unavailable" };
   }
