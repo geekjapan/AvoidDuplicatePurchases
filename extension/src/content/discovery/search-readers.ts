@@ -94,17 +94,43 @@ function isDlsiteResultCardRoot(el: Element): boolean {
   return false;
 }
 
-function isPageChromeElement(el: Element): boolean {
+/** Regions that host page chrome (nav/recommend/footer lists), not search results. */
+function isPageChromeRegion(el: Element): boolean {
+  const tag = el.tagName.toLowerCase();
+  return tag === "header" || tag === "nav" || tag === "footer" || tag === "aside";
+}
+
+/**
+ * Stop climbing at document / layout shells so whole-page containers never
+ * become a "card". Chrome regions also stop the climb (and reject the link).
+ */
+function isCardClimbBoundary(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
   return (
     tag === "html" ||
     tag === "body" ||
     tag === "head" ||
     tag === "main" ||
-    tag === "header" ||
-    tag === "nav" ||
-    tag === "footer" ||
-    tag === "aside"
+    isPageChromeRegion(el)
+  );
+}
+
+function hasPageChromeRegionAncestor(el: Element): boolean {
+  let parent: Element | null = el.parentElement;
+  while (parent) {
+    if (isPageChromeRegion(parent)) return true;
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
+/** Known legacy search-list shell classes (empty-results signal when present). */
+function isDlsiteLegacySearchShell(el: Element): boolean {
+  return (
+    hasClass(el, "n_worklist") ||
+    hasClass(el, "search_result") ||
+    hasClass(el, "search_result_img_box_inner") ||
+    hasClass(el, "search_result_img_box")
   );
 }
 
@@ -140,14 +166,20 @@ function collectValidatedProductInCard(
 
 /**
  * Climb from a product anchor to the nearest result-card root.
- * Page-wide links under nav/header/body without a card root are rejected.
+ * Page-wide links under nav/header/footer/aside (including listitem chrome)
+ * and bare document shells without a card root are rejected.
  */
 function resolveDlsiteResultCard(anchor: Element): Element | null {
   let current: Element | null = anchor;
   while (current) {
-    if (isDlsiteResultCardRoot(current)) return current;
+    if (isPageChromeRegion(current)) return null;
+    if (isDlsiteResultCardRoot(current)) {
+      // li/article under chrome lists are not result cards.
+      if (hasPageChromeRegionAncestor(current)) return null;
+      return current;
+    }
     const parent: Element | null = current.parentElement;
-    if (!parent || isPageChromeElement(parent)) return null;
+    if (!parent || isCardClimbBoundary(parent)) return null;
     current = parent;
   }
   return null;
@@ -392,18 +424,12 @@ export function readDiscoverySearchPage(
   if (candidates.length === 0) {
     const hasContainer =
       targetSource === "dlsite"
-        ? findDescendants(doc, (el) => {
-            if (
-              hasClass(el, "n_worklist") ||
-              hasClass(el, "search_result") ||
-              hasClass(el, "search_result_img_box_inner") ||
-              hasClass(el, "search_result_img_box")
-            ) {
-              return true;
-            }
-            // Modern list: visible result-card roots that look like search rows.
-            return isDlsiteResultCardRoot(el);
-          }).length > 0
+        ? // Never treat bare li/article as shell evidence (chrome pages always have them).
+          // Require legacy list classes and/or a card that owns a validated maniax product.
+          findDescendants(doc, isDlsiteLegacySearchShell).length > 0 ||
+          collectDlsiteResultCards(doc).some(
+            (card) => collectValidatedProductInCard(card, pageUrl) !== null,
+          )
         : findDescendants(doc, (el) => {
             return hasClass(el, "productList") || hasClass(el, "productList__item");
           }).length > 0;
