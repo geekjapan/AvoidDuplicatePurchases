@@ -11,7 +11,13 @@ import {
 import type { LookupHit } from "../types.js";
 import { interventionToCartSource, isCartInterventionPage } from "./page-kind.js";
 import { mountCartWarning } from "./warning.js";
-import type { CartCidLoadResult, CartLookupItem, CartRow } from "./types.js";
+import {
+  normalizeCartCidLoad,
+  type CartCidLoadResult,
+  type CartLoadedItem,
+  type CartLookupItem,
+  type CartRow,
+} from "./types.js";
 
 export type CartRowParser = (doc: Document) => CartRow[] | Promise<CartRow[]>;
 
@@ -34,16 +40,33 @@ function readPathname(doc: Document): string {
   return "";
 }
 
+function toLookupItem(
+  source: InterventionSource,
+  item: CartLoadedItem,
+  row: CartRow | undefined,
+): CartLookupItem {
+  const maker = row?.maker ?? item.maker;
+  return {
+    source,
+    cid: item.cid,
+    // Prefer DOM row metadata, then live basket API, then cid fallback.
+    title: row?.title ?? item.title ?? item.cid,
+    maker: maker ? maker : undefined,
+  };
+}
+
 export interface RunCartPageOptions {
   /** Optional session store for cross-page gate state (tests inject a Map shim). */
   gateStore?: GateStateStore | null;
   /**
    * Optional live basket cid loader (FANZA basket APIs).
    *
-   * When provided, whole-cart purchase gate is driven by these cids + lookup,
+   * When provided, whole-cart purchase gate is driven by these items + lookup,
    * even if DOM product-row hosts are missing (React SPA timing / host attrs).
-   * Row warnings still require exact hosts from parseRows. Loader failure
-   * (`unavailable`) fail-opens and does not fall back to hostless empty rows.
+   * Loaded title/maker are preserved for cross-store lookup when hosts are
+   * absent. Row warnings still require exact hosts from parseRows. Loader
+   * failure (`unavailable`) fail-opens and does not fall back to hostless
+   * empty rows.
    */
   loadCartCids?: CartCidLoader;
 }
@@ -71,8 +94,8 @@ export async function runCartPage(
       return 0;
     }
 
-    // Resolve cids for gate/lookup: prefer live basket API when wired (FANZA).
-    let cids: string[];
+    // Resolve items for gate/lookup: prefer live basket API when wired (FANZA).
+    let loadedItems: CartLoadedItem[];
     if (options.loadCartCids) {
       let loaded: CartCidLoadResult;
       try {
@@ -82,27 +105,26 @@ export async function runCartPage(
       }
       // Live basket failure must not treat empty DOM as empty cart.
       if (!Array.isArray(loaded)) return 0;
-      cids = loaded.map((c) => c.trim()).filter(Boolean);
-      if (cids.length === 0) {
+      loadedItems = normalizeCartCidLoad(loaded);
+      if (loadedItems.length === 0) {
         applyConfirmedDuplicateGate(doc, source, "cart", [], options.gateStore);
         return 0;
       }
     } else {
       // DLsite (DOM-only): no rows → nothing to gate.
       if (rows.length === 0) return 0;
-      cids = rows.map((row) => row.cid);
+      loadedItems = rows.map((row) => ({
+        cid: row.cid,
+        title: row.title,
+        maker: row.maker,
+      }));
     }
 
+    const cids = loadedItems.map((item) => item.cid);
     const rowByCid = new Map(rows.map((row) => [row.cid, row]));
-    const items: CartLookupItem[] = cids.map((cid) => {
-      const row = rowByCid.get(cid);
-      return {
-        source,
-        cid,
-        title: row?.title ?? cid,
-        maker: row?.maker ?? undefined,
-      };
-    });
+    const items: CartLookupItem[] = loadedItems.map((item) =>
+      toLookupItem(source, item, rowByCid.get(item.cid)),
+    );
 
     let results: LookupHit[] | null;
     try {
