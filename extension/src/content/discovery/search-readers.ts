@@ -86,6 +86,10 @@ function findDescendants(
 function isDlsiteResultCardRoot(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === "li" || tag === "article") return true;
+  // Live list view (show_type=1/2): table.work_1col_table > tr[data-list_item_product_id].
+  if (tag === "tr" && Boolean(el.getAttribute("data-list_item_product_id")?.trim())) {
+    return true;
+  }
   if ((el.getAttribute("role") ?? "").toLowerCase() === "listitem") return true;
   // Legacy DLsite list card class (with or without data-list_item_product_id).
   if (hasClass(el, "search_result_img_box_inner") || hasClass(el, "search_result_img_box")) {
@@ -130,7 +134,10 @@ function isDlsiteLegacySearchShell(el: Element): boolean {
     hasClass(el, "n_worklist") ||
     hasClass(el, "search_result") ||
     hasClass(el, "search_result_img_box_inner") ||
-    hasClass(el, "search_result_img_box")
+    hasClass(el, "search_result_img_box") ||
+    // Live list view shell (show_type=1/2).
+    hasClass(el, "work_1col_table") ||
+    hasClass(el, "work_1col")
   );
 }
 
@@ -185,16 +192,29 @@ function resolveDlsiteResultCard(anchor: Element): Element | null {
   return null;
 }
 
+function isWorkNameContainer(el: Element): boolean {
+  if (!hasClass(el, "work_name")) return false;
+  const tag = el.tagName.toLowerCase();
+  // Package view: dd.work_name; list view (work_1col): dt.work_name.
+  return tag === "dd" || tag === "dt" || tag === "div";
+}
+
 function readDlsiteTitleFromCard(
   card: Element,
   productAnchors: Element[],
 ): string | null {
   const workNameAnchor = findDescendant(card, (el) => {
     if (el.tagName.toLowerCase() !== "a") return false;
-    const parent = el.parentElement;
-    return Boolean(
-      parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "work_name"),
-    );
+    // Live package cards wrap the title anchor in div.multiline_truncate under
+    // dd.work_name; list view uses dt.work_name > a. Climb past thin wrappers.
+    let parent: Element | null = el.parentElement;
+    let depth = 0;
+    while (parent && parent !== card && depth < 4) {
+      if (isWorkNameContainer(parent)) return true;
+      parent = parent.parentElement;
+      depth += 1;
+    }
+    return false;
   });
   if (workNameAnchor) {
     const titleAttr = workNameAnchor.getAttribute("title")?.trim() ?? "";
@@ -227,14 +247,35 @@ function readDlsiteMakerFromCard(card: Element): string | null {
       if (el.tagName.toLowerCase() === "a") {
         const parent = el.parentElement;
         return Boolean(
-          parent && parent.tagName.toLowerCase() === "dd" && hasClass(parent, "maker_name"),
+          parent &&
+            (parent.tagName.toLowerCase() === "dd" || parent.tagName.toLowerCase() === "dt") &&
+            hasClass(parent, "maker_name"),
         );
       }
-      return el.tagName.toLowerCase() === "dd" && hasClass(el, "maker_name");
+      return (
+        (el.tagName.toLowerCase() === "dd" || el.tagName.toLowerCase() === "dt") &&
+        hasClass(el, "maker_name")
+      );
     }) ?? null;
   if (makerEl) {
-    const text = visibleTextOf(makerEl).trim();
-    if (text) return text;
+    // Prefer the first circle/maker profile link text (ignore trailing noise).
+    if (makerEl.tagName.toLowerCase() === "a") {
+      const text = visibleTextOf(makerEl).trim();
+      if (text) return text;
+    } else {
+      const makerLink = findDescendant(makerEl, (el) => {
+        if (el.tagName.toLowerCase() !== "a") return false;
+        if (!isVisible(el)) return false;
+        const href = anchorHref(el);
+        return /\/circle\//i.test(href) || /maker_id/i.test(href);
+      });
+      if (makerLink) {
+        const text = visibleTextOf(makerLink).trim();
+        if (text) return text;
+      }
+      const text = visibleTextOf(makerEl).trim();
+      if (text) return text;
+    }
   }
 
   // Modern markup: circle / maker profile links inside the card.
@@ -252,11 +293,17 @@ function readDlsiteMakerFromCard(card: Element): string | null {
 }
 
 function collectDlsiteResultCards(doc: Document): Element[] {
-  // Legacy: fixed class + data-list_item_product_id (backward compatible).
+  // Legacy package view: li.search_result_img_box_inner + data-list_item_product_id.
+  // Live list view (show_type=1/2): tr[data-list_item_product_id] (class often empty).
   const legacy = findDescendants(doc, (el) => {
-    if (el.tagName.toLowerCase() !== "li") return false;
-    if (!hasClass(el, "search_result_img_box_inner")) return false;
-    return Boolean(el.getAttribute("data-list_item_product_id")?.trim());
+    const tag = el.tagName.toLowerCase();
+    const rawId = el.getAttribute("data-list_item_product_id")?.trim();
+    if (!rawId) return false;
+    if (tag === "tr") return true;
+    if (tag !== "li") return false;
+    return (
+      hasClass(el, "search_result_img_box_inner") || hasClass(el, "search_result_img_box")
+    );
   });
   if (legacy.length > 0) return legacy;
 
@@ -366,8 +413,21 @@ function readFanzaDoujinSearchCandidates(
 
     const makerEl =
       findDescendant(item, (el) => hasClass(el, "tileListTtl__txt--author")) ?? null;
-    const makerText = makerEl ? visibleTextOf(makerEl).trim() : "";
-    const maker = makerText || null;
+    // Live cards often list circle + creators ("ろまあぽ / 声優A 他"). Prefer the
+    // first article=maker link so makerMatchKey aligns with DLsite circle-only
+    // product meta; fall back to full visible author text only when needed.
+    let maker: string | null = null;
+    if (makerEl) {
+      const makerLink = findDescendant(makerEl, (el) => {
+        if (el.tagName.toLowerCase() !== "a") return false;
+        if (!isVisible(el)) return false;
+        return /article=maker/i.test(anchorHref(el));
+      });
+      const makerText = makerLink
+        ? visibleTextOf(makerLink).trim()
+        : visibleTextOf(makerEl).trim();
+      maker = makerText || null;
+    }
 
     seen.add(validated.cid);
     out.push({

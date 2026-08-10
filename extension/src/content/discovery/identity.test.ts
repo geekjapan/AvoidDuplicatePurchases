@@ -134,4 +134,42 @@ describe("discovery identity gate", () => {
   it("returns none for empty input", () => {
     assert.equal(scoreDiscoveryCandidates({ title: "a", maker: "b" }, []).kind, "none");
   });
+
+  it("unique_exact for live-like FANZA↔DLsite campaign titles with circle maker", () => {
+    // Redacted shape of d_781951 ↔ RJ01652658: wave-dash variants + campaign brackets
+    // normalize equal; circle maker alone must unique_exact (not multi-author blob).
+    const dlsiteTitle =
+      "【2周年記念110円/差分付き】 完堕ち義母とザコマン後輩 ～副題～";
+    const fanzaTitle =
+      "【2周年記念110円/差分付き】完堕ち義母とザコマン後輩〜副題〜";
+    assert.equal(titleMatchKey(dlsiteTitle), titleMatchKey(fanzaTitle));
+
+    const fromFanza = scoreDiscoveryCandidates(
+      { title: fanzaTitle, maker: "ろまあぽ" },
+      [
+        cand({
+          cid: "RJ01652658",
+          title: dlsiteTitle,
+          maker: "ろまあぽ",
+          rank: 1,
+        }),
+      ],
+    );
+    assert.equal(fromFanza.kind, "unique_exact");
+
+    const fromDlsite = scoreDiscoveryCandidates(
+      { title: dlsiteTitle, maker: "ろまあぽ" },
+      [
+        cand({
+          targetSource: "fanza_doujin",
+          cid: "d_781951",
+          title: fanzaTitle,
+          maker: "ろまあぽ",
+          productUrl: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_781951/",
+          rank: 1,
+        }),
+      ],
+    );
+    assert.equal(fromDlsite.kind, "unique_exact");
+  });
 });
