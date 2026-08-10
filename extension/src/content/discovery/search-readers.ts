@@ -87,7 +87,16 @@ function isDlsiteResultCardRoot(el: Element): boolean {
   const tag = el.tagName.toLowerCase();
   if (tag === "li" || tag === "article") return true;
   // Live list view (show_type=1/2): table.work_1col_table > tr[data-list_item_product_id].
-  if (tag === "tr" && Boolean(el.getAttribute("data-list_item_product_id")?.trim())) {
+  // The responsive renderer uses the same row contract on a div instead of a
+  // table row. A work_1col block is also a card boundary when the data marker
+  // is placed on its parent row.
+  const dataProductId = el.getAttribute("data-list_item_product_id")?.trim();
+  if (dataProductId) {
+    if (!["html", "body", "head", "main", "table", "tbody", "thead", "tfoot"].includes(tag)) {
+      return true;
+    }
+  }
+  if (hasClass(el, "work_1col")) {
     return true;
   }
   if ((el.getAttribute("role") ?? "").toLowerCase() === "listitem") return true;
