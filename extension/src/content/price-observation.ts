@@ -29,6 +29,10 @@ const DLSITE_REGULAR_LABELS = [
   "価格 ：",
   "価格 :",
 ] as const;
+// Public DLsite markup uses the bare text `価格`; the rendered colon may come
+// from translation/presentation. Keep this exact-only so `価格比較` and other
+// unrelated page copy cannot become a regular-price label.
+const DLSITE_REGULAR_EXACT_LABELS = ["価格"] as const;
 const DLSITE_SALE_LABELS = ["セール特価", "セール価格", "キャンペーン価格"] as const;
 const DLSITE_COUPON_LABELS = [
   "一番お得なクーポン利用価格",
@@ -177,13 +181,21 @@ function uniqueTierCandidate(
  */
 export function extractDlsitePriceTiers(doc: Document): ObservedPriceTiers {
   return {
-    regular: findLabeledTier(doc, DLSITE_REGULAR_LABELS),
+    regular: findLabeledTier(
+      doc,
+      DLSITE_REGULAR_LABELS,
+      DLSITE_REGULAR_EXACT_LABELS,
+    ),
     sale: findLabeledTier(doc, DLSITE_SALE_LABELS),
     coupon: findLabeledTier(doc, DLSITE_COUPON_LABELS),
   };
 }
 
-function findLabeledTier(doc: Document, labels: readonly string[]): Money | null {
+function findLabeledTier(
+  doc: Document,
+  labels: readonly string[],
+  exactOnlyLabels: readonly string[] = [],
+): Money | null {
   const root = doc.body ?? doc.documentElement ?? doc;
   const all = Array.from(root.querySelectorAll("*"));
   const candidates: Money[] = [];
@@ -193,7 +205,13 @@ function findLabeledTier(doc: Document, labels: readonly string[]): Money | null
     // wrap the visible label in an inner span. Wrapper matches remain safe
     // because the nearby scope must contain exactly one visible yen amount.
     const own = elementOwnText(el);
-    if (!labelMatches(own, labels) && !labelEquals(visibleTextOf(el), labels)) {
+    const rendered = visibleTextOf(el);
+    if (
+      !labelMatches(own, labels) &&
+      !labelEquals(own, exactOnlyLabels) &&
+      !labelEquals(rendered, labels) &&
+      !labelEquals(rendered, exactOnlyLabels)
+    ) {
       continue;
     }
 

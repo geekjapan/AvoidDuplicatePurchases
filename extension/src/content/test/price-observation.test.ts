@@ -251,8 +251,10 @@ describe("DLsite label-driven tiers", () => {
     assert.equal(doc.body.querySelector("button"), null);
   });
 
-  it("reads DLsite spaced generic price labels alongside coupon price", () => {
-    for (const regularLabel of ["価格 :", "価格 ："]) {
+  it("reads DLsite generic price labels alongside coupon price", () => {
+    // DLsite's public product markup uses the bare text `価格`; the rendered
+    // page may add a colon through translation or presentation.
+    for (const regularLabel of ["価格", "価格 :", "価格 ："]) {
       const doc = new MockDocument();
       const row = (label: string, amount: string) => {
         const wrap = doc.createElement("div");
@@ -268,6 +270,7 @@ describe("DLsite label-driven tiers", () => {
       };
       row(regularLabel, "110円");
       row("一番お得なクーポン利用価格", "55円");
+      row("価格比較: DLsite ↔ FANZA同人", "999円");
 
       const tiers = extractDlsitePriceTiers(doc as unknown as Document);
       assert.deepEqual(tiers, {
