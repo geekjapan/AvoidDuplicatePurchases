@@ -97,7 +97,7 @@ describe("discovery product reader", () => {
       "RJ000001",
       "合成タイトル",
       "サークルA",
-      "価格 :",
+      "価格",
     );
     const dlsiteReply = readDiscoveryProductPage(
       "dlsite",
