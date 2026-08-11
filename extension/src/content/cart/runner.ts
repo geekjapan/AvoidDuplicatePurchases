@@ -12,6 +12,7 @@ import type { LookupHit } from "../types.js";
 import { interventionToCartSource, isCartInterventionPage } from "./page-kind.js";
 import { mountCartPriceComparison } from "./price-comparison.js";
 import { readCartFinalPrice } from "./final-price.js";
+import { resolveDoujinCartRows } from "./parse-doujin.js";
 import { mountCartWarning } from "./warning.js";
 import {
   normalizeCartCidLoad,
@@ -28,6 +29,9 @@ export type LookupFn = (
 ) => Promise<LookupHit[] | null>;
 
 export type CartCidLoader = () => Promise<CartCidLoadResult>;
+export type CartRowObserver = (doc: Document, onChange: () => void) => () => void;
+
+const CART_ROW_OBSERVE_TIMEOUT_MS = 10_000;
 
 function readPathname(doc: Document): string {
   const loc = doc.location;
@@ -71,6 +75,64 @@ export interface RunCartPageOptions {
    * empty rows.
    */
   loadCartCids?: CartCidLoader;
+  /** Test seam / live React hydration observer for delayed basket rows. */
+  observeCartRows?: CartRowObserver;
+}
+
+function observeCartRows(doc: Document, onChange: () => void): () => void {
+  if (typeof MutationObserver === "undefined" || !doc.body) return () => {};
+  const observer = new MutationObserver(() => onChange());
+  observer.observe(doc.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: [
+      "data-content-id",
+      "data-cid",
+      "data-product-id",
+      "data-item-id",
+      "href",
+      "class",
+    ],
+  });
+  return () => observer.disconnect();
+}
+
+function mergeRows(primary: CartRow[], secondary: CartRow[]): CartRow[] {
+  const byCid = new Map(primary.map((row) => [row.cid, row]));
+  for (const row of secondary) {
+    if (!byCid.has(row.cid)) byCid.set(row.cid, row);
+  }
+  return [...byCid.values()];
+}
+
+function mountPriceComparisons(
+  doc: Document,
+  source: InterventionSource,
+  rows: readonly CartRow[],
+  loadedItems: readonly CartLoadedItem[],
+): void {
+  if (source !== "dlsite" && source !== "fanza_doujin") return;
+  const itemByCid = new Map(loadedItems.map((item) => [item.cid, item]));
+  for (const row of rows) {
+    const loaded = itemByCid.get(row.cid);
+    const fallback = row.finalPrice ?? loaded?.finalPrice ?? null;
+    const finalPrice = readCartFinalPrice(source, row.host, fallback);
+    mountCartPriceComparison(doc, source, row, finalPrice);
+  }
+}
+
+function allPriceComparisonsMounted(
+  rows: readonly CartRow[],
+  loadedItems: readonly CartLoadedItem[],
+): boolean {
+  if (loadedItems.length === 0) return true;
+  const byCid = new Map(rows.map((row) => [row.cid, row]));
+  return loadedItems.every((item) =>
+    byCid
+      .get(item.cid)
+      ?.host.querySelector(".adp-cart-price-comparison"),
+  );
 }
 
 /**
@@ -88,12 +150,19 @@ export async function runCartPage(
     const pathname = readPathname(doc);
     if (!isCartInterventionPage(source, pathname)) return 0;
 
-    let rows: CartRow[];
+    let rows: CartRow[] = [];
+    // FANZA's API gives us authoritative item metadata. Resolve its product
+    // hosts again after the live items are loaded, because the initial API
+    // response can race React's row hydration.
     try {
       rows = await parseRows(doc);
     } catch {
-      // Silent: no rows, no error banner, no unhandled rejection.
-      return 0;
+      if (!options.loadCartCids) {
+        // Silent: no rows, no error banner, no unhandled rejection.
+        return 0;
+      }
+      // Host parsing is best-effort when the live API loader is available.
+      rows = [];
     }
 
     // Resolve items for gate/lookup: prefer live basket API when wired (FANZA).
@@ -122,20 +191,48 @@ export async function runCartPage(
       }));
     }
 
+    if (source === "fanza_doujin") {
+      rows = mergeRows(rows, resolveDoujinCartRows(doc, loadedItems));
+    }
+
     const cids = loadedItems.map((item) => item.cid);
-    const rowByCid = new Map(rows.map((row) => [row.cid, row]));
+    let rowByCid = new Map(rows.map((row) => [row.cid, row]));
 
     // Price comparison is independent of the ownership server. Mount the
     // user-triggered controls as soon as the cart rows are available, so a
     // temporary lookup outage cannot remove this read-only affordance.
-    if (source === "dlsite" || source === "fanza_doujin") {
-      const itemByCid = new Map(loadedItems.map((item) => [item.cid, item]));
-      for (const row of rows) {
-        const loaded = itemByCid.get(row.cid);
-        const fallback = row.finalPrice ?? loaded?.finalPrice ?? null;
-        const finalPrice = readCartFinalPrice(source, row.host, fallback);
-        mountCartPriceComparison(doc, source, row, finalPrice);
-      }
+    mountPriceComparisons(doc, source, rows, loadedItems);
+
+    let stopObserving: (() => void) | null = null;
+    let observeTimer: ReturnType<typeof setTimeout> | null = null;
+    if (
+      source === "fanza_doujin" &&
+      loadedItems.length > 0 &&
+      !allPriceComparisonsMounted(rows, loadedItems) &&
+      (options.observeCartRows !== undefined || typeof MutationObserver !== "undefined")
+    ) {
+      const observe = options.observeCartRows ?? observeCartRows;
+      const stop = observe(doc, () => {
+        const hydrated = resolveDoujinCartRows(doc, loadedItems);
+        if (hydrated.length === 0) return;
+        const currentRows = mergeRows(rows, hydrated);
+        rows = currentRows;
+        rowByCid = new Map(rows.map((row) => [row.cid, row]));
+        mountPriceComparisons(doc, source, rows, loadedItems);
+        if (allPriceComparisonsMounted(rows, loadedItems)) {
+          stopObserving?.();
+          stopObserving = null;
+        }
+      });
+      stopObserving = () => {
+        stop();
+        if (observeTimer !== null) clearTimeout(observeTimer);
+        observeTimer = null;
+      };
+      observeTimer = setTimeout(() => {
+        stopObserving?.();
+        stopObserving = null;
+      }, CART_ROW_OBSERVE_TIMEOUT_MS);
     }
 
     const items: CartLookupItem[] = loadedItems.map((item) =>

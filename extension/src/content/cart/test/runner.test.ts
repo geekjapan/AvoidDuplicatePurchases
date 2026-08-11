@@ -12,6 +12,7 @@ import { parseDlsiteCartRows } from "../parse-dlsite.js";
 import { parseDoujinCartRowsFromPayload } from "../parse-doujin.js";
 import { parseBooksCartRowsFromPayload } from "../parse-books.js";
 import { runCartPage } from "../runner.js";
+import { MockDocument } from "../../test/mock-document.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
@@ -359,6 +360,78 @@ describe("cart runner", () => {
       (c) => c.className?.includes?.(ADP_CART_WARNING_CLASS),
     );
     assert.equal(bodyDirect.length, 0);
+  });
+
+  it("mounts FANZA comparison on a cart row whose host is not a div", async () => {
+    const doc = new MockDocument();
+    doc.location.href = "https://www.dmm.co.jp/dc/doujin/-/basket/";
+    const host = doc.createElement("li");
+    host.className = "basket-item";
+    host.setAttribute("data-content-id", "d_900001");
+    doc.body.appendChild(host);
+
+    // React can render the row after the basket API has already returned. The
+    // old parser only scanned div[data-content-id], so this was invisible to
+    // the comparison mount even though the live API had the item.
+    const result = await runCartPage(
+      "fanza_doujin",
+      doc as unknown as Document,
+      async () => [],
+      async () => [],
+      {
+        loadCartCids: async () => [
+          {
+            cid: "d_900001",
+            title: "サンプル同人作品",
+            maker: "サークル名",
+          },
+        ],
+      },
+    );
+
+    assert.equal(result, 0);
+    assert.ok(
+      host.querySelector(".adp-cart-price-comparison__button"),
+      "comparison must mount on an exact non-div product row host",
+    );
+  });
+
+  it("retries FANZA comparison after React hydrates the basket row", async () => {
+    const doc = new MockDocument();
+    doc.location.href = "https://www.dmm.co.jp/dc/doujin/-/basket/";
+    let notify: (() => void) | null = null;
+
+    await runCartPage(
+      "fanza_doujin",
+      doc as unknown as Document,
+      async () => [],
+      async () => [],
+      {
+        loadCartCids: async () => [
+          {
+            cid: "d_900001",
+            title: "サンプル同人作品",
+            maker: "サークル名",
+          },
+        ],
+        observeCartRows: (_doc, onChange) => {
+          notify = onChange;
+          return () => {
+            notify = null;
+          };
+        },
+      },
+    );
+
+    assert.ok(notify, "row observer must remain armed while no host exists");
+    const host = doc.createElement("div");
+    host.className = "basket-item";
+    host.setAttribute("data-content-id", "d_900001");
+    doc.body.appendChild(host);
+    notify?.();
+
+    assert.ok(host.querySelector(".adp-cart-price-comparison__button"));
+    assert.equal(notify, null, "observer must disconnect after the row is mounted");
   });
 
   it("attaches Books multi-row warnings only to exact product hosts; unmatched skipped", async () => {
