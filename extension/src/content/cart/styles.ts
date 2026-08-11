@@ -37,6 +37,84 @@ export const CART_CSS = `
 .adp-cart-warning__delete:hover {
   background: #ffebee;
 }
+.adp-cart-price-comparison {
+  box-sizing: border-box;
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid #90caf9;
+  border-radius: 5px;
+  background: #f5faff;
+  color: #0d47a1;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.adp-cart-price-comparison,
+.adp-cart-price-comparison * {
+  box-sizing: border-box;
+}
+.adp-cart-price-comparison__button {
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #1976d2;
+  border-radius: 4px;
+  background: #1976d2;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.adp-cart-price-comparison__button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.adp-cart-price-comparison__status {
+  margin: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.adp-cart-price-comparison__status[data-kind="error"] {
+  color: #b71c1c;
+}
+.adp-cart-price-comparison__status[data-kind="ok"] {
+  color: #1b5e20;
+}
+.adp-cart-price-comparison__status[data-kind="busy"] {
+  color: #0d47a1;
+}
+.adp-cart-price-comparison__prices {
+  display: inline;
+  font-weight: 600;
+}
+.adp-cart-price-comparison__link {
+  margin-left: 6px;
+  color: #0d47a1;
+  font-weight: 600;
+  text-decoration: underline;
+}
+.adp-cart-price-comparison__candidates {
+  display: grid;
+  gap: 4px;
+  margin-top: 5px;
+}
+.adp-cart-price-comparison__candidate {
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid #90caf9;
+  border-radius: 4px;
+  background: #fff;
+  color: #0d47a1;
+  text-align: left;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  cursor: pointer;
+}
 .adp-cart-toast {
   position: fixed;
   bottom: 24px;

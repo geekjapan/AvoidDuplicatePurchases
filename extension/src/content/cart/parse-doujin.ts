@@ -1,6 +1,8 @@
 import { z } from "zod";
+import type { Money } from "@adp/shared";
 
 import type { CartCidLoadResult, CartRow } from "./types.js";
+import { readCartFinalPrice } from "./final-price.js";
 
 const BASKETS_URL = "https://www.dmm.co.jp/dc/doujin/api/baskets/";
 
@@ -48,6 +50,12 @@ const DoujinBasketPayloadSchema = z.object({
   data: z.array(DoujinBasketItemSchema),
 });
 
+function apiFinalPrice(item: z.infer<typeof DoujinBasketItemSchema>): Money | null {
+  const amount = item.basket_price ?? item.price;
+  if (amount === undefined || !Number.isSafeInteger(amount) || amount < 0) return null;
+  return { amountMinor: amount, currency: "JPY", taxStatus: "unknown" };
+}
+
 function findDoujinRowHost(doc: Document, cid: string): HTMLElement | null {
   const divs = doc.querySelectorAll<HTMLElement>("div");
   for (const candidate of Array.from(divs)) {
@@ -71,11 +79,13 @@ function mapApiRows(
     const host = findDoujinRowHost(doc, cid);
     // Only exact product-row hosts; never fall back to document.body.
     if (!host || host === doc.body) continue;
+    const finalPrice = readCartFinalPrice("fanza_doujin", host, apiFinalPrice(item));
     rows.push({
       cid,
       title: item.title?.trim() || cid,
       maker: item.maker_name?.trim() || null,
       host,
+      ...(finalPrice ? { finalPrice } : {}),
     });
   }
   return rows;
@@ -132,11 +142,13 @@ export function parseDoujinCartCidsFromPayload(
     const cid = item.content_id;
     const title = item.title?.trim() || undefined;
     const maker = item.maker_name?.trim() || null;
+    const finalPrice = apiFinalPrice(item);
     return {
       cid,
       // Keep API title when present; callers fall back to cid for lookup title.
       ...(title ? { title } : {}),
       maker,
+      ...(finalPrice ? { finalPrice } : {}),
     };
   });
 }

@@ -1,5 +1,6 @@
 import type { CartRow } from "./types.js";
 import { parseDlsiteWorkno } from "./dlsite-workno.js";
+import { readCartFinalPrice } from "./final-price.js";
 
 /**
  * Parse DLsite cart rows from DOM.
@@ -27,7 +28,14 @@ export function parseDlsiteCartRows(doc: Document): CartRow[] {
       host.querySelector(".maker_name")?.textContent?.trim() ||
       host.querySelector(".maker_name a")?.textContent?.trim() ||
       null;
-    rows.push({ cid, title, maker, host });
+    const finalPrice = readCartFinalPrice("dlsite", host);
+    rows.push({
+      cid,
+      title,
+      maker,
+      host,
+      ...(finalPrice ? { finalPrice } : {}),
+    });
   }
   return rows;
 }

@@ -90,11 +90,11 @@ function readTaxFrom(text: string, base: Money): Money {
 }
 
 /** DMM/FANZA: scoped small price containers only (visible-dom decision). */
-export function extractDmmFanzaPriceTiers(doc: Document): ObservedPriceTiers {
+export function extractDmmFanzaPriceTiers(root: ParentNode): ObservedPriceTiers {
   const regularCandidates: Array<{ label: Element; amount: Element }> = [];
   const saleCandidates: Array<{ label: Element; amount: Element }> = [];
 
-  for (const container of Array.from(doc.querySelectorAll(".priceContainer"))) {
+  for (const container of Array.from(root.querySelectorAll(".priceContainer"))) {
     if (!isVisible(container)) continue;
 
     const ttls = Array.from(container.querySelectorAll(".priceList__ttl"));
@@ -115,10 +115,10 @@ export function extractDmmFanzaPriceTiers(doc: Document): ObservedPriceTiers {
   }
 
   const couponCandidates: Array<{ label: Element; amount: Element }> = [];
-  for (const root of Array.from(doc.querySelectorAll(".m-coupon__price"))) {
-    if (!isVisible(root)) continue;
-    const titles = Array.from(root.querySelectorAll(".m-coupon__price--title"));
-    const mains = Array.from(root.querySelectorAll(".m-coupon__price--main"));
+  for (const couponRoot of Array.from(root.querySelectorAll(".m-coupon__price"))) {
+    if (!isVisible(couponRoot)) continue;
+    const titles = Array.from(couponRoot.querySelectorAll(".m-coupon__price--title"));
+    const mains = Array.from(couponRoot.querySelectorAll(".m-coupon__price--main"));
     for (const title of titles) {
       if (!labelMatches(visibleTextOf(title), DMM_COUPON_LABELS)) continue;
       for (const main of mains) couponCandidates.push({ label: title, amount: main });
@@ -129,15 +129,15 @@ export function extractDmmFanzaPriceTiers(doc: Document): ObservedPriceTiers {
     regular:
       regularCandidates.length > 0
         ? uniqueTierCandidate(regularCandidates)
-        : findLabeledTier(doc, DMM_REGULAR_LABELS),
+        : findLabeledTier(root, DMM_REGULAR_LABELS),
     sale:
       saleCandidates.length > 0
         ? uniqueTierCandidate(saleCandidates)
-        : findLabeledTier(doc, DMM_SALE_LABELS),
+        : findLabeledTier(root, DMM_SALE_LABELS),
     coupon:
       couponCandidates.length > 0
         ? uniqueTierCandidate(couponCandidates)
-        : findLabeledTier(doc, DMM_COUPON_LABELS),
+        : findLabeledTier(root, DMM_COUPON_LABELS),
   };
 }
 
@@ -179,24 +179,24 @@ function uniqueTierCandidate(
  * DLsite: label-driven, fail-closed. Accept a tier only with one unambiguous
  * nearby visible yen amount. No provider-specific hidden selectors.
  */
-export function extractDlsitePriceTiers(doc: Document): ObservedPriceTiers {
+export function extractDlsitePriceTiers(root: ParentNode): ObservedPriceTiers {
   return {
     regular: findLabeledTier(
-      doc,
+      root,
       DLSITE_REGULAR_LABELS,
       DLSITE_REGULAR_EXACT_LABELS,
     ),
-    sale: findLabeledTier(doc, DLSITE_SALE_LABELS),
-    coupon: findLabeledTier(doc, DLSITE_COUPON_LABELS),
+    sale: findLabeledTier(root, DLSITE_SALE_LABELS),
+    coupon: findLabeledTier(root, DLSITE_COUPON_LABELS),
   };
 }
 
 function findLabeledTier(
-  doc: Document,
+  rootNode: ParentNode,
   labels: readonly string[],
   exactOnlyLabels: readonly string[] = [],
 ): Money | null {
-  const root = doc.body ?? doc.documentElement ?? doc;
+  const root = (rootNode as Document).body ?? rootNode;
   const all = Array.from(root.querySelectorAll("*"));
   const candidates: Money[] = [];
 
@@ -244,10 +244,10 @@ function findLabeledTier(
 
 export function extractVisiblePriceTiers(
   source: InterventionSource,
-  doc: Document,
+  root: ParentNode,
 ): ObservedPriceTiers {
-  if (source === "dlsite") return extractDlsitePriceTiers(doc);
-  return extractDmmFanzaPriceTiers(doc);
+  if (source === "dlsite") return extractDlsitePriceTiers(root);
+  return extractDmmFanzaPriceTiers(root);
 }
 
 /** True when at least one tier was observed (avoid empty no-op posts). */
