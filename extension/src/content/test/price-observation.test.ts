@@ -251,7 +251,7 @@ describe("DLsite label-driven tiers", () => {
     assert.equal(doc.body.querySelector("button"), null);
   });
 
-  it("reads the current DLsite generic price label alongside coupon price", () => {
+  it("reads the current DLsite spaced generic price label alongside coupon price", () => {
     const doc = new MockDocument();
     const row = (label: string, amount: string) => {
       const wrap = doc.createElement("div");
@@ -263,7 +263,7 @@ describe("DLsite label-driven tiers", () => {
       wrap.appendChild(amt);
       doc.body.appendChild(wrap);
     };
-    row("価格：", "110円");
+    row("価格 :", "110円");
     row("一番お得なクーポン利用価格", "55円");
 
     const tiers = extractDlsitePriceTiers(doc as unknown as Document);

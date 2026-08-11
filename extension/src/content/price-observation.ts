@@ -22,7 +22,13 @@ const YEN_AMOUNT_RE = new RegExp(
   "i",
 );
 
-const DLSITE_REGULAR_LABELS = ["サークル設定価格", "価格：", "価格:"] as const;
+const DLSITE_REGULAR_LABELS = [
+  "サークル設定価格",
+  "価格：",
+  "価格:",
+  "価格 ：",
+  "価格 :",
+] as const;
 const DLSITE_SALE_LABELS = ["セール特価", "セール価格", "キャンペーン価格"] as const;
 const DLSITE_COUPON_LABELS = [
   "一番お得なクーポン利用価格",
