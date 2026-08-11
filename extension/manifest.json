@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Avoid Duplicate Purchases",
   "description": "DLsite / FANZA 重複購入回避",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "background": {
     "service_worker": "dist/background/index.js",
     "type": "module"
