@@ -48,7 +48,7 @@ type SessionRecord = {
   originTitle: string;
   originMaker: string | null;
   originTiers: DiscoveryPriceTiers;
-  /** Tabs opened by this session; closed on finish. Never includes origin. */
+  /** Tabs opened by this session; never includes the origin tab. */
   tempTabIds: Set<number>;
   phase: "search" | "awaiting_selection" | "product" | "done";
   /** Candidates shown to the user for this session; select must match one. */
@@ -79,6 +79,8 @@ export type DiscoveryDeps = {
   /** Test override for setTimeout-based expiry scheduling. */
   scheduleExpiry?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearExpiry?: (handle: ReturnType<typeof setTimeout>) => void;
+  /** Keep user-visible search/product tabs open for DOM inspection. Defaults true. */
+  keepTabsOpen?: boolean;
 };
 
 const sessions = new Map<string, SessionRecord>();
@@ -248,9 +250,11 @@ async function cleanupSession(
   deps: DiscoveryDeps,
 ): Promise<void> {
   clearExpiryTimer(session, deps);
-  const closer = deps.closeTab ?? closeTab;
-  for (const id of session.tempTabIds) {
-    await closer(id);
+  if (deps.keepTabsOpen === false) {
+    const closer = deps.closeTab ?? closeTab;
+    for (const id of session.tempTabIds) {
+      await closer(id);
+    }
   }
   const activate = deps.activateTab ?? activateTab;
   await activate(session.originTabId);
@@ -695,11 +699,14 @@ export async function runDiscoveryStart(
         phase: "awaiting_selection",
         message: "候補を選択してください",
       });
-      // Close search tab now to avoid leaving clutter; product opens fresh.
-      const closer = deps.closeTab ?? closeTab;
-      for (const id of [...session.tempTabIds]) {
-        await closer(id);
-        session.tempTabIds.delete(id);
+      // Keep the search tab open so the user can inspect the result DOM. The
+      // product flow reuses this tab when a candidate is selected.
+      if (deps.keepTabsOpen === false) {
+        const closer = deps.closeTab ?? closeTab;
+        for (const id of [...session.tempTabIds]) {
+          await closer(id);
+          session.tempTabIds.delete(id);
+        }
       }
       const activate = deps.activateTab ?? activateTab;
       await activate(originTabId);

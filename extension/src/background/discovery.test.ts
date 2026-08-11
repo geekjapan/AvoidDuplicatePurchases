@@ -95,7 +95,7 @@ function depsWith(partial: Partial<DiscoveryDeps> = {}): DiscoveryDeps {
 }
 
 describe("background discovery orchestrator", () => {
-  it("unique_exact auto-opens product, returns compare, closes temp tab", async () => {
+  it("unique_exact auto-opens product, returns compare, and keeps temp tab open", async () => {
     resetDiscoverySessionsForTests();
     const closed: number[] = [];
     const notified: unknown[] = [];
@@ -140,9 +140,42 @@ describe("background discovery orchestrator", () => {
     assert.equal(result.kind, "compare");
     assert.equal(result.targetCid, "RJ012345");
     assert.equal(result.targetTiers.regular?.amountMinor, 990);
-    assert.ok(closed.includes(42));
+    assert.deepEqual(closed, [], "discovery tabs remain available for inspection");
     assert.deepEqual(activated, [7]);
     assert.equal(discoverySessionCountForTests(), 0);
+  });
+
+  it("keeps the search tab open when no candidate is found", async () => {
+    resetDiscoverySessionsForTests();
+    const closed: number[] = [];
+    const notified: unknown[] = [];
+
+    await runDiscoveryStart(baseStart({ sessionId: "sess-keep-search" }), 7, {
+      ...depsWith(),
+      readinessTimeoutMs: 20,
+      pollIntervalMs: 1,
+      closeTab: async (id) => {
+        closed.push(id);
+      },
+      notifyOrigin: async (_tabId, message) => {
+        notified.push(message);
+      },
+      readSearch: async () => ({
+        ok: true,
+        state: "empty",
+        pageUrl: "https://www.dlsite.com/maniax/fsr/=/keyword/x/",
+        candidates: [],
+      }),
+    });
+    await new Promise((r) => setTimeout(r, 40));
+
+    const failure = notified.find(
+      (message) =>
+        (message as { type?: string; ok?: boolean }).type === MSG_DISCOVERY_RESULT &&
+        (message as { ok?: boolean }).ok === false,
+    ) as { failureCode?: string } | undefined;
+    assert.equal(failure?.failureCode, "discovery_no_match");
+    assert.deepEqual(closed, [], "search tab must remain available for DOM inspection");
   });
 
   it("tries a shorter search query after the full title returns empty", async () => {
@@ -286,6 +319,7 @@ describe("background discovery orchestrator", () => {
   it("ambiguous candidates show picker and do not auto-open product", async () => {
     resetDiscoverySessionsForTests();
     const notified: unknown[] = [];
+    const closed: number[] = [];
     let productReads = 0;
 
     await runDiscoveryStart(
@@ -295,6 +329,9 @@ describe("background discovery orchestrator", () => {
         ...depsWith(),
         notifyOrigin: async (_t, m) => {
           notified.push(m);
+        },
+        closeTab: async (id) => {
+          closed.push(id);
         },
         readSearch: async () =>
           readySearch([
@@ -326,6 +363,7 @@ describe("background discovery orchestrator", () => {
     assert.equal(results[0]!.kind, "candidates");
     assert.equal(results[0]!.candidates?.length, 2);
     assert.equal(productReads, 0);
+    assert.deepEqual(closed, [], "search tab must remain available while choosing a candidate");
     assert.equal(discoverySessionCountForTests(), 1);
   });
 
