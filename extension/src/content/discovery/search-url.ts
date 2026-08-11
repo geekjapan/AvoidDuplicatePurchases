@@ -4,6 +4,7 @@ export const MAX_URL_LENGTH = 2000;
 export const DLSITE_TITLE_CODEPOINT_LIMIT = 255;
 export const FANZA_DOUJIN_TITLE_CODEPOINT_LIMIT = 100;
 const TITLE_HEAD_CODEPOINT_LIMIT = 24;
+const SHORT_TITLE_HEAD_CODEPOINT_LIMIT = 11;
 
 export type SearchUrlBuildResult =
   | { ok: true; url: string; keyword: string; truncated: boolean }
@@ -13,7 +14,12 @@ export type DiscoverySearchQuery = {
   url: string;
   keyword: string;
   truncated: boolean;
-  variant: "full" | "without_leading_brackets" | "title_core" | "title_head";
+  variant:
+    | "full"
+    | "without_leading_brackets"
+    | "title_core"
+    | "title_head"
+    | "short_title_head";
 };
 
 export type SearchUrlsBuildResult =
@@ -79,12 +85,19 @@ function stripLeadingBracketedSegments(value: string): string {
   return current;
 }
 
+function stripBracketedSegments(value: string): string {
+  return value
+    .replace(/(?:【[^】]*】|\[[^\]]*\]|（[^）]*）|\([^)]*\))/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function titleCore(value: string): string {
   return value.split(/[～〜~]/u, 1)[0]?.trim() ?? value;
 }
 
-function titleHead(value: string): string {
-  return [...value].slice(0, TITLE_HEAD_CODEPOINT_LIMIT).join("").trim();
+function titleHead(value: string, limit = TITLE_HEAD_CODEPOINT_LIMIT): string {
+  return [...value].slice(0, limit).join("").trim();
 }
 
 /**
@@ -105,6 +118,14 @@ export function buildDiscoverySearchUrls(
   const withoutLeadingBrackets = stripLeadingBracketedSegments(cleaned);
   const core = titleCore(withoutLeadingBrackets);
   const head = titleHead(core);
+  // Search-only fallback: cross-store titles often encode the same decoration
+  // differently (for example, "（はーと）" vs "♡"), and both search engines
+  // become too restrictive when the query includes the whole subtitle.
+  // Identity matching still uses the original extracted title after discovery.
+  const shortHead = titleHead(
+    stripBracketedSegments(withoutLeadingBrackets),
+    SHORT_TITLE_HEAD_CODEPOINT_LIMIT,
+  );
   const variants: Array<{
     keyword: string;
     variant: DiscoverySearchQuery["variant"];
@@ -113,6 +134,7 @@ export function buildDiscoverySearchUrls(
     { keyword: withoutLeadingBrackets, variant: "without_leading_brackets" },
     { keyword: core, variant: "title_core" },
     { keyword: head, variant: "title_head" },
+    { keyword: shortHead, variant: "short_title_head" },
   ];
 
   const queries: DiscoverySearchQuery[] = [];
