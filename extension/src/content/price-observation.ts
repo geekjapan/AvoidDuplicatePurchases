@@ -193,8 +193,9 @@ function findLabeledTier(doc: Document, labels: readonly string[]): Money | null
     // wrap the visible label in an inner span. Wrapper matches remain safe
     // because the nearby scope must contain exactly one visible yen amount.
     const own = elementOwnText(el);
-    const rendered = visibleTextOf(el);
-    if (!labelMatches(own, labels) && !labelEquals(rendered, labels)) continue;
+    if (!labelMatches(own, labels) && !labelEquals(visibleTextOf(el), labels)) {
+      continue;
+    }
 
     // Nearby amount: parent row, immediate siblings, then the label node itself.
     const scopes: Element[] = [];
