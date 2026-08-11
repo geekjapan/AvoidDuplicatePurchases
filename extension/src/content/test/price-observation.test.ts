@@ -251,27 +251,29 @@ describe("DLsite label-driven tiers", () => {
     assert.equal(doc.body.querySelector("button"), null);
   });
 
-  it("reads the current DLsite spaced generic price label alongside coupon price", () => {
-    const doc = new MockDocument();
-    const row = (label: string, amount: string) => {
-      const wrap = doc.createElement("div");
-      const lab = doc.createElement("span");
-      lab.textContent = label;
-      const amt = doc.createElement("span");
-      amt.textContent = amount;
-      wrap.appendChild(lab);
-      wrap.appendChild(amt);
-      doc.body.appendChild(wrap);
-    };
-    row("価格 :", "110円");
-    row("一番お得なクーポン利用価格", "55円");
+  it("reads DLsite spaced generic price labels alongside coupon price", () => {
+    for (const regularLabel of ["価格 :", "価格 ："]) {
+      const doc = new MockDocument();
+      const row = (label: string, amount: string) => {
+        const wrap = doc.createElement("div");
+        const lab = doc.createElement("span");
+        lab.textContent = label;
+        const amt = doc.createElement("span");
+        amt.textContent = amount;
+        wrap.appendChild(lab);
+        wrap.appendChild(amt);
+        doc.body.appendChild(wrap);
+      };
+      row(regularLabel, "110円");
+      row("一番お得なクーポン利用価格", "55円");
 
-    const tiers = extractDlsitePriceTiers(doc as unknown as Document);
-    assert.deepEqual(tiers, {
-      regular: { amountMinor: 110, currency: "JPY", taxStatus: "unknown" },
-      sale: null,
-      coupon: { amountMinor: 55, currency: "JPY", taxStatus: "unknown" },
-    });
+      const tiers = extractDlsitePriceTiers(doc as unknown as Document);
+      assert.deepEqual(tiers, {
+        regular: { amountMinor: 110, currency: "JPY", taxStatus: "unknown" },
+        sale: null,
+        coupon: { amountMinor: 55, currency: "JPY", taxStatus: "unknown" },
+      });
+    }
   });
 
   it("fails closed on conflicting DLsite generic price labels", () => {
