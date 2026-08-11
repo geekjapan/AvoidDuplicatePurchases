@@ -88,6 +88,19 @@ describe("discovery search URL builder", () => {
     assert.ok(new Set(keywords).size >= 3);
   });
 
+  it("adds a short fallback that ignores cross-store decorative notation", () => {
+    const title =
+      "【オホ声×イラマ】JKのドスケベとろまん（はーと）寸止めセックスで新品まんこが堕まんこセフレに";
+
+    for (const source of ["dlsite", "fanza_doujin"] as const) {
+      const result = buildDiscoverySearchUrls(source, title);
+      assert.equal(result.ok, true);
+      if (!result.ok) continue;
+
+      assert.ok(result.queries.some((query) => query.keyword === "JKのドスケベとろまん"));
+    }
+  });
+
   it("truncates on code-point boundary for surrogate pairs", () => {
     const emoji = "😀"; // one code point, two UTF-16 units
     const { text, truncated } = truncateCodePoints(emoji.repeat(3), 2);
