@@ -46,6 +46,15 @@ export const DISPLAY_CSS = `
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 .adp-discovery-panel {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  grid-column: 1 / -1;
+  flex: 0 1 100%;
+  clear: both;
+  overflow: hidden;
   margin: 12px 0;
   padding: 12px 14px;
   border-radius: 6px;
@@ -56,8 +65,13 @@ export const DISPLAY_CSS = `
   line-height: 1.5;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
+.adp-discovery-panel,
+.adp-discovery-panel * {
+  box-sizing: border-box;
+}
 .adp-discovery-start-btn {
   display: inline-block;
+  max-width: 100%;
   margin: 0 0 8px;
   padding: 8px 12px;
   border-radius: 4px;
@@ -89,31 +103,55 @@ export const DISPLAY_CSS = `
   margin-top: 10px;
 }
 .adp-discovery-results__title {
+  min-width: 0;
   font-weight: 700;
   margin-bottom: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .adp-discovery-results__meta {
+  min-width: 0;
   margin-bottom: 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.adp-discovery-results__meta a {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .adp-discovery-price-table {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border-collapse: collapse;
+  table-layout: fixed;
   margin: 6px 0;
   font-size: 13px;
 }
 .adp-discovery-price-table th,
 .adp-discovery-price-table td {
+  min-width: 0;
   border: 1px solid #bbdefb;
   padding: 4px 8px;
   text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.adp-discovery-price-table th:first-child,
+.adp-discovery-price-table td:first-child {
+  width: 24%;
 }
 .adp-discovery-price-table th {
   background: #e3f2fd;
 }
 .adp-discovery-note {
+  min-width: 0;
   margin: 8px 0 0;
   font-size: 12px;
   color: #455a64;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .adp-discovery-candidate-list {
   list-style: none;

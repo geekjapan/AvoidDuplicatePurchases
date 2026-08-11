@@ -58,22 +58,39 @@ function formatTier(money: DiscoveryPriceTiers[keyof DiscoveryPriceTiers]): stri
   return `${yen}円${tax}`;
 }
 
+type ComparisonTier = "regular" | "sale" | "coupon";
+
+export type ComparisonTierDisplay = {
+  origin: string;
+  target: string;
+};
+
 /**
- * Per-tier lowest label. currency/taxStatus mismatch fail-closes only this tier
- * and must not suppress ranking on other comparable tiers.
+ * Format one tier without reversing the displayed store columns.
+ *
+ * The marker belongs to the cheaper value. Equal values keep the historical
+ * single marker on the target column; currency/taxStatus mismatches and
+ * missing values stay unranked.
  */
-function lowestLabel(
+export function compareTierDisplay(
   origin: DiscoveryPriceTiers,
   target: DiscoveryPriceTiers,
-  tier: "regular" | "sale" | "coupon",
-): string {
+  tier: ComparisonTier,
+): ComparisonTierDisplay {
   const o = origin[tier];
   const t = target[tier];
-  if (!o || !t) return "";
-  if (o.currency !== t.currency || o.taxStatus !== t.taxStatus) return "";
-  if (o.amountMinor < t.amountMinor) return " ← 安";
-  if (t.amountMinor < o.amountMinor) return " → 安";
-  return " ＝";
+  const originText = formatTier(o);
+  const targetText = formatTier(t);
+  if (!o || !t || o.currency !== t.currency || o.taxStatus !== t.taxStatus) {
+    return { origin: originText, target: targetText };
+  }
+  if (o.amountMinor < t.amountMinor) {
+    return { origin: `${originText} ← 安`, target: targetText };
+  }
+  if (t.amountMinor < o.amountMinor) {
+    return { origin: originText, target: `${targetText} → 安` };
+  }
+  return { origin: originText, target: `${targetText} ＝` };
 }
 
 function ensurePanel(doc: Document): HTMLElement {
@@ -143,7 +160,13 @@ function renderCompare(
   const table = doc.createElement("table");
   table.className = "adp-discovery-price-table";
   const thead = doc.createElement("thead");
-  thead.innerHTML = `<tr><th>層</th><th>${originLabel}</th><th>${targetLabel}</th></tr>`;
+  const headerRow = doc.createElement("tr");
+  for (const label of ["層", originLabel, targetLabel]) {
+    const th = doc.createElement("th");
+    th.textContent = label;
+    headerRow.appendChild(th);
+  }
+  thead.appendChild(headerRow);
   table.appendChild(thead);
   const tbody = doc.createElement("tbody");
   for (const [key, label] of [
@@ -152,8 +175,12 @@ function renderCompare(
     ["coupon", "クーポン表示"] as const,
   ] as const) {
     const tr = doc.createElement("tr");
-    const rank = lowestLabel(result.originTiers, result.targetTiers, key);
-    tr.innerHTML = `<td>${label}</td><td>${formatTier(result.originTiers[key])}</td><td>${formatTier(result.targetTiers[key])}${rank}</td>`;
+    const display = compareTierDisplay(result.originTiers, result.targetTiers, key);
+    for (const value of [label, display.origin, display.target]) {
+      const td = doc.createElement("td");
+      td.textContent = value;
+      tr.appendChild(td);
+    }
     tbody.appendChild(tr);
   }
   table.appendChild(tbody);
