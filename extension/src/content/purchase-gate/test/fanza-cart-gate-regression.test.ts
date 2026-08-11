@@ -102,11 +102,13 @@ describe("FANZA cart purchase-gate regression (#57)", () => {
           cid: "d_900001",
           title: "サンプル同人作品",
           maker: "サークル名",
+          finalPrice: { amountMinor: 9, currency: "JPY", taxStatus: "unknown" },
         },
         {
           cid: "d_100002",
           title: "未購入作品",
           maker: "別サークル",
+          finalPrice: { amountMinor: 100, currency: "JPY", taxStatus: "unknown" },
         },
       ]);
     } finally {

@@ -10,6 +10,8 @@ import {
 } from "../purchase-gate/index.js";
 import type { LookupHit } from "../types.js";
 import { interventionToCartSource, isCartInterventionPage } from "./page-kind.js";
+import { mountCartPriceComparison } from "./price-comparison.js";
+import { readCartFinalPrice } from "./final-price.js";
 import { mountCartWarning } from "./warning.js";
 import {
   normalizeCartCidLoad,
@@ -122,6 +124,20 @@ export async function runCartPage(
 
     const cids = loadedItems.map((item) => item.cid);
     const rowByCid = new Map(rows.map((row) => [row.cid, row]));
+
+    // Price comparison is independent of the ownership server. Mount the
+    // user-triggered controls as soon as the cart rows are available, so a
+    // temporary lookup outage cannot remove this read-only affordance.
+    if (source === "dlsite" || source === "fanza_doujin") {
+      const itemByCid = new Map(loadedItems.map((item) => [item.cid, item]));
+      for (const row of rows) {
+        const loaded = itemByCid.get(row.cid);
+        const fallback = row.finalPrice ?? loaded?.finalPrice ?? null;
+        const finalPrice = readCartFinalPrice(source, row.host, fallback);
+        mountCartPriceComparison(doc, source, row, finalPrice);
+      }
+    }
+
     const items: CartLookupItem[] = loadedItems.map((item) =>
       toLookupItem(source, item, rowByCid.get(item.cid)),
     );

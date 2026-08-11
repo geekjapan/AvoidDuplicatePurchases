@@ -1,10 +1,12 @@
-import type { InterventionSource } from "@adp/shared";
+import type { InterventionSource, Money } from "@adp/shared";
 
 export interface CartRow {
   cid: string;
   title: string;
   maker: string | null;
   host: HTMLElement;
+  /** Current visible/basket price when the store exposes one on the cart row. */
+  finalPrice?: Money | null;
 }
 
 /**
@@ -15,6 +17,8 @@ export interface CartLoadedItem {
   cid: string;
   title?: string;
   maker?: string | null;
+  /** Store-reported current basket price fallback (never inferred from regular price). */
+  finalPrice?: Money | null;
 }
 
 /**
@@ -59,7 +63,12 @@ export function normalizeCartCidLoad(
         : makerRaw === null
           ? null
           : undefined;
-    out.push({ cid, title, maker });
+    out.push({
+      cid,
+      title,
+      maker,
+      ...(item.finalPrice ? { finalPrice: item.finalPrice } : {}),
+    });
   }
   return out;
 }
