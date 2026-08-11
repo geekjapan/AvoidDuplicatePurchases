@@ -139,6 +139,48 @@ describe("DMM/FANZA scoped price containers", () => {
     const tiers = extractDmmFanzaPriceTiers(doc as unknown as Document);
     assert.equal(tiers.regular, null);
   });
+
+  it("reads current FANZA label rows when legacy price classes are absent", () => {
+    const doc = new MockDocument();
+    const row = (label: string, amount: string) => {
+      const wrap = doc.createElement("div");
+      const lab = doc.createElement("span");
+      lab.textContent = label;
+      const amt = doc.createElement("span");
+      amt.textContent = amount;
+      wrap.appendChild(lab);
+      wrap.appendChild(amt);
+      doc.body.appendChild(wrap);
+    };
+    row("サークル設定価格", "110円");
+    row("一番お得なクーポン適用時", "77円");
+
+    const tiers = extractDmmFanzaPriceTiers(doc as unknown as Document);
+    assert.deepEqual(tiers, {
+      regular: { amountMinor: 110, currency: "JPY", taxStatus: "unknown" },
+      sale: null,
+      coupon: { amountMinor: 77, currency: "JPY", taxStatus: "unknown" },
+    });
+  });
+
+  it("fails closed on conflicting current FANZA label rows", () => {
+    const doc = new MockDocument();
+    for (const amount of ["110円", "220円"]) {
+      const wrap = doc.createElement("div");
+      const lab = doc.createElement("span");
+      lab.textContent = "サークル設定価格";
+      const amt = doc.createElement("span");
+      amt.textContent = amount;
+      wrap.appendChild(lab);
+      wrap.appendChild(amt);
+      doc.body.appendChild(wrap);
+    }
+
+    assert.equal(
+      extractDmmFanzaPriceTiers(doc as unknown as Document).regular,
+      null,
+    );
+  });
 });
 
 describe("DLsite label-driven tiers", () => {
@@ -207,6 +249,48 @@ describe("DLsite label-driven tiers", () => {
     assert.equal(dlsite.coupon?.amountMinor, 500);
     // Coupon text is a display eligibility price only — extractor never clicks.
     assert.equal(doc.body.querySelector("button"), null);
+  });
+
+  it("reads the current DLsite generic price label alongside coupon price", () => {
+    const doc = new MockDocument();
+    const row = (label: string, amount: string) => {
+      const wrap = doc.createElement("div");
+      const lab = doc.createElement("span");
+      lab.textContent = label;
+      const amt = doc.createElement("span");
+      amt.textContent = amount;
+      wrap.appendChild(lab);
+      wrap.appendChild(amt);
+      doc.body.appendChild(wrap);
+    };
+    row("価格：", "110円");
+    row("一番お得なクーポン利用価格", "55円");
+
+    const tiers = extractDlsitePriceTiers(doc as unknown as Document);
+    assert.deepEqual(tiers, {
+      regular: { amountMinor: 110, currency: "JPY", taxStatus: "unknown" },
+      sale: null,
+      coupon: { amountMinor: 55, currency: "JPY", taxStatus: "unknown" },
+    });
+  });
+
+  it("fails closed on conflicting DLsite generic price labels", () => {
+    const doc = new MockDocument();
+    for (const amount of ["110円", "220円"]) {
+      const wrap = doc.createElement("div");
+      const lab = doc.createElement("span");
+      lab.textContent = "価格：";
+      const amt = doc.createElement("span");
+      amt.textContent = amount;
+      wrap.appendChild(lab);
+      wrap.appendChild(amt);
+      doc.body.appendChild(wrap);
+    }
+
+    assert.equal(
+      extractDlsitePriceTiers(doc as unknown as Document).regular,
+      null,
+    );
   });
 });
 
