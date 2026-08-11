@@ -22,7 +22,7 @@ const YEN_AMOUNT_RE = new RegExp(
   "i",
 );
 
-const DLSITE_REGULAR_LABELS = ["サークル設定価格"] as const;
+const DLSITE_REGULAR_LABELS = ["サークル設定価格", "価格：", "価格:"] as const;
 const DLSITE_SALE_LABELS = ["セール特価", "セール価格", "キャンペーン価格"] as const;
 const DLSITE_COUPON_LABELS = [
   "一番お得なクーポン利用価格",
@@ -33,6 +33,7 @@ const DMM_REGULAR_LABELS = ["サークル設定価格"] as const;
 const DMM_SALE_LABELS = ["セール特価", "セール価格", "キャンペーン価格"] as const;
 const DMM_COUPON_LABELS = [
   ...DLSITE_COUPON_LABELS,
+  "一番お得なクーポン適用時",
   "クーポン適用価格",
   "クーポン利用時",
 ] as const;
@@ -115,9 +116,18 @@ export function extractDmmFanzaPriceTiers(doc: Document): ObservedPriceTiers {
   }
 
   return {
-    regular: uniqueTierCandidate(regularCandidates),
-    sale: uniqueTierCandidate(saleCandidates),
-    coupon: uniqueTierCandidate(couponCandidates),
+    regular:
+      regularCandidates.length > 0
+        ? uniqueTierCandidate(regularCandidates)
+        : findLabeledTier(doc, DMM_REGULAR_LABELS),
+    sale:
+      saleCandidates.length > 0
+        ? uniqueTierCandidate(saleCandidates)
+        : findLabeledTier(doc, DMM_SALE_LABELS),
+    coupon:
+      couponCandidates.length > 0
+        ? uniqueTierCandidate(couponCandidates)
+        : findLabeledTier(doc, DMM_COUPON_LABELS),
   };
 }
 
