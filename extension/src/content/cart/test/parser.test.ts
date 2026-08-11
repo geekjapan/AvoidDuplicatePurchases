@@ -17,6 +17,7 @@ import {
   fetchBooksCartRows,
   parseBooksCartRowsFromPayload,
 } from "../parse-books.js";
+import { MockDocument } from "../../test/mock-document.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
@@ -57,6 +58,38 @@ describe("cart row parsers", () => {
     const rows = parseDlsiteCartRows(doc as unknown as Document);
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.cid, "RJ123456");
+  });
+
+  it("uses the cart title link and maker link instead of contributor text", () => {
+    const doc = new MockDocument();
+    doc.location.href = "https://www.dlsite.com/maniax/cart";
+    const host = doc.createElement("li");
+    host.className = "cart_list_item _cart_items";
+    host.setAttribute("data-workno", "RJ123456");
+
+    const title = doc.createElement("div");
+    title.className = "work_name";
+    const titleLink = doc.createElement("a");
+    titleLink.href = "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html";
+    titleLink.textContent = "サンプル同人作品";
+    title.appendChild(titleLink);
+    host.appendChild(title);
+
+    const maker = doc.createElement("div");
+    maker.className = "maker_name";
+    const makerLink = doc.createElement("a");
+    makerLink.href = "https://www.dlsite.com/maniax/circle/profile/123";
+    makerLink.textContent = "サークル名";
+    maker.appendChild(makerLink);
+    const contributors = doc.createElement("span");
+    contributors.textContent = " / 秋山はるる / 涼花みなせ";
+    maker.appendChild(contributors);
+    host.appendChild(maker);
+    doc.body.appendChild(host);
+
+    const [row] = parseDlsiteCartRows(doc as unknown as Document);
+    assert.equal(row?.title, "サンプル同人作品");
+    assert.equal(row?.maker, "サークル名");
   });
 
   it("parses canonical FANZA Doujin basket payload (documented shape, synthetic/redacted)", () => {

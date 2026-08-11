@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Money } from "@adp/shared";
 
-import type { CartCidLoadResult, CartRow } from "./types.js";
+import type { CartCidLoadResult, CartLoadedItem, CartRow } from "./types.js";
 import { readCartFinalPrice } from "./final-price.js";
 
 const BASKETS_URL = "https://www.dmm.co.jp/dc/doujin/api/baskets/";
@@ -56,17 +56,85 @@ function apiFinalPrice(item: z.infer<typeof DoujinBasketItemSchema>): Money | nu
   return { amountMinor: amount, currency: "JPY", taxStatus: "unknown" };
 }
 
-function findDoujinRowHost(doc: Document, cid: string): HTMLElement | null {
-  const divs = doc.querySelectorAll<HTMLElement>("div");
-  for (const candidate of Array.from(divs)) {
+const ROW_ID_ATTRIBUTES = [
+  "data-content-id",
+  "data-cid",
+  "data-product-id",
+  "data-item-id",
+] as const;
+
+function hasCartRowClass(el: Element): boolean {
+  const className = el.getAttribute("class") ?? "";
+  return /(?:basket|cart|product|item)/i.test(className);
+}
+
+function isBlockRowElement(el: Element): boolean {
+  return /^(?:div|li|article|section|tr)$/i.test(el.tagName);
+}
+
+function findRowAncestor(el: Element, doc: Document): HTMLElement | null {
+  let current: Element | null = el;
+  while (current && current !== doc.body) {
+    const tag = current.tagName.toLowerCase();
     if (
-      candidate.getAttribute("data-content-id") === cid ||
-      candidate.getAttribute("data-cid") === cid
+      isBlockRowElement(current) &&
+      (hasCartRowClass(current) || tag === "li" || tag === "article" || tag === "section")
     ) {
-      return candidate;
+      return current as HTMLElement;
     }
+    current = current.parentElement;
   }
   return null;
+}
+
+function findDoujinRowHost(doc: Document, cid: string): HTMLElement | null {
+  // The basket is React-rendered and has used div, li, and nested marker
+  // elements across renderer revisions. Match only exact known ID attributes;
+  // never use a page-wide container or body as a product row.
+  for (const candidate of Array.from(doc.querySelectorAll<HTMLElement>("*"))) {
+    if (!ROW_ID_ATTRIBUTES.some((name) => candidate.getAttribute(name) === cid)) {
+      continue;
+    }
+    const ancestor = findRowAncestor(candidate, doc);
+    if (ancestor) return ancestor;
+    const tag = candidate.tagName.toLowerCase();
+    if (tag !== "body" && tag !== "html" && tag !== "head") return candidate;
+  }
+
+  // Attribute markers are not present in every basket renderer, but the
+  // canonical detail link remains required for the row's product identity.
+  for (const anchor of Array.from(doc.querySelectorAll<HTMLAnchorElement>("a"))) {
+    const href = anchor.getAttribute("href") ?? anchor.href ?? "";
+    const escapedCid = cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (!new RegExp(`/cid=${escapedCid}(?:[/#?]|$)`, "i").test(href)) continue;
+    const ancestor = findRowAncestor(anchor, doc);
+    if (ancestor) return ancestor;
+  }
+  return null;
+}
+
+function mapLoadedRows(
+  doc: Document,
+  items: readonly CartLoadedItem[],
+): CartRow[] {
+  const rows: CartRow[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const cid = item.cid.trim();
+    if (!cid || seen.has(cid)) continue;
+    const host = findDoujinRowHost(doc, cid);
+    if (!host || host === doc.body) continue;
+    const finalPrice = readCartFinalPrice("fanza_doujin", host, item.finalPrice ?? null);
+    rows.push({
+      cid,
+      title: item.title?.trim() || cid,
+      maker: item.maker?.trim() || null,
+      host,
+      ...(finalPrice ? { finalPrice } : {}),
+    });
+    seen.add(cid);
+  }
+  return rows;
 }
 
 function mapApiRows(
@@ -99,6 +167,18 @@ export function parseDoujinCartRowsFromPayload(
   if (!parsed.success) return [];
   try {
     return mapApiRows(doc, parsed.data.data);
+  } catch {
+    return [];
+  }
+}
+
+/** Resolve API-loaded items to product-row hosts after React hydration. */
+export function resolveDoujinCartRows(
+  doc: Document,
+  items: readonly CartLoadedItem[],
+): CartRow[] {
+  try {
+    return mapLoadedRows(doc, items);
   } catch {
     return [];
   }
