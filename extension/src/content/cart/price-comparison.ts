@@ -16,6 +16,8 @@ import {
   isDiscoverySource,
 } from "../../messages.js";
 import { approvedStoreHttpsUrl } from "../banner.js";
+import { lookupItems } from "../lookup.js";
+import type { LookupHit } from "../types.js";
 import { ensureCartStyles } from "./styles.js";
 import {
   compareFinalPrices,
@@ -65,6 +67,17 @@ export type CartPriceComparisonDeps = {
   addMessageListener?: (listener: MessageListener) => void;
   removeMessageListener?: (listener: MessageListener) => void;
   createSessionId?: () => string;
+  /** Read the selected counterpart's ownership from the local server. */
+  lookupCounterpart?: (
+    item: {
+      source: DiscoverySource;
+      cid: string;
+      title: string;
+      maker?: string;
+    },
+  ) => Promise<LookupHit[] | null>;
+  /** Called only after a user-selected counterpart is confirmed owned. */
+  onConfirmedDuplicate?: (cid: string, hit: LookupHit) => void;
 };
 
 function newSessionId(): string {
@@ -96,6 +109,15 @@ function defaultAddMessageListener(listener: MessageListener): void {
 
 function defaultRemoveMessageListener(listener: MessageListener): void {
   chrome.runtime.onMessage.removeListener(listener);
+}
+
+async function defaultLookupCounterpart(item: {
+  source: DiscoverySource;
+  cid: string;
+  title: string;
+  maker?: string;
+}): Promise<LookupHit[] | null> {
+  return lookupItems([item]);
 }
 
 function setStatus(
@@ -224,6 +246,8 @@ export function mountCartPriceComparison(
   const addListener = deps.addMessageListener ?? defaultAddMessageListener;
   const removeListener = deps.removeMessageListener ?? defaultRemoveMessageListener;
   const makeSessionId = deps.createSessionId ?? newSessionId;
+  const lookupCounterpart = deps.lookupCounterpart ?? defaultLookupCounterpart;
+  const onConfirmedDuplicate = deps.onConfirmedDuplicate;
   let activeSessionId: string | null = null;
   let busy = false;
   let listener: MessageListener | null = null;
@@ -313,6 +337,39 @@ export function mountCartPriceComparison(
       busy = false;
       button.disabled = false;
       setStatus(status, "比較完了", "ok");
+
+      // Candidate selection is an explicit user action.  Re-check the
+      // counterpart by its canonical (source, cid) in the local library so a
+      // title variation such as the FANZA/DLsite store-specific wording does
+      // not leave a purchased counterpart unblocked in the cart.  Fuzzy
+      // lookup results remain non-blocking until this user-confirmed path.
+      const safeUrl = approvedStoreHttpsUrl(result.targetProductUrl, result.targetSource);
+      if (!safeUrl || !onConfirmedDuplicate) return false;
+      void lookupCounterpart({
+        source: result.targetSource,
+        cid: result.targetCid,
+        title: result.targetTitle,
+        ...(result.targetMaker ? { maker: result.targetMaker } : {}),
+      })
+        .then((hits) => {
+          const counterpart = hits?.[0];
+          if (!counterpart?.owned) return;
+          onConfirmedDuplicate(row.cid, {
+            owned: false,
+            other: [
+              {
+                source: result.targetSource,
+                cid: result.targetCid,
+                title: result.targetTitle,
+                url: safeUrl,
+              },
+            ],
+          });
+        })
+        .catch(() => {
+          // Comparison remains usable when the local ownership re-check is
+          // unavailable; the ordinary lookup path stays fail-open.
+        });
       return false;
     };
     addListener(listener);
