@@ -13,11 +13,121 @@ import { parseDoujinCartRowsFromPayload } from "../parse-doujin.js";
 import { parseBooksCartRowsFromPayload } from "../parse-books.js";
 import { runCartPage } from "../runner.js";
 import { MockDocument } from "../../test/mock-document.js";
+import { MSG_DISCOVERY_RESULT } from "../../../messages.js";
+import { ADP_GATE_BANNER_ID, ADP_GATED_ATTR, isPurchaseGateMounted } from "../../purchase-gate/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(__dirname, "fixtures");
 
 describe("cart runner", () => {
+  it("gates a DLsite cart after comparison confirms an owned FANZA counterpart", async () => {
+    const html = readFileSync(join(fixtures, "dlsite-cart.html"), "utf8");
+    const doc = buildCartFixtureDocument(html, "https://www.dlsite.com/maniax/cart");
+    const store = new Map<string, string>();
+    const listeners = new Set<(message: unknown) => boolean>();
+    const sentMessages: Array<{ type?: string }> = [];
+    const previousChrome = (globalThis as { chrome?: unknown }).chrome;
+
+    (globalThis as { chrome?: unknown }).chrome = {
+      runtime: {
+        sendMessage: async (message: { type?: string }) => {
+          sentMessages.push(message);
+          if (message.type === "adp:discovery-start") {
+            return { ok: true, sessionId: "cart-session-owned-fanza" };
+          }
+          if (message.type === "adp:lookup") {
+            return { ok: true, results: [{ owned: true, other: [], possible: [] }] };
+          }
+          return undefined;
+        },
+        onMessage: {
+          addListener: (listener: (message: unknown) => boolean) => listeners.add(listener),
+          removeListener: (listener: (message: unknown) => boolean) => listeners.delete(listener),
+        },
+      },
+    };
+
+    try {
+      const warned = await runCartPage(
+        "dlsite",
+        doc as unknown as Document,
+        parseDlsiteCartRows,
+        async () => [
+          {
+            owned: false,
+            other: [],
+            possible: [
+              {
+                source: "fanza_doujin",
+                cid: "d_375259",
+                title: "FANZA表記の作品名",
+                url: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_375259/",
+              },
+            ],
+          },
+          { owned: false, other: [] },
+        ],
+        {
+          gateStore: {
+            getItem: (key) => store.get(key) ?? null,
+            setItem: (key, value) => store.set(key, value),
+            removeItem: (key) => store.delete(key),
+          },
+        },
+      );
+
+      assert.equal(warned, 0, "fuzzy-only lookup must not gate before explicit comparison");
+      assert.equal(isPurchaseGateMounted(doc as unknown as Document), false);
+      const comparison = doc.body.querySelector(
+        '[data-adp-cart-price-comparison="RJ123456"]',
+      ) as HTMLElement;
+      assert.ok(comparison);
+      const button = comparison.querySelector(
+        ".adp-cart-price-comparison__button",
+      ) as { onclick?: (event?: { preventDefault?: () => void; stopPropagation?: () => void }) => void };
+      assert.ok(button?.onclick);
+      button.onclick({});
+
+      const listener = [...listeners][0];
+      assert.ok(listener);
+      const sessionId = (sentMessages[0] as { sessionId?: string }).sessionId;
+      assert.ok(sessionId);
+      listener({
+        type: MSG_DISCOVERY_RESULT,
+        sessionId,
+        ok: true,
+        kind: "compare",
+        targetSource: "fanza_doujin",
+        targetCid: "d_375259",
+        targetTitle: "FANZA表記の作品名",
+        targetMaker: "サークル名",
+        targetProductUrl: "https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_375259/",
+        originTiers: { regular: null, sale: null, coupon: null },
+        targetTiers: { regular: null, sale: null, coupon: null },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.deepEqual(
+        sentMessages.map((message) => message.type),
+        ["adp:discovery-start", "adp:lookup"],
+      );
+      assert.equal(isPurchaseGateMounted(doc as unknown as Document), true);
+      assert.match(doc.getElementById(ADP_GATE_BANNER_ID)?.textContent ?? "", /確定重複/);
+      const cta = doc.body.querySelector(
+        '[data-adp-purchase-cta="cart-progress"]',
+      ) as HTMLElement;
+      assert.equal(cta.getAttribute(ADP_GATED_ATTR), "1");
+      assert.ok(
+        doc.body.querySelector(
+          '[data-adp-cart-warning="RJ123456"]',
+        ),
+        "the compared cart row must receive the duplicate warning",
+      );
+    } finally {
+      (globalThis as { chrome?: unknown }).chrome = previousChrome;
+    }
+  });
+
   it("warns on same-store and cross-store duplicates without auto-delete", async () => {
     const html = readFileSync(join(fixtures, "dlsite-cart.html"), "utf8");
     const doc = buildCartFixtureDocument(html, "https://www.dlsite.com/maniax/cart");

@@ -111,6 +111,7 @@ function mountPriceComparisons(
   source: InterventionSource,
   rows: readonly CartRow[],
   loadedItems: readonly CartLoadedItem[],
+  onConfirmedDuplicate?: (cid: string, hit: LookupHit) => void,
 ): void {
   if (source !== "dlsite" && source !== "fanza_doujin") return;
   const itemByCid = new Map(loadedItems.map((item) => [item.cid, item]));
@@ -118,7 +119,9 @@ function mountPriceComparisons(
     const loaded = itemByCid.get(row.cid);
     const fallback = row.finalPrice ?? loaded?.finalPrice ?? null;
     const finalPrice = readCartFinalPrice(source, row.host, fallback);
-    mountCartPriceComparison(doc, source, row, finalPrice);
+    mountCartPriceComparison(doc, source, row, finalPrice, {
+      onConfirmedDuplicate,
+    });
   }
 }
 
@@ -198,10 +201,22 @@ export async function runCartPage(
     const cids = loadedItems.map((item) => item.cid);
     let rowByCid = new Map(rows.map((row) => [row.cid, row]));
 
+    let comparisonConfirmedHandler:
+      | ((cid: string, hit: LookupHit) => void)
+      | null = null;
+    const pendingComparisonConfirmations: Array<[string, LookupHit]> = [];
+    const notifyComparisonConfirmed = (cid: string, hit: LookupHit): void => {
+      if (comparisonConfirmedHandler) {
+        comparisonConfirmedHandler(cid, hit);
+      } else {
+        pendingComparisonConfirmations.push([cid, hit]);
+      }
+    };
+
     // Price comparison is independent of the ownership server. Mount the
     // user-triggered controls as soon as the cart rows are available, so a
     // temporary lookup outage cannot remove this read-only affordance.
-    mountPriceComparisons(doc, source, rows, loadedItems);
+    mountPriceComparisons(doc, source, rows, loadedItems, notifyComparisonConfirmed);
 
     let stopObserving: (() => void) | null = null;
     let observeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -218,7 +233,7 @@ export async function runCartPage(
         const currentRows = mergeRows(rows, hydrated);
         rows = currentRows;
         rowByCid = new Map(rows.map((row) => [row.cid, row]));
-        mountPriceComparisons(doc, source, rows, loadedItems);
+        mountPriceComparisons(doc, source, rows, loadedItems, notifyComparisonConfirmed);
         if (allPriceComparisonsMounted(rows, loadedItems)) {
           stopObserving?.();
           stopObserving = null;
@@ -271,6 +286,32 @@ export async function runCartPage(
         options.gateStore,
       );
     };
+
+    comparisonConfirmedHandler = (cid, hit): void => {
+      if (!cids.includes(cid) || confirmed.has(cid)) return;
+      confirmed.add(cid);
+      const row = rowByCid.get(cid);
+      if (row?.host && row.host !== doc.body) {
+        mountCartWarning(
+          doc,
+          row,
+          hit,
+          deleter,
+          (removedCid) => {
+            confirmed.delete(removedCid);
+            refreshGate();
+          },
+          (restoredCid) => {
+            confirmed.add(restoredCid);
+            refreshGate();
+          },
+        );
+      }
+      refreshGate();
+    };
+    for (const [cid, hit] of pendingComparisonConfirmations.splice(0)) {
+      comparisonConfirmedHandler(cid, hit);
+    }
 
     let warned = 0;
     for (let i = 0; i < cids.length; i++) {
