@@ -256,9 +256,11 @@ describe("DLsite label-driven tiers", () => {
       const doc = new MockDocument();
       const row = (label: string, amount: string) => {
         const wrap = doc.createElement("div");
-        const lab = doc.createElement("span");
-        lab.textContent = label;
-        const amt = doc.createElement("span");
+        const lab = doc.createElement("div");
+        const labText = doc.createElement("span");
+        labText.textContent = label;
+        lab.appendChild(labText);
+        const amt = doc.createElement("div");
         amt.textContent = amount;
         wrap.appendChild(lab);
         wrap.appendChild(amt);

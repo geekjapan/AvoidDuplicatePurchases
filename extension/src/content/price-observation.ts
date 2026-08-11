@@ -154,6 +154,11 @@ function labelMatches(text: string, labels: readonly string[]): boolean {
   return labels.some((label) => t === label || t.startsWith(label));
 }
 
+function labelEquals(text: string, labels: readonly string[]): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > 0 && labels.some((label) => t === label);
+}
+
 function uniqueTierCandidate(
   candidates: Array<{ label: Element; amount: Element }>,
 ): Money | null {
@@ -184,10 +189,12 @@ function findLabeledTier(doc: Document, labels: readonly string[]): Money | null
   const candidates: Money[] = [];
 
   for (const el of all) {
-    // Own text only: descendant-aggregated full text falsely marks wrappers
-    // that also contain sibling tiers.
+    // Prefer own text, but accept rendered descendant text for storefronts that
+    // wrap the visible label in an inner span. Wrapper matches remain safe
+    // because the nearby scope must contain exactly one visible yen amount.
     const own = elementOwnText(el);
-    if (!labelMatches(own, labels)) continue;
+    const rendered = visibleTextOf(el);
+    if (!labelMatches(own, labels) && !labelEquals(rendered, labels)) continue;
 
     // Nearby amount: parent row, immediate siblings, then the label node itself.
     const scopes: Element[] = [];

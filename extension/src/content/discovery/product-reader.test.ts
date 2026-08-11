@@ -31,8 +31,10 @@ function dlsiteProductDoc(
 
   // One labeled regular price tier.
   const row = doc.createElement("div");
-  const lab = doc.createElement("span");
-  lab.textContent = regularLabel;
+  const lab = doc.createElement("div");
+  const labText = doc.createElement("span");
+  labText.textContent = regularLabel;
+  lab.appendChild(labText);
   const amt = doc.createElement("span");
   amt.textContent = "1,100円（税込）";
   row.appendChild(lab);
